@@ -1,0 +1,31 @@
+{
+  "name": "inpublic",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3210",
+    "build": "next build",
+    "start": "next start -p 3210",
+    "typecheck": "tsc --noEmit",
+    "test": "node --no-warnings --import ./scripts/ts-register.mjs scripts/unit-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/pipeline-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/story-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/story-visual-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/story-v2-test.mjs && node scripts/product-test.mjs",
+    "test:live": "node --no-warnings --import ./scripts/ts-register.mjs scripts/pipeline-test.mjs --live"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "@deepgram/sdk": "^4.11.2",
+    "@excalidraw/excalidraw": "^0.18.0",
+    "@excalidraw/mermaid-to-excalidraw": "^1.1.2",
+    "@google/genai": "^2.16.0",
+    "next": "^15.5.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.9",
+    "@types/react-dom": "^19.1.7",
+    "tailwindcss": "^4.1.13",
+    "typescript": "^5.8.3"
+  }
+}

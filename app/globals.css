@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #ffffff;
+  color: #18181b;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Strip Excalidraw's chrome down to the canvas plus the shape toolbar.
+   The toolbar stays because I need to be able to grab the pen myself.
+   UIOptions can't remove these, so they go by class. */
+.excalidraw .App-menu_top__left,
+.excalidraw .HintViewer,
+.excalidraw .layer-ui__wrapper__footer,
+.excalidraw .layer-ui__wrapper__top-right,
+.excalidraw .sidebar-trigger,
+.excalidraw .welcome-screen-center,
+.excalidraw .welcome-screen-menu-hint,
+.excalidraw .welcome-screen-toolbar-hint,
+.excalidraw .welcome-screen-help-hint {
+  display: none !important;
+}
+
+/* OBS captures this window as a single source. Nothing scrolls, nothing
+   selects, and the only chrome is our own control bar. */
+
+html { scroll-behavior: smooth; }
+
+/* The site header is sticky and 4rem tall, so an anchored section would
+   otherwise land underneath it. Scoped to marketing sections so nothing
+   inside the Excalidraw canvas is affected. */
+section[id] { scroll-margin-top: 5rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
+button, a { transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease; }
+
+.section-shell { @apply mx-auto max-w-6xl px-5 py-20 sm:py-28; }
+.section-heading { @apply mb-10 max-w-2xl; }
+.section-heading h2, .section-shell h2 { @apply mt-3 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl; }
+.section-copy { @apply mt-5 text-base leading-8 text-zinc-600; }
+.eyebrow { @apply text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500; }
+.product-frame { @apply overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-[0_20px_60px_rgba(24,24,27,.08)]; }
+.feature-list { @apply mt-7 grid gap-3 text-sm text-zinc-700; }
+.feature-list li { @apply flex items-start gap-3; }
+.pricing-card { @apply rounded-2xl border border-zinc-200 bg-white p-7 sm:p-9; }
+.pricing-card h3 { @apply mt-3 text-2xl font-semibold; }
+.price { @apply my-5 text-4xl font-semibold tracking-tight; }
+.price span { @apply text-base font-normal text-zinc-500; }
+.button-primary { @apply inline-flex rounded-lg bg-zinc-950 px-5 py-3 text-sm font-semibold text-white hover:bg-zinc-800; }
+.button-secondary { @apply inline-flex rounded-lg border border-zinc-200 bg-white px-5 py-3 text-sm font-semibold text-zinc-800 hover:bg-zinc-50; }

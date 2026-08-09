@@ -1,0 +1,2 @@
+import { SiteHeader } from "@/components/SiteHeader";
+export default function TermsPage() { return <main><SiteHeader /><article className="section-shell max-w-3xl"><p className="eyebrow">Terms</p><h1 className="mt-3 text-4xl font-semibold">Early-access terms</h1><p className="mt-8 leading-7 text-zinc-600">InPublic is an early-access preview. Features, limits, and pricing may change. Keep your own copy of important exports; browser-local data is not a backup service. Full hosted-product terms will be published before paid access begins.</p></article></main>; }
