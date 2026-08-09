@@ -11,12 +11,30 @@ export interface Point { x: number; y: number }
 export interface Size { width: number; height: number }
 export type Box = Point & Size;
 
-export const INK = "#343a40";
-export const SOFT = "#495057";
+/** Shared native-Excalidraw art direction tokens. */
+export const STORY_VISUAL_TOKENS = {
+  stroke: { primary: "#343a40", secondary: "#5c6770", width: 2.4, environmentWidth: 1.8 },
+  fill: {
+    character: "#fff4e6",
+    foliage: "#d3f9d8",
+    wood: "#f1e3d3",
+    structure: "#fff4e6",
+    vehicle: "#e7f5ff",
+    water: "#d0ebff",
+    cloud: "#f1f3f5",
+    ground: "#f8f9fa",
+  },
+  opacity: { environment: 42, supporting: 72, committed: 100, provisional: 35 },
+  depth: { background: 0, middle: 1, action: 2, foreground: 3 },
+  scale: { character: 1, prop: 1.15, destination: 1.2, environment: 1 },
+} as const;
+
+export const INK = STORY_VISUAL_TOKENS.stroke.primary;
+export const SOFT = STORY_VISUAL_TOKENS.stroke.secondary;
 export const BLUE = "#4dabf7";
 export const SAND = "#ffe8a1";
 export const SUN = "#fab005";
-export const GREEN = "#51cf66";
+export const GREEN = "#37b24d";
 export const BROWN = "#8d6e63";
 export const MOTION = "#868e96";
 
@@ -37,7 +55,7 @@ export const COLOR_HEX: Record<string, string> = {
   silver: "#adb5bd",
 };
 
-export function colorHex(color?: string, fallback = INK): string {
+export function colorHex(color?: string, fallback: string = INK): string {
   if (!color) return fallback;
   return COLOR_HEX[color.trim().toLowerCase()] ?? fallback;
 }
@@ -59,20 +77,20 @@ export function sizeScale(size?: string): number {
 type Shape = Record<string, unknown>;
 
 export const line = (x: number, y: number, points: number[][], extra: Shape = {}): Shape => ({
-  type: "line", x, y, points, strokeColor: INK, strokeWidth: 2, roughness: 2, ...extra,
+  type: "line", x, y, points, strokeColor: INK, strokeWidth: STORY_VISUAL_TOKENS.stroke.width, roughness: 1.5, ...extra,
 });
 export const ellipse = (x: number, y: number, width: number, height: number, extra: Shape = {}): Shape => ({
   type: "ellipse", x, y, width, height, strokeColor: INK,
-  backgroundColor: "transparent", strokeWidth: 2, roughness: 2, ...extra,
+  backgroundColor: "transparent", strokeWidth: STORY_VISUAL_TOKENS.stroke.width, roughness: 1.5, ...extra,
 });
 export const rectangle = (x: number, y: number, width: number, height: number, extra: Shape = {}): Shape => ({
   type: "rectangle", x, y, width, height, strokeColor: INK,
-  backgroundColor: "transparent", strokeWidth: 2, roughness: 2, ...extra,
+  backgroundColor: "transparent", strokeWidth: STORY_VISUAL_TOKENS.stroke.width, roughness: 1.5, ...extra,
 });
 export const triangle = (x: number, y: number, width: number, height: number, extra: Shape = {}): Shape =>
   line(x, y + height, [[0, 0], [width / 2, -height], [width, 0], [0, 0]], extra);
 export const label = (x: number, y: number, text: string, extra: Shape = {}): Shape => ({
-  type: "text", x, y, text, fontSize: 16, strokeColor: SOFT, ...extra,
+  type: "text", x, y, text, fontSize: 17, strokeColor: SOFT, ...extra,
 });
 
 /**
@@ -132,7 +150,7 @@ export function composePrimitives(
   text: string,
   p: Point,
   size: Size,
-  stroke = INK,
+  stroke: string = INK,
 ): Shape[] {
   const { width, height } = size;
   switch (recipe) {
@@ -141,7 +159,7 @@ export function composePrimitives(
       const bodyY = p.y + height * 0.24;
       const wheel = Math.max(16, height * 0.28);
       return [
-        rectangle(p.x, bodyY, width, bodyH, { strokeColor: stroke }),
+        rectangle(p.x, bodyY, width, bodyH, { strokeColor: stroke, backgroundColor: STORY_VISUAL_TOKENS.fill.vehicle, fillStyle: "solid" }),
         line(p.x + width * 0.2, bodyY, [
           [0, 0], [width * 0.12, -height * 0.22], [width * 0.42, -height * 0.22], [width * 0.52, 0],
         ], { strokeColor: stroke }),
@@ -186,12 +204,12 @@ export function composePrimitives(
         ellipse(p.x + width * 0.18, p.y + height * 0.02, 12, 12, { strokeColor: SOFT }),
         line(p.x + width * 0.12, p.y + height * 0.88, [[0, 0], [0, height * 0.12]], { strokeColor: SOFT }),
         line(p.x + width * 0.82, p.y + height * 0.88, [[0, 0], [0, height * 0.12]], { strokeColor: SOFT }),
-        label(p.x + 6, p.y + height + 6, text, { fontSize: 14 }),
+        label(p.x + 6, p.y + height + 6, text, { fontSize: 17 }),
       ];
     case "placeholder":
       return [
         rectangle(p.x, p.y, width, height * 0.72, { strokeColor: SOFT, strokeStyle: "dashed" }),
-        label(p.x + 8, p.y + height * 0.78, text, { fontSize: 15 }),
+        label(p.x + 8, p.y + height * 0.78, text, { fontSize: 17 }),
       ];
   }
 }
@@ -222,7 +240,7 @@ export function isStoryEffect(value: string): value is StoryEffect {
 
 /** Motion marks trail the subject, so they sit opposite the travel direction. */
 function trailSign(direction?: string): number {
-  return direction === "left" || direction === "away" ? 1 : -1;
+  return direction === "left" ? 1 : -1;
 }
 
 export function effectElements(

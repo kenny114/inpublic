@@ -1,29 +1,34 @@
 import type { Metadata } from "next";
+import { Geist } from "next/font/google";
 import "@excalidraw/excalidraw/index.css";
 import "./globals.css";
+import "./product.css";
+import "./landing.css";
+import "./dashboard.css";
+import "./canvas.css";
+
+const geist = Geist({ subsets: ["latin"], variable: "--font-geist", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "InPublic — Speak naturally. Watch your ideas take shape.",
-  description: "Turn your voice into live visual explanations, diagrams, and simple story sketches.",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3210"),
+  title: "InPublic — Speak. Watch your ideas take shape.",
+  description: "InPublic turns speaking into a live visual experience, transforming your developing ideas into editable concepts, diagrams, drawings and stories.",
+  openGraph: {
+    title: "InPublic — Speak. Watch your ideas take shape.",
+    description: "Speaking becomes a live, editable visual experience.",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "InPublic — Speak. Watch your ideas take shape.",
+    description: "Speaking becomes a live, editable visual experience.",
+  },
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // suppressHydrationWarning is scoped to these two elements and to their own
-    // attributes only — children still hydrate normally, so a real mismatch
-    // inside the app is still reported. It is here because browser extensions
-    // (password managers, Grammarly, focus-visible polyfills) inject attributes
-    // such as `data-js-focus-visible`, `cz-shortcut-listen` or `data-new-gr-c-s-check-loaded`
-    // onto <html>/<body> before React hydrates. That markup is not ours to
-    // control, and React otherwise reports it as a hydration error.
-    // data-scroll-behavior opts in to Next's handling of the smooth scrolling
-    // globals.css sets, so route transitions do not animate the scroll reset.
     <html lang="en" data-scroll-behavior="smooth" suppressHydrationWarning>
-      <body suppressHydrationWarning>{children}</body>
+      <body className={geist.variable} suppressHydrationWarning>{children}</body>
     </html>
   );
 }

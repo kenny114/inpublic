@@ -15,6 +15,7 @@ import type { SemanticSnapshot } from "./semantic";
 import type { SceneElement } from "./scene";
 import type { LogEvent } from "./types";
 import type { InPublicMode, StoryState } from "./story";
+import type { CompositionState } from "./composition";
 
 const DB_NAME = "inpublic";
 const STORE = "sessions";
@@ -32,6 +33,7 @@ export interface PersistedSession {
   log: LogEvent[];
   mode?: InPublicMode;
   story?: StoryState;
+  composition?: CompositionState;
   /** Set by the dashboard when a session is renamed. Absent means "derive it". */
   title?: string;
   /** Set by the dashboard. The canvas neither reads nor writes this. */
@@ -169,6 +171,12 @@ export async function deleteSession(id: string): Promise<void> {
   await writeLibrary(id, null);
 }
 
+/** Restore a recently deleted library row without changing the active canvas. */
+export async function restoreDeletedSession(session: PersistedSession): Promise<void> {
+  if (!session.id) return;
+  await writeLibrary(session.id, session);
+}
+
 export async function loadSession(): Promise<PersistedSession | null> {
   try {
     const db = await open();
@@ -211,6 +219,7 @@ export async function clearSession(): Promise<void> {
 export function makeAutosave(
   getSession: () => PersistedSession,
   intervalMs = 3000,
+  onStateChange?: (state: "saving" | "saved" | "error") => void,
 ) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
@@ -218,10 +227,13 @@ export function makeAutosave(
   const flush = async () => {
     if (inFlight) return;
     inFlight = true;
+    onStateChange?.("saving");
     try {
       await saveSession(getSession());
+      onStateChange?.("saved");
     } catch {
       /* a failed autosave must never surface on the canvas */
+      onStateChange?.("error");
     } finally {
       inFlight = false;
     }

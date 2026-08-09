@@ -10,6 +10,7 @@ import type { SceneElement } from "./scene";
 import type { SemanticSnapshot } from "./semantic";
 import type { LogEvent } from "./types";
 import type { InPublicMode, StoryState } from "./story";
+import type { CompositionState } from "./composition";
 
 function download(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -53,6 +54,7 @@ export function exportSceneJson(
   startedAt: number | null,
   story?: StoryState,
   mode: InPublicMode = "standard",
+  composition?: CompositionState,
 ) {
   const payload = {
     version: 2,
@@ -61,6 +63,7 @@ export function exportSceneJson(
     semantic,
     story,
     mode,
+    composition,
     log,
     elements,
   };

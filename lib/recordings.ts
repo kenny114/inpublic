@@ -2,6 +2,7 @@ import type { SemanticSnapshot } from "./semantic";
 import type { InPublicMode, StoryState } from "./story";
 import type { LogEvent } from "./types";
 import { FREE_SESSION_LIMIT } from "./product";
+import type { CompositionState } from "./composition";
 
 const DB_NAME = "inpublic";
 const SESSIONS_STORE = "sessions";
@@ -26,6 +27,7 @@ export interface RecordingMetadata {
   transcriptVisible: boolean;
   interfaceVisible: boolean;
   log: LogEvent[];
+  composition?: CompositionState;
 }
 
 export interface SavedRecording {

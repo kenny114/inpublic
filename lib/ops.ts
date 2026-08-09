@@ -924,7 +924,7 @@ async function buildOpElements(
           type: "text",
           x: (from.x + to.x) / 2 - textW(op.label, 14) / 2,
           y: (from.y + to.y) / 2 - 22,
-          text: op.label, fontSize: 14, fontFamily: HAND, strokeColor: SOFT,
+          text: op.label, fontSize: 16, fontFamily: HAND, strokeColor: SOFT,
         });
       }
       return { elements: conv(skeleton) };

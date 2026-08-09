@@ -1,6 +1,7 @@
 import type { PageTurnReason } from "./pagination";
 import type { SemanticScene } from "./semantic";
 import type { InPublicMode, StoryAction, StoryOperation } from "./story";
+import type { CameraView, CompositionRect, ReadabilityRole } from "./composition";
 
 type StoryLoggedAction = StoryAction["type"] | "story_event";
 
@@ -153,6 +154,46 @@ export type LogEvent =
   | { t: number; type: "attention"; action: "suppression" | "adoption" | "merge" | "compression" | "de-emphasis" | "removal"; target: string; reason: string }
   | { t: number; type: "thought"; rawSegments: string[]; merged: string; heldMs: number }
   | { t: number; type: "mode"; from: InPublicMode; to: InPublicMode }
+  | {
+      t: number;
+      type: "composition";
+      event: "decision" | "suppression" | "summarization";
+      focalSubject: string;
+      activeCluster: string;
+      safeFrame: CompositionRect;
+      effectiveTextSize: number;
+      cameraTarget: CameraView;
+      reason: string;
+      moved: boolean;
+      contentFits: boolean;
+      webcamCollisions: number;
+      occupiedCanvasRatio: number;
+      readabilityViolations: string[];
+    }
+  | {
+      t: number;
+      type: "camera";
+      event: "started" | "completed" | "cancelled";
+      target: CameraView;
+      reason: string;
+    }
+  | {
+      t: number;
+      type: "readability";
+      elementId: string;
+      role: ReadabilityRole;
+      sourceFontSize: number;
+      effectiveFontSize: number;
+      minimumFontSize: number;
+    }
+  | {
+      t: number;
+      type: "story-staging";
+      entityId: string;
+      zone: string;
+      bounds: CompositionRect;
+      reason: string;
+    }
   | { t: number; type: "story-request"; transcript: string; sceneId: string }
   | { t: number; type: "story-response"; sourceText: string; normalizedText?: string; confidence: number; actions: number; fallback: boolean }
   | {

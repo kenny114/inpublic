@@ -25,6 +25,19 @@ body {
   display: none !important;
 }
 
+/* Recording focus keeps the visualization dominant while leaving Stop/Pause
+   available. These are DOM-only controls; the recorder still composites the
+   clean canvas and optional minimal badge. */
+.recording-focus .recording-secondary-control,
+.recording-focus .excalidraw .App-toolbar {
+  opacity: 0.08 !important;
+}
+
+.recording-focus .recording-secondary-control:hover,
+.recording-focus .excalidraw .App-toolbar:hover {
+  opacity: 0.85 !important;
+}
+
 /* OBS captures this window as a single source. Nothing scrolls, nothing
    selects, and the only chrome is our own control bar. */
 

@@ -14,6 +14,7 @@
  */
 
 import type { SceneElement } from "./scene";
+import type { CompositionState } from "./composition";
 
 export type ConceptKind =
   | "input"
@@ -108,6 +109,7 @@ export interface Operation {
   conceptIds: string[];
   elementIds: string[];
   undo: UndoRecord;
+  compositionBefore?: CompositionState;
 }
 
 export function emptyUndo(): UndoRecord {

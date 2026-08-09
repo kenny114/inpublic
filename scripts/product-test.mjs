@@ -4,7 +4,10 @@ import { readFileSync } from "node:fs";
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const recorder = read("hooks/useCanvasRecorder.ts");
 const panel = read("components/RecordingPanel.tsx");
-const landing = read("app/page.tsx");
+const landing = [
+  read("app/page.tsx"),
+  read("components/landing/LandingSections.tsx"),
+].join("\n");
 const pricing = read("app/pricing/page.tsx");
 const product = read("lib/product.ts");
 
@@ -17,7 +20,8 @@ const checks = [
   ["webcam is optional", panel.includes("Camera") && recorder.includes("webcam: false")],
   ["transcript capture is optional", panel.includes("Transcript") && recorder.includes("transcriptVisible")],
   ["landing explains Standard Mode", landing.includes("Standard Mode")],
-  ["landing explains evolving Story Mode", landing.includes("Story Mode · Evolving")],
+  ["landing explains Story Mode", landing.includes("Story Mode")],
+  ["landing uses real product proof", landing.includes("/product-standard.png")],
   ["pricing does not pretend checkout works", pricing.includes("billing is not connected")],
   ["Discord destination is centrally configured", product.includes("NEXT_PUBLIC_DISCORD_URL")],
   ["client source does not read provider secrets", ![recorder, panel, landing].some((source) => /DEEPGRAM_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY/.test(source))],

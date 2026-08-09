@@ -17,7 +17,7 @@ export function PageHeader({ title, description, action }: { title: string; desc
 
 export function EmptyState({ title, body, action }: { title: string; body?: string; action?: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-dashed border-zinc-300 bg-white px-6 py-14 text-center">
+    <div className="rounded-[10px] border border-dashed border-zinc-300 bg-white px-6 py-14 text-center">
       <p className="text-sm font-medium text-zinc-900">{title}</p>
       {body && <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-zinc-500">{body}</p>}
       {action && <div className="mt-6 flex justify-center">{action}</div>}
@@ -28,7 +28,7 @@ export function EmptyState({ title, body, action }: { title: string; body?: stri
 export function ModeBadge({ mode }: { mode: InPublicMode }) {
   return (
     <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium ${
-      mode === "story" ? "bg-orange-50 text-orange-800" : "bg-indigo-50 text-indigo-800"
+      mode === "story" ? "bg-amber-50 text-amber-800" : "bg-[#eff0ff] text-[#4b4db2]"
     }`}>
       {MODE_LABEL[mode]}
     </span>
@@ -44,17 +44,17 @@ export function StatusBadge({ status }: { status: SessionStatus }) {
 }
 
 export function PrimaryLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return <Link href={href} className="inline-flex items-center gap-1.5 rounded-lg bg-zinc-950 px-3.5 py-2 text-sm font-medium text-white hover:bg-zinc-800">{children}</Link>;
+  return <Link href={href} className="inline-flex h-10 items-center gap-1.5 rounded-[10px] bg-zinc-950 px-3.5 text-sm font-medium text-white hover:bg-zinc-800">{children}</Link>;
 }
 
 export function SecondaryLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return <Link href={href} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50">{children}</Link>;
+  return <Link href={href} className="inline-flex h-10 items-center gap-1.5 rounded-[10px] border border-zinc-200 bg-white px-3.5 text-sm font-medium text-zinc-800 hover:bg-zinc-50">{children}</Link>;
 }
 
 /** A statement of fact about something the product cannot do yet. */
 export function NotReadyNote({ children }: { children: React.ReactNode }) {
   return (
-    <p className="mt-6 rounded-xl border border-zinc-200 bg-zinc-50/70 px-4 py-3 text-sm leading-6 text-zinc-600">
+    <p className="mt-6 rounded-[10px] border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm leading-6 text-zinc-600">
       {children}
     </p>
   );

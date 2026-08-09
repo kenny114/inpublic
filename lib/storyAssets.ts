@@ -26,6 +26,7 @@ import {
   SAND,
   sizeScale,
   SOFT,
+  STORY_VISUAL_TOKENS,
   SUN,
   type Box,
   type Point,
@@ -40,21 +41,28 @@ export const STORY_ASSET_KEYS: StoryAssetKey[] = [
 
 export const STORY_BOUNDS = {
   x: PAGE_PAD,
-  y: 124,
+  y: 108,
   width: PAGE_W - PAGE_PAD * 2,
-  height: PAGE_H - 124 - PAGE_PAD,
+  height: PAGE_H - 108 - PAGE_PAD,
 };
 
+export const STORY_STAGE_ZONES = {
+  sky: { top: 0, bottom: 0.24 },
+  distant: { top: 0.18, bottom: 0.48 },
+  action: { top: 0.42, bottom: 0.88 },
+  ground: { top: 0.84, bottom: 1 },
+} as const;
+
 const SIZES: Record<StoryAssetKey, Size> = {
-  child: { width: 72, height: 126 },
-  person: { width: 78, height: 138 },
-  cat: { width: 104, height: 72 },
-  dog: { width: 112, height: 78 },
+  child: { width: 84, height: 142 },
+  person: { width: 88, height: 150 },
+  cat: { width: 126, height: 88 },
+  dog: { width: 132, height: 92 },
   mouse: { width: 68, height: 42 },
-  car: { width: 158, height: 82 },
+  car: { width: 184, height: 94 },
   road: { width: 620, height: 46 },
   "palm-tree": { width: 112, height: 205 },
-  tree: { width: 128, height: 190 },
+  tree: { width: 154, height: 220 },
   beach: { width: 880, height: 310 },
   sand: { width: 880, height: 170 },
   water: { width: 450, height: 190 },
@@ -63,7 +71,7 @@ const SIZES: Record<StoryAssetKey, Size> = {
   cloud: { width: 145, height: 72 },
   rain: { width: 130, height: 110 },
   puddle: { width: 118, height: 34 },
-  house: { width: 190, height: 160 },
+  house: { width: 218, height: 178 },
   "movement-arrow": { width: 120, height: 44 },
   "speech-bubble": { width: 170, height: 105 },
 };
@@ -103,19 +111,45 @@ export function storyEntityElementPrefix(entityId: string, pageIndex: number): s
   return `story:${entityId}:p${pageIndex}`;
 }
 
+export interface StoryStagingDecision {
+  zone: "sky" | "distant" | "action" | "ground";
+  horizontal: "left" | "center" | "right";
+  reason: string;
+}
+
+export function storyStagingDecision(entity: StoryEntity): StoryStagingDecision {
+  if (entity.kind === "background" || ["sun", "cloud", "rain"].includes(entity.assetKey ?? "")) {
+    return { zone: "sky", horizontal: entity.placement.zone === "left" ? "left" : "right", reason: "environment belongs above the action band" };
+  }
+  if (["tree", "house", "palm-tree"].includes(entity.assetKey ?? "") || entity.kind === "location") {
+    return { zone: "distant", horizontal: entity.assetKey === "tree" ? "left" : "right", reason: "landmark anchors the middle ground" };
+  }
+  if (["road", "sand", "puddle"].includes(entity.assetKey ?? "")) {
+    return { zone: "ground", horizontal: "center", reason: "surface effect belongs on the ground plane" };
+  }
+  return {
+    zone: "action",
+    horizontal: entity.assetKey === "car" ? "left" : entity.placement.zone === "right" ? "right" : entity.placement.zone === "left" ? "left" : "center",
+    reason: entity.assetKey === "car" ? "vehicle enters from the action edge" : "interactive subject stays in the central action band",
+  };
+}
+
 function basePosition(entity: StoryEntity, order: number, pageIndex: number): Point {
   const origin = pageOrigin(pageIndex);
   const x0 = origin.x + STORY_BOUNDS.x;
   const y0 = origin.y + STORY_BOUNDS.y;
-  const column = entity.placement.zone === "left"
-    ? 0.18
-    : entity.placement.zone === "right"
-      ? 0.76
-      : 0.48;
-  const row = Math.floor(order / 3);
+  const size = storyEntitySize(entity);
+  const staging = storyStagingDecision(entity);
+  const groundY = y0 + STORY_BOUNDS.height - 42;
+  const column = staging.horizontal === "left" ? 0.2 : staging.horizontal === "right" ? 0.76 : 0.48;
+  const stagger = ((order % 3) - 1) * 18;
   return {
-    x: x0 + STORY_BOUNDS.width * column - storyEntitySize(entity).width / 2 + (order % 3) * 12,
-    y: y0 + 220 + row * 105,
+    x: x0 + STORY_BOUNDS.width * column - size.width / 2 + stagger,
+    y: staging.zone === "sky"
+      ? y0 + 34
+      : staging.zone === "ground"
+        ? groundY - size.height * 0.5
+        : groundY - size.height,
   };
 }
 
@@ -161,12 +195,20 @@ export function storyEntityPositions(scene: StoryScene): Map<string, Box> {
       : undefined;
     if (!current || !target) continue;
     const relation = entity.placement.relation ?? "near";
+    const pageIndex = entity.renderings.at(-1)?.pageIndex ?? scene.pageIndices.at(-1) ?? 0;
+    const origin = pageOrigin(pageIndex);
+    const stageLeft = origin.x + STORY_BOUNDS.x;
+    const stageRight = stageLeft + STORY_BOUNDS.width;
+    const stageTop = origin.y + STORY_BOUNDS.y;
+    const stageBottom = stageTop + STORY_BOUNDS.height - 24;
     if (relation === "under") {
-      current.x = target.x + target.width / 2 - current.width / 2;
-      current.y = target.y + target.height - current.height * 0.35;
+      // Sit visibly beneath the canopy, offset from the trunk so the subject's
+      // silhouette remains readable instead of being bisected by the tree.
+      current.x = target.x + target.width * 0.6 - current.width * 0.2;
+      current.y = target.y + target.height - current.height;
     } else if (relation === "in-front-of" || relation === "behind") {
       current.x = target.x - current.width * 0.35;
-      current.y = target.y + current.height * 0.15;
+      current.y = target.y + target.height - current.height;
     } else if (relation === "on") {
       // Sitting on a surface: centred along it, resting on its top edge.
       current.x = target.x + target.width * 0.22;
@@ -175,16 +217,22 @@ export function storyEntityPositions(scene: StoryScene): Map<string, Box> {
       current.x = target.x + target.width / 2 - current.width / 2;
       current.y = target.y + target.height / 2 - current.height / 2;
     } else if (relation === "toward") {
-      current.x = target.x - current.width - 110;
-      current.y = target.y + target.height / 2 - current.height / 2;
+      current.x = target.x - current.width - 72;
+      current.y = target.y + target.height - current.height;
     } else if (relation === "away") {
-      // Away means visibly separated from the thing it left.
-      current.x = target.x - current.width - 230;
+      // Continue past the object on the right when possible; fall back to the
+      // left edge only when the right exit would leave the stage.
+      const rightExit = target.x + target.width + 60;
+      current.x = rightExit + current.width <= stageRight - 18
+        ? rightExit
+        : target.x - current.width - 60;
       current.y = target.y + target.height - current.height;
     } else {
-      current.x = target.x - current.width - 26;
+      current.x = target.x - current.width - 34;
       current.y = target.y + target.height - current.height;
     }
+    current.x = Math.max(stageLeft + 18, Math.min(current.x, stageRight - current.width - 18));
+    current.y = Math.max(stageTop + 24, Math.min(current.y, stageBottom - current.height));
   }
 
   return positions;
@@ -213,7 +261,10 @@ function separateFreeEntities(entities: StoryEntity[], positions: Map<string, Bo
   for (const entity of entities) {
     const box = positions.get(entity.entityId);
     if (!box) continue;
-    if (entity.placement.relativeTo || BACKDROP_KINDS.has(entity.kind)) anchored.push(box);
+    // Relative subjects move after anchors are established. Their provisional
+    // base boxes must not push a newly arriving prop onto a phantom next row.
+    if (entity.placement.relativeTo) continue;
+    if (BACKDROP_KINDS.has(entity.kind)) anchored.push(box);
     else free.push({ entity, box });
   }
   free.sort((a, b) => a.entity.createdAt - b.entity.createdAt || a.entity.entityId.localeCompare(b.entity.entityId));
@@ -258,7 +309,7 @@ export function storyPoseVariants(assetKey?: StoryAssetKey): string[] {
 function personArt(x: number, y: number, width: number, height: number, pose: string, stroke: string) {
   const cx = x + width / 2;
   const head = Math.min(width, height) * 0.2;
-  const ink = { strokeColor: stroke };
+  const ink = { strokeColor: stroke, backgroundColor: STORY_VISUAL_TOKENS.fill.character, fillStyle: "solid" };
   if (pose === "sleeping") {
     const y0 = y + height * 0.62;
     return [
@@ -305,7 +356,7 @@ function personArt(x: number, y: number, width: number, height: number, pose: st
 }
 
 function animalArt(x: number, y: number, width: number, height: number, pose: string, dog: boolean, stroke: string) {
-  const ink = { strokeColor: stroke };
+  const ink = { strokeColor: stroke, backgroundColor: dog ? "#fff9db" : STORY_VISUAL_TOKENS.fill.character, fillStyle: "solid" };
   if (pose === "sleeping") {
     return [
       ellipse(x + 6, y + height * 0.5, width * 0.72, height * 0.4, ink),
@@ -394,9 +445,10 @@ function assetSkeleton(entity: StoryEntity, p: Point, size: Size): Record<string
       ];
     case "tree":
       return [
-        rectangle(p.x + width * 0.42, p.y + height * 0.45, width * 0.18, height * 0.55, { strokeColor: BROWN }),
-        ellipse(p.x + 4, p.y, width * 0.62, height * 0.55, { strokeColor: GREEN }),
-        ellipse(p.x + width * 0.36, p.y + 8, width * 0.6, height * 0.52, { strokeColor: GREEN }),
+        rectangle(p.x + width * 0.42, p.y + height * 0.42, width * 0.18, height * 0.58, { strokeColor: BROWN, backgroundColor: STORY_VISUAL_TOKENS.fill.wood, fillStyle: "solid" }),
+        ellipse(p.x, p.y + 14, width * 0.6, height * 0.5, { strokeColor: GREEN, backgroundColor: STORY_VISUAL_TOKENS.fill.foliage, fillStyle: "solid" }),
+        ellipse(p.x + width * 0.34, p.y, width * 0.64, height * 0.54, { strokeColor: GREEN, backgroundColor: STORY_VISUAL_TOKENS.fill.foliage, fillStyle: "solid" }),
+        ellipse(p.x + width * 0.22, p.y + height * 0.12, width * 0.56, height * 0.42, { strokeColor: GREEN, backgroundColor: STORY_VISUAL_TOKENS.fill.foliage, fillStyle: "solid" }),
       ];
     case "beach":
       return [line(p.x, p.y + 90, [[0, 0], [190, -24], [390, 4], [600, -20], [width, 10]], { strokeColor: "#f08c00", strokeWidth: 3 })];
@@ -435,9 +487,10 @@ function assetSkeleton(entity: StoryEntity, p: Point, size: Size): Record<string
       return [ellipse(p.x, p.y, width, height, { strokeColor: BLUE, backgroundColor: "#d0ebff", fillStyle: "hachure", opacity: 70 })];
     case "house":
       return [
-        rectangle(p.x + 18, p.y + 55, width - 36, height - 55, { strokeColor: BROWN }),
+        rectangle(p.x + 18, p.y + 55, width - 36, height - 55, { strokeColor: BROWN, backgroundColor: STORY_VISUAL_TOKENS.fill.structure, fillStyle: "solid" }),
         line(p.x, p.y + 60, [[0, 0], [width / 2, -58], [width, 0]], { strokeColor: BROWN, strokeWidth: 3 }),
-        rectangle(p.x + width * 0.43, p.y + height * 0.62, width * 0.2, height * 0.38, { strokeColor: BROWN }),
+        rectangle(p.x + width * 0.43, p.y + height * 0.62, width * 0.2, height * 0.38, { strokeColor: BROWN, backgroundColor: "#ffe8cc", fillStyle: "solid" }),
+        rectangle(p.x + width * 0.16, p.y + height * 0.52, width * 0.18, height * 0.2, { strokeColor: "#4dabf7", backgroundColor: "#e7f5ff", fillStyle: "solid" }),
       ];
     case "speech-bubble":
       return [ellipse(p.x, p.y, width, height * 0.75), line(p.x + width * 0.28, p.y + height * 0.68, [[0, 0], [-12, 30], [25, 7]])];
@@ -449,7 +502,7 @@ function assetSkeleton(entity: StoryEntity, p: Point, size: Size): Record<string
 /** A placeholder says what it stands for, so the speaker can define it later. */
 function placeholderCaption(entity: StoryEntity, p: Point, size: Size): Record<string, unknown>[] {
   if (entity.visualSource !== "placeholder") return [];
-  return [labelText(p.x, p.y + size.height + 4, entity.label, { fontSize: 15, strokeColor: SOFT })];
+  return [labelText(p.x, p.y + size.height + 4, entity.label, { fontSize: 17, strokeColor: SOFT })];
 }
 
 export async function buildStoryEntityElements(
@@ -482,21 +535,31 @@ export async function buildStoryRelationElements(
   if (!from || !to) return [];
   const { convertToExcalidrawElements } = await import("@excalidraw/excalidraw");
   const away = relation.relationType.includes("away");
+  const awaySign = from.x + from.width / 2 >= to.x + to.width / 2 ? 1 : -1;
   const start = { x: from.x + from.width, y: from.y + from.height / 2 };
   const end = { x: to.x, y: to.y + to.height / 2 };
+  const awayArrowX = awaySign > 0
+    ? Math.max(to.x + to.width + 10, from.x - 62)
+    : Math.min(to.x - 10, from.x + from.width + 62);
+  const awayArrowEndX = awaySign > 0 ? from.x - 8 : from.x + from.width + 8;
   const skeleton = relation.visual === "motion-lines"
-    ? effectElements("motion-lines", from, away ? "away" : "toward")
+    ? effectElements("motion-lines", from, away ? (awaySign > 0 ? "right" : "left") : "toward")
     : [{
         type: "arrow",
-        // An away-from arrow points out of the pair, not between them.
-        x: away ? from.x - 16 : start.x,
+        // Away-from is read in the gap from the obstacle toward the subject.
+        x: away ? awayArrowX : start.x,
         y: away ? from.y + from.height / 2 : start.y,
-        points: away ? [[0, 0], [-72, 0]] : [[0, 0], [end.x - start.x, end.y - start.y]],
+        points: away ? [[0, 0], [awayArrowEndX - awayArrowX, 0]] : [[0, 0], [end.x - start.x, end.y - start.y]],
         strokeColor: away ? MOTION : "#e8590c",
         strokeWidth: 2,
         roughness: 2,
         endArrowhead: "arrow",
-      }];
+      }, labelText(
+        away ? (awayArrowX + awayArrowEndX) / 2 - 38 : (start.x + end.x) / 2 - 28,
+        away ? from.y + from.height / 2 - 30 : (start.y + end.y) / 2 - 30,
+        away ? "away from" : "toward",
+        { fontSize: 18, strokeColor: away ? MOTION : "#e8590c" },
+      )];
   const built = convertToExcalidrawElements(skeleton as never) as unknown as SceneElement[];
   return stableize(built, `story-rel:${relation.relationId}:p${pageIndex}`);
 }
@@ -512,6 +575,20 @@ export async function buildStoryEnvironmentElements(
   const y = origin.y + STORY_BOUNDS.y;
   const layers = scene.environment ?? {};
   const skeleton: Array<{ effect: StoryEnvironmentEffect; shapes: Record<string, unknown>[]; opacity: number }> = [];
+  // A restrained stage exists even in clear weather. It gives every action a
+  // shared horizon and ground plane without becoming a raster backdrop.
+  const stageShapes: Record<string, unknown>[] = [
+    line(x + 22, y + STORY_BOUNDS.height - 42, [[0, 0], [STORY_BOUNDS.width - 44, 0]], {
+      strokeColor: "#ced4da",
+      strokeWidth: STORY_VISUAL_TOKENS.stroke.environmentWidth,
+      opacity: 62,
+    }),
+    line(x + 74, y + STORY_BOUNDS.height - 18, [[0, 0], [STORY_BOUNDS.width - 148, 0]], {
+      strokeColor: "#e9ecef",
+      strokeWidth: 1,
+      opacity: 48,
+    }),
+  ];
   const sunlight = layers.sunlight;
   if (sunlight?.active) {
     const sunX = x + STORY_BOUNDS.width - 118;
@@ -577,10 +654,14 @@ export async function buildStoryEnvironmentElements(
       shapes: [rectangle(x, y, STORY_BOUNDS.width, STORY_BOUNDS.height, { strokeColor: "#495057", backgroundColor: "#343a40", fillStyle: "hachure", opacity: 28 })],
     });
   }
-  return skeleton.flatMap((layer) => {
+  const stage = stableize(
+    convertToExcalidrawElements(stageShapes as never) as unknown as SceneElement[],
+    `story-env:stage:p${pageIndex}`,
+  );
+  return [...stage, ...skeleton.flatMap((layer) => {
     const built = convertToExcalidrawElements(layer.shapes as never) as unknown as SceneElement[];
     return stableize(built.map((element) => ({ ...element, opacity: Math.min(Number(element.opacity ?? 100), layer.opacity) })), `story-env:${layer.effect}:p${pageIndex}`);
-  });
+  })];
 }
 
 export interface StoryAssetManifestEntry {

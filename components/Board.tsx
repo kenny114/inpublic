@@ -1,8 +1,11 @@
 "use client";
 
 import { Excalidraw } from "@excalidraw/excalidraw";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CanvasTopBar } from "@/components/CanvasShell";
 import { ControlBar, ErrorBanner } from "@/components/ControlBar";
+import type { SaveState } from "@/components/ProductUI";
 import { TranscriptStrip } from "@/components/TranscriptStrip";
 import { RecordingPanel } from "@/components/RecordingPanel";
 import { useDeepgram } from "@/hooks/useDeepgram";
@@ -76,6 +79,19 @@ import {
   type StructuralThoughtState,
 } from "@/lib/liveSpeech";
 import { liveLatencySample, type AudioTiming } from "@/lib/telemetry";
+import {
+  CAMERA_RULES,
+  READABILITY_CONTRACT,
+  effectiveTextSize,
+  initialCompositionState,
+  proposeCamera,
+  recordingViewport,
+  rectUnion,
+  type CameraView,
+  type CompositionState,
+  type ReadabilityRole,
+  type TextReadabilitySample,
+} from "@/lib/composition";
 import { detectGesture, extractConcepts } from "@/lib/sketch";
 import {
   activeStoryScene,
@@ -96,6 +112,8 @@ import {
   buildStoryEntityElements,
   buildStoryEnvironmentElements,
   buildStoryRelationElements,
+  STORY_BOUNDS,
+  storyStagingDecision,
   storyEntityPositions,
   storySceneFits,
 } from "@/lib/storyAssets";
@@ -161,8 +179,6 @@ const MAX_MARKS_PER_PAGE = 22;
  * between them rather than in the window, or the top of every page sits under
  * the toolbar.
  */
-const CHROME_TOP = 84;
-const CHROME_BOTTOM = 72;
 const DIM_OPACITY = 45;
 const CLEAR_OPACITY = 20;
 const TRANSCRIPT_WINDOW_MS = 90_000;
@@ -236,16 +252,19 @@ export default function Board({
   /** Skip the restore entirely — the dashboard asked for a blank canvas. */
   startFresh?: boolean;
 } = {}) {
+  const router = useRouter();
   const [recordingTarget, setRecordingTarget] = useState<HTMLDivElement | null>(null);
   const [api, setApi] = useState<any>(null);
   const apiRef = useRef<any>(null);
   apiRef.current = api;
 
   const [interim, setInterim] = useState("");
-  // Off by default now: the words are on the sheet, and a second copy of them
-  // in a strip along the bottom is noise on camera. `t` brings it back.
   const [showTranscript, setShowTranscript] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [recordingFocus, setRecordingFocus] = useState(false);
+  const [sessionTitle, setSessionTitle] = useState("Untitled visual session");
+  const sessionTitleRef = useRef("Untitled visual session");
+  const [saveStatus, setSaveStatus] = useState<SaveState>("saved");
   const [mode, setMode] = useState<InPublicMode>(initialMode ?? "standard");
   const modeRef = useRef<InPublicMode>(initialMode ?? "standard");
   const sessionIdRef = useRef(
@@ -302,6 +321,9 @@ export default function Board({
    */
   const boardRef = useRef<SemanticBoard>(new SemanticBoard());
   const storyRef = useRef<StoryState>(newStoryState());
+  const compositionRef = useRef<CompositionState>(initialCompositionState());
+  const compositionHistoryRef = useRef<CompositionState[]>([]);
+  const cameraAnimationSeqRef = useRef(0);
   const autosaveRef = useRef<ReturnType<typeof makeAutosave> | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
 
@@ -361,6 +383,11 @@ export default function Board({
         conceptIds: meta.conceptIds ?? [],
         elementIds: undo.addedElementIds,
         undo,
+        compositionBefore: {
+          ...compositionRef.current,
+          camera: { ...compositionRef.current.camera },
+          proposedTarget: compositionRef.current.proposedTarget ? { ...compositionRef.current.proposedTarget } : undefined,
+        },
       };
       boardRef.current.push(op);
       return op;
@@ -635,32 +662,138 @@ export default function Board({
    * leaves the shot — which means the camera holds perfectly still while you
    * talk, and only moves when the page actually turns.
    */
-  const framePage = useCallback((force = false) => {
-    if (sketchPannedRef.current && !force) return;
-    sketchPannedRef.current = true;
-    const origin = pageOrigin(pageRef.current);
-    const state = apiRef.current?.getAppState?.();
-    if (!state) return;
+  const animateCamera = useCallback((target: CameraView, reason: string) => {
+    const app = apiRef.current?.getAppState?.();
+    if (!app) return;
+    const from: CameraView = {
+      scrollX: Number(app.scrollX ?? 0),
+      scrollY: Number(app.scrollY ?? 0),
+      zoom: Number(app.zoom?.value ?? app.zoom ?? 1),
+    };
+    const sequence = ++cameraAnimationSeqRef.current;
+    const reduced = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    log({ type: "camera", event: "started", target, reason });
+    if (reduced) {
+      apiRef.current?.updateScene({ appState: { scrollX: target.scrollX, scrollY: target.scrollY, zoom: { value: target.zoom } } });
+      compositionRef.current = { ...compositionRef.current, camera: target, proposedTarget: undefined, movementReason: undefined };
+      log({ type: "camera", event: "completed", target, reason });
+      return;
+    }
+    const started = performance.now();
+    const frame = (time: number) => {
+      if (sequence !== cameraAnimationSeqRef.current) {
+        log({ type: "camera", event: "cancelled", target, reason });
+        return;
+      }
+      const progress = Math.min(1, (time - started) / CAMERA_RULES.transitionMs);
+      const eased = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      const camera = {
+        scrollX: from.scrollX + (target.scrollX - from.scrollX) * eased,
+        scrollY: from.scrollY + (target.scrollY - from.scrollY) * eased,
+        zoom: from.zoom + (target.zoom - from.zoom) * eased,
+      };
+      apiRef.current?.updateScene({ appState: { scrollX: camera.scrollX, scrollY: camera.scrollY, zoom: { value: camera.zoom } } });
+      if (progress < 1) requestAnimationFrame(frame);
+      else {
+        compositionRef.current = { ...compositionRef.current, camera: target, proposedTarget: undefined, movementReason: undefined };
+        log({ type: "camera", event: "completed", target, reason });
+      }
+    };
+    requestAnimationFrame(frame);
+  }, [log]);
 
-    // Centre the sheet in the space BETWEEN the chrome, not in the window.
-    // Excalidraw's toolbar floats over the top of the canvas and the control
-    // bar over the bottom; centring on the raw viewport tucks the first line
-    // of the page underneath the toolbar, where it reads as clipped.
-    const top = state.height - CHROME_TOP - CHROME_BOTTOM;
-    const zoom = Math.min(
-      1,
-      state.width / (PAGE_W + 120),
-      top / (PAGE_H + 60),
-    );
-    apiRef.current.updateScene({
-      appState: {
-        zoom: { value: zoom },
-        scrollX: state.width / (2 * zoom) - (origin.x + PAGE_W / 2),
-        scrollY:
-          (CHROME_TOP + top / 2) / zoom - (origin.y + PAGE_H / 2),
-      },
+  /** Frame meaningful content inside the exported rectangle, never the infinite sheet. */
+  const framePage = useCallback((force = false, reason = force ? "explicit page navigation" : "content entered safe frame") => {
+    if (compositionRef.current.proposedTarget && !force) return;
+    const app = apiRef.current?.getAppState?.();
+    if (!app?.width || !app?.height) return;
+    const origin = pageOrigin(pageRef.current);
+    const pageBounds = { x: origin.x, y: origin.y, width: PAGE_W, height: PAGE_H };
+    const onPage = elementsRef.current.filter((element) => {
+      const owner = String((element.customData as { inpublicStoryOwner?: string } | undefined)?.inpublicStoryOwner ?? "");
+      const isStory = owner.startsWith("story");
+      if (modeRef.current === "story" ? !isStory : isStory) return false;
+      return element.opacity !== 0 && element.x < pageBounds.x + pageBounds.width && element.x + Math.max(1, element.width) > pageBounds.x &&
+        element.y < pageBounds.y + pageBounds.height && element.y + Math.max(1, element.height) > pageBounds.y;
     });
-  }, []);
+    if (!force && onPage.length === 0) return;
+    const elementBounds = rectUnion(onPage.map((element) => ({
+      x: element.x,
+      y: element.y,
+      width: Math.max(1, element.width),
+      height: Math.max(1, element.height),
+    })));
+    const focalBounds = modeRef.current === "story"
+      ? { x: origin.x + STORY_BOUNDS.x, y: origin.y + STORY_BOUNDS.y, width: STORY_BOUNDS.width, height: STORY_BOUNDS.height }
+      : elementBounds ?? { x: origin.x + PAGE_PAD, y: origin.y + PAGE_PAD, width: PAGE_W - PAGE_PAD * 2, height: 500 };
+    const text = onPage.flatMap<TextReadabilitySample>((element) => {
+      const fontSize = Number(element.fontSize ?? 0);
+      if (element.type !== "text" || !fontSize) return [];
+      const role: ReadabilityRole = fontSize >= 26 ? "primary" : fontSize >= 18 ? "supporting" : "annotation";
+      return [{ id: element.id, fontSize, role }];
+    });
+    const currentCamera: CameraView = {
+      scrollX: Number(app.scrollX ?? 0),
+      scrollY: Number(app.scrollY ?? 0),
+      zoom: Number(app.zoom?.value ?? app.zoom ?? 1),
+    };
+    const scene = activeStoryScene(storyRef.current);
+    const focalSubject = modeRef.current === "story"
+      ? storyRef.current.recentEntityIds[0] ?? "story-stage"
+      : sketchRef.current.labels.at(-1) ?? boardRef.current.activeSectionId ?? "current explanation";
+    const activeCluster = modeRef.current === "story" ? scene?.sceneId ?? "story-scene" : `page:${pageRef.current}`;
+    const proposal = proposeCamera({
+      state: compositionRef.current,
+      viewport: recordingViewport(Number(app.width), Number(app.height)),
+      currentCamera,
+      focalBounds,
+      focalSubject,
+      activeCluster,
+      reason,
+      now: Date.now(),
+      text,
+      primarySubjectChanged: force && compositionRef.current.activeCluster !== activeCluster,
+      explicitNavigation: force,
+      followMovingSubject: false,
+    });
+    compositionRef.current = proposal.state;
+    sketchPannedRef.current = true;
+    log({
+      type: "composition",
+      event: proposal.contentFits ? "decision" : "suppression",
+      focalSubject,
+      activeCluster,
+      safeFrame: proposal.safeFrame,
+      effectiveTextSize: proposal.effectiveTextSize,
+      cameraTarget: proposal.target,
+      reason: proposal.reason,
+      moved: proposal.move,
+      contentFits: proposal.contentFits,
+      webcamCollisions: proposal.webcamCollisions,
+      occupiedCanvasRatio: proposal.occupiedCanvasRatio,
+      readabilityViolations: proposal.readabilityViolations,
+    });
+    for (const sample of text) {
+      const effective = effectiveTextSize(sample.fontSize, proposal.target.zoom);
+      if (effective < READABILITY_CONTRACT[sample.role]) {
+        log({ type: "readability", elementId: sample.id, role: sample.role, sourceFontSize: sample.fontSize, effectiveFontSize: effective, minimumFontSize: READABILITY_CONTRACT[sample.role] });
+      }
+    }
+    if (proposal.move) {
+      compositionHistoryRef.current.push({ ...compositionRef.current, camera: currentCamera, proposedTarget: undefined });
+      if (compositionHistoryRef.current.length > 200) compositionHistoryRef.current.shift();
+      animateCamera(proposal.target, proposal.reason);
+    }
+  }, [animateCamera, log]);
+
+  const restoreCompositionCamera = useCallback((snapshot?: CompositionState) => {
+    const previous = snapshot ?? compositionHistoryRef.current.pop();
+    if (!previous) return;
+    compositionRef.current = { ...previous, proposedTarget: undefined, movementReason: undefined };
+    animateCamera(previous.camera, "undo restored composition state");
+  }, [animateCamera]);
 
   /** Move the camera and the pen to an existing page without turning. */
   const gotoPage = useCallback(
@@ -673,7 +806,7 @@ export default function Board({
       pageRef.current = index;
       penRef.current = pagePensRef.current.get(index) ?? newPagePen(index);
       marksRef.current = pageMarksRef.current.get(index) ?? new Map();
-      framePage(true);
+      framePage(true, "explicit navigation to referenced page");
     },
     [framePage],
   );
@@ -726,7 +859,7 @@ export default function Board({
         midThought,
         carriedLiveLine: carry && carried !== "",
       });
-      framePage(true);
+      framePage(true, `page turn: ${reason}`);
 
       // Re-letter the carried sentence on the new sheet. Deliberately after
       // the log and the camera move, so the line lands on the page the viewer
@@ -826,9 +959,8 @@ export default function Board({
       ];
       storyCaptionIdsRef.current = new Set(built.elements.map((el) => el.id));
       commit();
-      framePage();
     },
-    [commit, framePage],
+    [commit],
   );
 
   const animateStoryElements = useCallback(async (
@@ -909,6 +1041,16 @@ export default function Board({
             if (entity.state.visible === false) entity.lifecycle = "historical";
             return { entity, rendering: undefined, built: [] as SceneElement[] };
           }
+          const staging = storyStagingDecision(entity);
+          log({
+            type: "story-staging",
+            entityId: entity.entityId,
+            zone: staging.zone,
+            bounds: position,
+            reason: entity.placement.relation
+              ? `${staging.reason}; placed ${entity.placement.relation} ${entity.placement.relativeTo ?? "target"}`
+              : staging.reason,
+          });
           const built = await buildStoryEntityElements(entity, position, rendering.pageIndex);
           return { entity, rendering, built };
         }),
@@ -955,9 +1097,11 @@ export default function Board({
     elementsRef.current = [...baseElements, ...versioned];
     const warnings = auditStoryRenderConsistency(renderState, elementsRef.current);
     commit();
-    framePage();
+    if (compositionRef.current.activeCluster !== activeStoryScene(renderState)?.sceneId) {
+      framePage(false, "initial Story stage entered the recording frame");
+    }
     return warnings;
-  }, [animateStoryElements, commit, framePage]);
+  }, [animateStoryElements, commit, framePage, log]);
 
   const ensureStoryPage = useCallback(
     (actions: StoryAction[]) => {
@@ -1001,6 +1145,7 @@ export default function Board({
       interpretation: { normalizedText?: string; confidence?: number } = {},
     ): Promise<string[]> => {
       const started = now();
+      const compositionBefore = { ...compositionRef.current, camera: { ...compositionRef.current.camera }, proposedTarget: compositionRef.current.proposedTarget ? { ...compositionRef.current.proposedTarget } : undefined };
       const actionTarget = (action: StoryAction) =>
         "entityId" in action
           ? action.entityId
@@ -1018,6 +1163,8 @@ export default function Board({
         result = applyStoryActions(storyRef.current, actions, sourceText, pageRef.current, interpretation);
       }
       storyRef.current = result.state;
+      const operation = storyRef.current.operations.at(-1);
+      if (operation && !operation.compositionBefore) operation.compositionBefore = compositionBefore;
       for (const applied of result.applied) {
         log({ type: "story-action-applied", result: applied });
         const entityId = applied.split(" ").at(-1) ?? "";
@@ -1079,6 +1226,7 @@ export default function Board({
     const started = performance.now();
     const beforeScene = activeStoryScene(storyRef.current);
     const beforeIds = new Set(Object.keys(beforeScene?.entities ?? {}));
+    const compositionBefore = { ...compositionRef.current, camera: { ...compositionRef.current.camera }, proposedTarget: compositionRef.current.proposedTarget ? { ...compositionRef.current.proposedTarget } : undefined };
     const result = applyStoryEvent(storyRef.current, event, pageRef.current);
     const proposedActions = result.decisions.length;
     if (!result.accepted) {
@@ -1130,6 +1278,7 @@ export default function Board({
       }
     }
     storyRef.current = result.state;
+    if (result.operation) result.operation.compositionBefore = compositionBefore;
     const animateMs = event.relations.some((relation) => relation.relation === "toward" || relation.relation === "away-from")
       ? 680
       : event.environment.length
@@ -1214,12 +1363,13 @@ export default function Board({
     const undone = undoStoryAction(storyRef.current);
     storyRef.current = undone.state;
     await renderStoryState();
+    restoreCompositionCamera(undone.operation?.compositionBefore);
     log({
       type: "story-undo",
       action: undone.operation?.actionType,
       operationId: undone.operation?.operationId,
     });
-  }, [log, renderStoryState]);
+  }, [log, renderStoryState, restoreCompositionCamera]);
 
   const applyOp = useCallback(
     async (op: Op, sourceText = ""): Promise<boolean> => {
@@ -1876,7 +2026,7 @@ export default function Board({
 
       // The diagram landed on the page we're already looking at, so re-frame
       // the sheet rather than flying off to the frame — no camera jump.
-      framePage(true);
+      framePage(false, "structured diagram joined the active visual cluster");
     },
     [commit, fadeIn, framePage, log, turnPage, waitForIdleHands],
   );
@@ -1917,8 +2067,9 @@ export default function Board({
     board.history = board.history.slice(0, index);
 
     lastDrawnAtRef.current = Date.now();
+    restoreCompositionCamera(op.compositionBefore);
     log({ type: "undo", operationType: op.type, operationId: op.operationId });
-  }, [log, revertOperation]);
+  }, [log, restoreCompositionCamera, revertOperation]);
 
   /** "Moving on to the next part" — turn to a clean sheet. */
   const doClear = useCallback(() => {
@@ -3361,15 +3512,17 @@ export default function Board({
   useEffect(() => {
     autosaveRef.current = makeAutosave(() => ({
       id: sessionIdRef.current,
+      title: sessionTitleRef.current,
       savedAt: Date.now(),
       startedAt: t0Ref.current,
       page: pageRef.current,
       elements: elementsRef.current,
       semantic: boardRef.current.snapshot(),
       story: storyRef.current,
+      composition: compositionRef.current,
       mode: modeRef.current,
       log: logRef.current,
-    }));
+    }), 3000, setSaveStatus);
     const flush = () => void autosaveRef.current?.flushNow();
     window.addEventListener("beforeunload", flush);
     return () => {
@@ -3382,9 +3535,13 @@ export default function Board({
   const restoreSession = useCallback(
     (session: PersistedSession) => {
       sessionIdRef.current = session.id ?? sessionIdRef.current;
+      const restoredTitle = session.title?.trim() || "Untitled visual session";
+      sessionTitleRef.current = restoredTitle;
+      setSessionTitle(restoredTitle);
       elementsRef.current = session.elements ?? [];
       boardRef.current = SemanticBoard.restore(session.semantic);
       storyRef.current = restoreStoryState(session.story);
+      compositionRef.current = session.composition ?? initialCompositionState();
       // An explicit `?mode=` from the dashboard outranks the saved mode. The
       // restore itself is unchanged — only which mode the session resumes in.
       modeRef.current = initialMode ?? session.mode ?? "standard";
@@ -3447,6 +3604,12 @@ export default function Board({
     // Restore runs once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const recompose = () => framePage(false, "recording viewport changed");
+    window.addEventListener("resize", recompose);
+    return () => window.removeEventListener("resize", recompose);
+  }, [framePage]);
 
   useEffect(() => {
     // Prime the correction vocabulary. Without this the seed terms — the
@@ -3518,6 +3681,7 @@ export default function Board({
       /** Simulate a streaming provider partial for provisional visual checks. */
       storyPartial: (text: string, confidence = 0) => handleStoryPartial(text, confidence),
       storyState: () => storyRef.current,
+      composition: () => compositionRef.current,
       /** The semantic board, for inspection. */
       board: () => boardRef.current,
       scene: () => semanticScene(),
@@ -3530,6 +3694,7 @@ export default function Board({
           t0Ref.current,
           storyRef.current,
           modeRef.current,
+          compositionRef.current,
         ),
     };
   }, [
@@ -3586,12 +3751,7 @@ export default function Board({
           element.x >= origin.x && element.x < origin.x + PAGE_W,
         );
         if (storyOnPage) {
-          penRef.current = {
-            ...penRef.current,
-            x: origin.x + PAGE_PAD,
-            y: Math.max(penRef.current.y, origin.y + PAGE_H - PAGE_PAD),
-            lineH: 0,
-          };
+          turnPage("standard-mode", "Standard Mode resumed on a deliberate explanation sheet after the persistent Story stage");
         }
       }
       log({ type: "mode", from: previous, to: next });
@@ -3629,15 +3789,42 @@ export default function Board({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [toggle]);
 
+  const handleTitleChange = useCallback((title: string) => {
+    sessionTitleRef.current = title;
+    setSessionTitle(title);
+    setSaveStatus("saving");
+    autosaveRef.current?.schedule();
+  }, []);
+
+  const handleExport = useCallback((kind: "png" | "svg" | "excalidraw" | "json") => {
+    const els = elementsRef.current;
+    if (kind === "png") void exportPng(els);
+    else if (kind === "svg") void exportSvg(els);
+    else if (kind === "excalidraw") exportExcalidraw(els);
+    else exportSceneJson(els, boardRef.current.snapshot(), logRef.current, t0Ref.current, storyRef.current, modeRef.current, compositionRef.current);
+  }, []);
+
+  const handleDownloadLog = useCallback(() => {
+    downloadLog(logRef.current, t0Ref.current, storyRef.current, modeRef.current);
+  }, []);
+
+  const finishSession = useCallback(() => {
+    if (status === "live" || status === "reconnecting" || status === "connecting") toggle();
+    void autosaveRef.current?.flushNow().then(() => router.push("/dashboard"));
+  }, [router, status, toggle]);
+
   // ---- render --------------------------------------------------------------
   return (
     <div
       ref={setRecordingTarget}
-      className="relative h-screen w-screen bg-white"
+      className={`canvas-shell relative h-screen w-screen bg-white ${recordingFocus ? "recording-focus" : ""}`}
+      data-recording-focus={recordingFocus ? "true" : "false"}
       onPointerDown={markPointerInput}
       onWheel={markPointerInput}
       onKeyDownCapture={markUserInput}
     >
+      <CanvasTopBar title={sessionTitle} saveState={saveStatus} onTitleChange={handleTitleChange} onExport={handleExport} onDownloadLog={handleDownloadLog} />
+
       <Excalidraw
         excalidrawAPI={(instance: unknown) => setApi(instance)}
         viewModeEnabled={false}
@@ -3669,13 +3856,20 @@ export default function Board({
         <></>
       </Excalidraw>
 
+      {process.env.NEXT_PUBLIC_COMPOSITION_DEBUG === "true" && (
+        <div className="pointer-events-none fixed inset-0 z-[80]" aria-hidden="true">
+          <div className="absolute border border-dashed border-indigo-400/80" style={{ left: 36, top: 36, bottom: 36, right: "calc(20vw + 52px)" }} />
+          <div className="absolute border border-dashed border-rose-400/80 bg-rose-100/10" style={{ right: 28, top: 28, width: "20vw", aspectRatio: "16 / 9" }} />
+        </div>
+      )}
+
       {showTranscript ? (
         <TranscriptStrip text={interim} />
       ) : (
         <span data-recording-transcript={interim} className="hidden" />
       )}
 
-      <ErrorBanner text={errorText} onDismiss={() => setErrorText(null)} />
+      <ErrorBanner text={errorText} onDismiss={() => setErrorText(null)} onRetry={toggle} />
 
       <ControlBar
         status={status}
@@ -3683,46 +3877,26 @@ export default function Board({
         mode={mode}
         onModeChange={handleModeChange}
         onToggleMic={toggle}
-        onDownload={() =>
-          downloadLog(
-            logRef.current,
-            t0Ref.current,
-            storyRef.current,
-            modeRef.current,
-          )
-        }
-        onExport={(kind) => {
-          const els = elementsRef.current;
-          if (kind === "png") void exportPng(els);
-          else if (kind === "svg") void exportSvg(els);
-          else if (kind === "excalidraw") exportExcalidraw(els);
-          else
-            exportSceneJson(
-              els,
-              boardRef.current.snapshot(),
-              logRef.current,
-              t0Ref.current,
-              storyRef.current,
-              modeRef.current,
-            );
-        }}
+        onFinish={finishSession}
       />
 
       <RecordingPanel
         target={recordingTarget}
         mode={mode}
         onTranscriptVisibilityChange={setShowTranscript}
+        onRecordingFocusChange={setRecordingFocus}
         getSnapshot={() => {
           const transcript = finalsRef.current.map((item) => item.text).join(" ").trim();
           return {
             sessionId: sessionIdRef.current,
-            title: transcript.split(/\s+/).slice(0, 7).join(" ") || "Untitled session",
+            title: sessionTitleRef.current.trim() || transcript.split(/\s+/).slice(0, 7).join(" ") || "Untitled visual session",
             mode: modeRef.current,
             transcript,
             story: storyRef.current,
             semantic: boardRef.current.snapshot(),
             page: pageRef.current,
             log: logRef.current,
+            composition: compositionRef.current,
           };
         }}
       />

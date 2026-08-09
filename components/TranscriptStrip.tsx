@@ -1,16 +1,11 @@
 "use client";
 
-/** Debug affordance while recording. `T` toggles it off. */
 export function TranscriptStrip({ text }: { text: string }) {
-  const visibleText = text.trim() || "Transcript is on — start speaking";
+  const visibleText = text.trim() || "Start speaking and your words will appear here immediately.";
   return (
-    <div data-recording-transcript={text} className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pb-1.5 text-center">
-      <span
-        className="text-neutral-800 opacity-50"
-        style={{ fontSize: 14, lineHeight: "20px" }}
-      >
-        {visibleText.slice(-120)}
-      </span>
+    <div data-recording-transcript={text} className="canvas-transcript" aria-live="polite">
+      <span>{text.trim() ? "Hearing you" : "Live transcript"}</span>
+      <p>{visibleText.slice(-150)}</p>
     </div>
   );
 }
