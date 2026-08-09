@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { Search } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { StarIcon } from "@/components/DashboardIcons";
 import { EmptyState, ModeBadge, StatusBadge } from "@/components/DashboardUI";
+import { Button, Modal, Toast } from "@/components/ProductUI";
 import { exportSession, SessionActionsMenu, type SessionAction } from "@/components/SessionActions";
 import { SessionDetailsPanel } from "@/components/SessionDetailsPanel";
 import { useSessionSummaries } from "@/hooks/useSessionSummaries";
-import { deleteSession, duplicateSession, renameSession, setSessionStarred } from "@/lib/persist";
+import { deleteSession, duplicateSession, loadSessionById, renameSession, restoreDeletedSession, setSessionStarred, type PersistedSession } from "@/lib/persist";
 import { deriveTitle, formatDuration, formatRelative, statusOf, type SessionSummary } from "@/lib/sessions";
 
 const filters = ["All sessions", "Standard Mode", "Story Mode", "Recorded", "Unrecorded", "Starred"] as const;
@@ -38,6 +40,11 @@ export function SessionsBrowser() {
   const [sort, setSort] = useState<Sort>("recent");
   const [layout, setLayout] = useState<"list" | "grid">("list");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<SessionSummary | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null);
+  const [toast, setToast] = useState<{ message: string; actionLabel?: string; onAction?: () => void } | null>(null);
+  const dismissToast = useCallback(() => setToast(null), []);
 
   // The top-bar search writes ?q=, so this page is the one place the query lives.
   useEffect(() => { setQuery(params.get("q") ?? ""); }, [params]);
@@ -66,28 +73,55 @@ export function SessionsBrowser() {
         router.push(`/create?session=${encodeURIComponent(session.id)}&mode=${session.mode}`);
         return;
       case "rename": {
-        const next = window.prompt("Rename session", session.title);
-        if (next && next.trim()) { await renameSession(session.id, next.trim()); await refresh(); }
+        setRenameValue(session.title);
+        setRenameTarget(session);
         return;
       }
       case "duplicate":
         await duplicateSession(session.id, (from) => `${from.title?.trim() || deriveTitle(from)} (copy)`);
         await refresh();
+        setToast({ message: "Session duplicated" });
         return;
       case "export":
         await exportSession(session);
+        setToast({ message: "Session download started" });
         return;
       case "delete":
-        if (window.confirm(`Delete “${session.title}”? This removes it from this browser and cannot be undone.`)) {
-          await deleteSession(session.id);
-          if (selectedId === session.id) setSelectedId(null);
-          await refresh();
-        }
+        setDeleteTarget(session);
     }
+  };
+
+  const submitRename = async (event: FormEvent) => {
+    event.preventDefault();
+    const title = renameValue.trim();
+    if (!renameTarget || !title) return;
+    await renameSession(renameTarget.id, title);
+    setRenameTarget(null);
+    await refresh();
+    setToast({ message: "Session renamed" });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    const removed: PersistedSession | null = await loadSessionById(deleteTarget.id);
+    await deleteSession(deleteTarget.id);
+    if (selectedId === deleteTarget.id) setSelectedId(null);
+    setDeleteTarget(null);
+    await refresh();
+    setToast({
+      message: "Session deleted",
+      actionLabel: removed ? "Undo" : undefined,
+      onAction: removed ? () => { void restoreDeletedSession(removed).then(refresh); setToast(null); } : undefined,
+    });
   };
 
   const controls = (
     <div className="flex flex-wrap items-center gap-2">
+      <label className="relative mb-2 w-full" htmlFor="session-search">
+        <span className="sr-only">Search sessions</span>
+        <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+        <input id="session-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" className="h-10 w-full rounded-[10px] border border-zinc-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-[#5b5bd6] focus:ring-2 focus:ring-[#eff0ff]" />
+      </label>
       <div className="flex flex-wrap gap-1" role="group" aria-label="Filter sessions">
         {filters.map((name) => (
           <button
@@ -95,7 +129,7 @@ export function SessionsBrowser() {
             type="button"
             onClick={() => setFilter(name)}
             aria-pressed={filter === name}
-            className={`rounded-lg px-2.5 py-1.5 text-xs font-medium ${filter === name ? "bg-indigo-50/80 text-indigo-950" : "text-zinc-500 hover:bg-zinc-100/70"}`}
+            className={`rounded-lg px-2.5 py-1.5 text-xs font-medium ${filter === name ? "bg-[#eff0ff] text-[#4b4db2]" : "text-zinc-500 hover:bg-zinc-100"}`}
           >
             {name}
           </button>
@@ -142,7 +176,7 @@ export function SessionsBrowser() {
       return (
         <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {visible.map((session) => (
-            <div key={session.id} className={`rounded-2xl border bg-white p-4 ${selectedId === session.id ? "border-indigo-300" : "border-zinc-200"}`}>
+            <div key={session.id} className={`rounded-[10px] border bg-white p-4 ${selectedId === session.id ? "border-[#9598ea]" : "border-zinc-200"}`}>
               <div className="flex items-start justify-between gap-2">
                 <button type="button" onClick={() => setSelectedId(session.id)} className="min-w-0 flex-1 text-left">
                   <span className="flex items-center gap-1.5 text-sm font-medium">
@@ -166,7 +200,7 @@ export function SessionsBrowser() {
     }
 
     return (
-      <div className="mt-6 overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+      <div className="mt-6 overflow-hidden rounded-[10px] border border-zinc-200 bg-white">
         <div className="hidden border-b border-zinc-100 bg-zinc-50/50 px-5 py-2 text-[11px] font-medium uppercase tracking-wider text-zinc-400 md:flex">
           <span className="flex-1">Session</span>
           <span className="w-24">Mode</span>
@@ -177,7 +211,7 @@ export function SessionsBrowser() {
         </div>
         <ul className="divide-y divide-zinc-100">
           {visible.map((session) => (
-            <li key={session.id} className={selectedId === session.id ? "bg-indigo-50/40" : ""}>
+            <li key={session.id} className={selectedId === session.id ? "bg-[#f5f5ff]" : ""}>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3 md:flex-nowrap">
                 <button type="button" onClick={() => setSelectedId(session.id)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm font-medium hover:underline">
                   {session.starred && <StarIcon className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-500" />}
@@ -206,7 +240,7 @@ export function SessionsBrowser() {
       {selected && (
         <>
           {/* Desktop: a column beside the list. Below lg it becomes a drawer. */}
-          <aside className="sticky top-24 hidden h-[calc(100vh-8rem)] rounded-2xl border border-zinc-200 bg-white lg:block">
+          <aside className="sticky top-24 hidden h-[calc(100vh-8rem)] rounded-[10px] border border-zinc-200 bg-white lg:block">
             <SessionDetailsPanel session={selected} onClose={() => setSelectedId(null)} onStar={(value) => void star(selected, value)} />
           </aside>
           <div className="fixed inset-0 z-40 lg:hidden">
@@ -217,6 +251,12 @@ export function SessionsBrowser() {
           </div>
         </>
       )}
+
+      <Modal open={Boolean(renameTarget)} title="Rename session" onClose={() => setRenameTarget(null)} footer={<><Button tone="secondary" onClick={() => setRenameTarget(null)}>Cancel</Button><Button type="submit" form="sessions-rename-form" disabled={!renameValue.trim()}>Save name</Button></>}>
+        <form id="sessions-rename-form" onSubmit={submitRename}><label className="dashboard-field-label" htmlFor="sessions-session-name">Session title</label><input id="sessions-session-name" className="ui-input" value={renameValue} onChange={(event) => setRenameValue(event.target.value)} maxLength={120} autoFocus /></form>
+      </Modal>
+      <Modal open={Boolean(deleteTarget)} title="Delete this session?" description={deleteTarget ? `“${deleteTarget.title}” will be removed from this browser. You will have a few seconds to undo.` : undefined} onClose={() => setDeleteTarget(null)} footer={<><Button tone="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button><Button tone="destructive" onClick={() => void confirmDelete()}>Delete session</Button></>} />
+      {toast ? <Toast message={toast.message} actionLabel={toast.actionLabel} onAction={toast.onAction} onDismiss={dismissToast} /> : null}
     </div>
   );
 }

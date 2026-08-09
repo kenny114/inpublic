@@ -472,6 +472,18 @@ export function applyStoryEvent(input: StoryState, event: StoryEvent, pageIndex:
         from.state.directionTargetId = to.entityId;
       }
       const relationId = `${from.entityId}-${relation.relation}-${to.entityId}`;
+      if (relation.relation === "toward" || relation.relation === "away-from") {
+        for (const [existingId, existing] of Object.entries(scene.relations)) {
+          if (
+            existing.fromEntityId === from.entityId &&
+            (existing.relationType === "toward" || existing.relationType === "away-from") &&
+            existingId !== relationId
+          ) {
+            delete scene.relations[existingId];
+            changedRelationIds.push(existingId);
+          }
+        }
+      }
       const record: StoryRelation = {
         relationId,
         fromEntityId: from.entityId,

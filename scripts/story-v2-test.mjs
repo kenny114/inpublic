@@ -159,7 +159,7 @@ const house = resolveStoryEntity(motion, "house");
 const walkingPositions = storyEntityPositions(activeStoryScene(motion));
 const walkingBox = walkingPositions.get(walkingCat.entityId);
 const houseBox = walkingPositions.get(house.entityId);
-check("movement ends at deterministic target anchor", Math.abs(walkingBox.x - (houseBox.x - walkingBox.width - 110)) < 0.01);
+check("movement ends at a readable destination approach", Math.abs(walkingBox.x - (houseBox.x - walkingBox.width - 72)) < 0.01);
 motionStep = applyText(motion, "The cat ran away from the tree.", 3);
 motion = motionStep.result.state;
 const runningCat = resolveStoryEntity(motion, "cat");

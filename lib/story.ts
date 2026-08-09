@@ -1,4 +1,5 @@
 import type { SceneElement } from "./scene";
+import type { CompositionState } from "./composition";
 import { isThoughtComplete } from "./pagination";
 import {
   isStoryEffect,
@@ -157,6 +158,7 @@ export interface StoryOperation {
   timestamp: number;
   sourceText: string;
   before: StorySnapshot;
+  compositionBefore?: CompositionState;
 }
 
 export interface StoryState extends StorySnapshot {

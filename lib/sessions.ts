@@ -26,6 +26,8 @@ export interface SessionSummary {
   pages: number;
   elementCount: number;
   conceptCount: number;
+  /** A few real labels for the compact canvas preview. */
+  previewLabels: string[];
   recordings: SavedRecording[];
   spokenWords: number;
   starred: boolean;
@@ -93,6 +95,10 @@ export function summarize(
     pages: (session.page ?? 0) + 1,
     elementCount: session.elements?.length ?? 0,
     conceptCount: session.semantic?.concepts?.length ?? 0,
+    previewLabels: (session.semantic?.concepts ?? [])
+      .map((concept) => concept.label?.trim())
+      .filter((label): label is string => Boolean(label))
+      .slice(0, 3),
     starred: session.starred === true,
     recordings: recordings.filter((item) => item.metadata.sessionId === id),
     spokenWords: transcript.reduce(

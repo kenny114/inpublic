@@ -31,6 +31,8 @@ export type PageTurnReason =
   | "explicit-clear"
   /** Switching into Story Mode intentionally reserves one clean scene page. */
   | "story-mode"
+  /** Returning to Standard Mode starts a deliberate explanation sheet. */
+  | "standard-mode"
   /** A single utterance is longer than one sheet. */
   | "long-utterance";
 
