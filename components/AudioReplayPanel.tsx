@@ -40,6 +40,16 @@ import type { SemanticScene } from "@/lib/semantic";
 import type { AudioSegment, AudioTimeline } from "@/lib/audio/types";
 import { ReplayController, type ReplayControllerSnapshot } from "@/lib/audio/replayController";
 import { providerRequestHeaders } from "@/lib/usage-client";
+import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
+
+/**
+ * Vercel Functions cap a request body at 4.5MB — well under a real lecture
+ * recording. The file now goes straight from the browser to Supabase
+ * Storage (under the uploading user's own RLS-scoped folder), and the
+ * server route is handed a storage path instead of the raw bytes. See
+ * supabase/migrations/202608100001_lecture_upload_storage.sql.
+ */
+const LECTURE_UPLOADS_BUCKET = "lecture-uploads";
 
 const MATH_ENABLED = process.env.NEXT_PUBLIC_ENABLE_MATH_MODE === "true";
 
@@ -146,13 +156,24 @@ export function AudioReplayPanel({ applyActions, semanticScene, log, onClose }: 
     const url = URL.createObjectURL(file);
     setObjectUrl(url);
 
+    let storagePath: string | null = null;
     try {
-      const form = new FormData();
-      form.append("audio", file);
+      const supabase = createBrowserSupabaseClient();
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) throw new Error("Sign in to upload a recording.");
+
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-120) || "recording";
+      storagePath = `${userData.user.id}/${crypto.randomUUID()}-${safeName}`;
+      const { error: uploadError } = await supabase.storage
+        .from(LECTURE_UPLOADS_BUCKET)
+        .upload(storagePath, file, { contentType: file.type || "application/octet-stream", upsert: false });
+      if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
+      if (shutdownRef.current) return;
+
       const res = await fetch("/api/audio/upload", {
         method: "POST",
-        headers: providerRequestHeaders(),
-        body: form,
+        headers: providerRequestHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ storagePath, mimetype: file.type || "application/octet-stream", sizeBytes: file.size }),
       });
       const data = (await res.json()) as { timeline?: AudioTimeline; error?: { message: string } };
       if (!res.ok || !data.timeline) {
