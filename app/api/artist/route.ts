@@ -3,6 +3,8 @@ import { ARTIST_MODEL, complete } from "@/lib/llm";
 import { parseActions } from "@/lib/actions";
 import { ARTIST_SYSTEM } from "@/lib/prompts";
 import type { ArtistRequest } from "@/lib/types";
+import { guardProviderRequest, reconcileProviderCost, type ProviderUsage } from "@/lib/server/provider-guard";
+import { providerFor } from "@/lib/llm";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +21,13 @@ export async function POST(req: Request) {
   try {
     body = (await req.json()) as ArtistRequest;
   } catch {
-    return NextResponse.json({ actions: [] });
+    return NextResponse.json({ error: { code: "invalid_request", message: "Invalid request." } }, { status: 400 });
   }
+
+  const provider = providerFor(ARTIST_MODEL);
+  const guard = await guardProviderRequest(req, { feature: "artist", provider, model: ARTIST_MODEL, requestBytes: Buffer.byteLength(JSON.stringify(body)), maxOutputTokens: 1200 });
+  if (guard instanceof Response) return guard;
+  let usage: ProviderUsage = {};
 
   const scene = body.scene;
   const intent = body.intent === "command" ? "command" : "draw";
@@ -61,9 +68,12 @@ export async function POST(req: Request) {
       maxTokens: 1200,
       temperature: 0.3,
       allowThinking: true,
+      onUsage: (value) => { usage = value; },
     });
+    await reconcileProviderCost(guard, "succeeded", usage, Buffer.byteLength(raw));
     return NextResponse.json({ actions: parseActions(raw) });
   } catch (err) {
+    await reconcileProviderCost(guard, "failed", usage);
     console.error("[artist]", err);
     // An artist failure must never reach the canvas. Empty is a safe answer.
     return NextResponse.json({ actions: [], error: String(err) });

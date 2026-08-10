@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3210",
     "typecheck": "tsc --noEmit",
-    "test": "node --no-warnings --import ./scripts/ts-register.mjs scripts/unit-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/pipeline-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/story-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/story-visual-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/story-v2-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/composition-test.mjs && node scripts/product-test.mjs",
+    "lint": "tsc --noEmit && node --import ./scripts/ts-register.mjs scripts/foundation-test.mjs",
+    "test": "node --no-warnings --import ./scripts/ts-register.mjs scripts/foundation-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/unit-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/pipeline-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/story-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/story-visual-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/story-v2-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/composition-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/math-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/audio-test.mjs && node --no-warnings --import ./scripts/ts-register.mjs scripts/math-benchmark.mjs && node scripts/product-test.mjs",
     "test:live": "node --no-warnings --import ./scripts/ts-register.mjs scripts/pipeline-test.mjs --live"
   },
   "dependencies": {
@@ -16,10 +17,14 @@
     "@excalidraw/excalidraw": "^0.18.0",
     "@excalidraw/mermaid-to-excalidraw": "^1.1.2",
     "@google/genai": "^2.16.0",
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.112.2",
+    "@whop/sdk": "^0.0.42",
     "lucide-react": "^0.468.0",
     "next": "^15.5.4",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.13",

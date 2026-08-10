@@ -38,6 +38,8 @@ export interface PersistedSession {
   title?: string;
   /** Set by the dashboard. The canvas neither reads nor writes this. */
   starred?: boolean;
+  /** Optimistic-concurrency version returned by Supabase. */
+  cloudUpdatedAt?: string;
 }
 
 /**
@@ -48,6 +50,7 @@ export interface PersistedSession {
  */
 const LIBRARY_PREFIX = "session:";
 const libraryKey = (id: string) => `${LIBRARY_PREFIX}${id}`;
+const cloudVersions = new Map<string, string>();
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -64,7 +67,7 @@ function open(): Promise<IDBDatabase> {
   });
 }
 
-export async function saveSession(session: PersistedSession): Promise<void> {
+async function saveLocalSession(session: PersistedSession): Promise<void> {
   const db = await open();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
@@ -79,6 +82,55 @@ export async function saveSession(session: PersistedSession): Promise<void> {
   db.close();
 }
 
+type CloudSaveState = "saved" | "offline" | "failed";
+
+async function saveCloudSession(session: PersistedSession): Promise<{ state: CloudSaveState; session: PersistedSession }> {
+  if (typeof window === "undefined") return { state: "saved", session };
+  if (!navigator.onLine) return { state: "offline", session };
+  const knownVersion = session.cloudUpdatedAt ?? (session.id ? cloudVersions.get(session.id) : undefined);
+  const outbound = { ...session, cloudUpdatedAt: knownVersion };
+  const method = knownVersion ? "PUT" : "POST";
+  const url = knownVersion ? `/api/projects/${encodeURIComponent(session.id ?? "")}` : "/api/projects";
+  try {
+    let response: Response | null = null;
+    // Autosaves get a small, bounded retry window. IndexedDB is already durable,
+    // so this improves transient cloud failures without trapping the UI in a
+    // long retry loop or multiplying provider/database work indefinitely.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        response = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(outbound) });
+      } catch {
+        response = null;
+      }
+      if (response && response.status !== 429 && response.status < 500) break;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 250 : 750));
+    }
+    if (!response) return { state: navigator.onLine ? "failed" : "offline", session };
+    if (response.status === 401) return { state: "offline", session };
+    if (response.status === 409) {
+      const payload = await response.json() as { cloud?: PersistedSession };
+      if (payload.cloud?.id) {
+        const recoveryId = crypto.randomUUID();
+        await writeLibrary(recoveryId, { ...payload.cloud, id: recoveryId, title: `${payload.cloud.title ?? "Untitled visual session"} (cloud copy)`, cloudUpdatedAt: undefined });
+      }
+      return { state: "failed", session };
+    }
+    if (!response.ok) return { state: "failed", session };
+    const payload = await response.json() as { project: PersistedSession };
+    if (session.id && payload.project.cloudUpdatedAt) cloudVersions.set(session.id, payload.project.cloudUpdatedAt);
+    return { state: "saved", session: { ...session, cloudUpdatedAt: payload.project.cloudUpdatedAt } };
+  } catch {
+    return { state: navigator.onLine ? "failed" : "offline", session };
+  }
+}
+
+export async function saveSession(session: PersistedSession): Promise<CloudSaveState> {
+  await saveLocalSession(session);
+  const cloud = await saveCloudSession(session);
+  if (cloud.session.cloudUpdatedAt !== session.cloudUpdatedAt) await saveLocalSession(cloud.session);
+  return cloud.state;
+}
+
 /**
  * Every session in the library, newest first.
  *
@@ -86,9 +138,10 @@ export async function saveSession(session: PersistedSession): Promise<void> {
  * pointer never shows up as a second copy of the session it points at.
  */
 export async function listSessions(): Promise<PersistedSession[]> {
+  let sessions: PersistedSession[] = [];
   try {
     const db = await open();
-    const sessions = await new Promise<PersistedSession[]>((resolve, reject) => {
+    sessions = await new Promise<PersistedSession[]>((resolve, reject) => {
       const tx = db.transaction(STORE, "readonly");
       const request = tx.objectStore(STORE).openCursor();
       const found: PersistedSession[] = [];
@@ -103,14 +156,50 @@ export async function listSessions(): Promise<PersistedSession[]> {
       request.onerror = () => reject(request.error);
     });
     db.close();
-    return sessions.sort((a, b) => b.savedAt - a.savedAt);
   } catch {
-    return [];
+    sessions = [];
   }
+  let cloud: PersistedSession[] = [];
+  if (typeof window !== "undefined" && navigator.onLine) {
+    try {
+      const response = await fetch("/api/projects", { cache: "no-store" });
+      if (response.ok) cloud = ((await response.json()) as { projects: PersistedSession[] }).projects;
+    } catch { /* IndexedDB remains the offline source. */ }
+  }
+  const merged = new Map<string, PersistedSession>();
+  for (const item of sessions) if (item.id) merged.set(item.id, item);
+  for (const item of cloud) {
+    if (!item.id) continue;
+    if (item.cloudUpdatedAt) cloudVersions.set(item.id, item.cloudUpdatedAt);
+    const local = merged.get(item.id);
+    if (!local || item.savedAt >= local.savedAt) {
+      merged.set(item.id, item);
+      await writeLibrary(item.id, item);
+    }
+  }
+  return [...merged.values()].sort((a, b) => b.savedAt - a.savedAt);
 }
 
 /** One library session by id, for reopening it on the canvas. */
 export async function loadSessionById(id: string): Promise<PersistedSession | null> {
+  const local = await loadLocalSessionById(id);
+  if (typeof window !== "undefined" && navigator.onLine) {
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (response.ok) {
+        const cloud = ((await response.json()) as { project: PersistedSession }).project;
+        if (cloud.cloudUpdatedAt) cloudVersions.set(id, cloud.cloudUpdatedAt);
+        if (!local || cloud.savedAt >= local.savedAt) {
+          await writeLibrary(id, cloud);
+          return cloud;
+        }
+      }
+    } catch { /* use local recovery */ }
+  }
+  return local;
+}
+
+async function loadLocalSessionById(id: string): Promise<PersistedSession | null> {
   try {
     const db = await open();
     const result = await new Promise<PersistedSession | undefined>((resolve, reject) => {
@@ -146,13 +235,13 @@ async function writeLibrary(id: string, session: PersistedSession | null): Promi
 export async function renameSession(id: string, title: string): Promise<void> {
   const session = await loadSessionById(id);
   if (!session) return;
-  await writeLibrary(id, { ...session, title });
+  await saveSession({ ...session, title, savedAt: Date.now() });
 }
 
 export async function setSessionStarred(id: string, starred: boolean): Promise<void> {
   const session = await loadSessionById(id);
   if (!session) return;
-  await writeLibrary(id, { ...session, starred });
+  await saveSession({ ...session, starred, savedAt: Date.now() });
 }
 
 /** Copies a session into a new id. The canvas's "current" record is untouched. */
@@ -163,18 +252,22 @@ export async function duplicateSession(id: string, deriveTitle: (from: Persisted
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `session-${Date.now()}`;
-  await writeLibrary(copyId, { ...session, id: copyId, savedAt: Date.now(), title: deriveTitle(session) });
+  const copy = { ...session, id: copyId, cloudUpdatedAt: undefined, savedAt: Date.now(), title: deriveTitle(session) };
+  await saveSession(copy);
   return copyId;
 }
 
 export async function deleteSession(id: string): Promise<void> {
   await writeLibrary(id, null);
+  if (typeof window !== "undefined" && navigator.onLine) {
+    await fetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => undefined);
+  }
 }
 
 /** Restore a recently deleted library row without changing the active canvas. */
 export async function restoreDeletedSession(session: PersistedSession): Promise<void> {
   if (!session.id) return;
-  await writeLibrary(session.id, session);
+  await saveSession({ ...session, cloudUpdatedAt: undefined, savedAt: Date.now() });
 }
 
 export async function loadSession(): Promise<PersistedSession | null> {
@@ -219,7 +312,7 @@ export async function clearSession(): Promise<void> {
 export function makeAutosave(
   getSession: () => PersistedSession,
   intervalMs = 3000,
-  onStateChange?: (state: "saving" | "saved" | "error") => void,
+  onStateChange?: (state: "saving" | "saved" | "offline" | "failed") => void,
 ) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
@@ -229,11 +322,10 @@ export function makeAutosave(
     inFlight = true;
     onStateChange?.("saving");
     try {
-      await saveSession(getSession());
-      onStateChange?.("saved");
+      onStateChange?.(await saveSession(getSession()));
     } catch {
       /* a failed autosave must never surface on the canvas */
-      onStateChange?.("error");
+      onStateChange?.("failed");
     } finally {
       inFlight = false;
     }

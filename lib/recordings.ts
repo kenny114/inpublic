@@ -100,6 +100,14 @@ export async function deleteRecording(id: string): Promise<void> {
   db.close();
 }
 
+/** The file extension a recorded blob's mimeType actually calls for — never hardcode one. */
+export function extensionForMimeType(mimeType: string): string {
+  if (mimeType.includes("mp4")) return "mp4";
+  if (mimeType.includes("webm")) return "webm";
+  if (mimeType.includes("ogg")) return "ogg";
+  return "webm";
+}
+
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");

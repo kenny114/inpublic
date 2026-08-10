@@ -27,6 +27,7 @@ import {
 } from "../lib/liveSpeech.ts";
 import { liveLatencySample } from "../lib/telemetry.ts";
 import { composeAttentionBudget, withinInitialCompositionWindow } from "../lib/attention.ts";
+import { requestDelayMs, retryAfterMs } from "../lib/requestScheduling.ts";
 import {
   destructiveCorrections,
   firstTwoMinutePages,
@@ -50,6 +51,26 @@ function check(name, condition, detail = "") {
 function section(title) {
   console.log(`\n── ${title}`);
 }
+
+// ---------------------------------------------------------- request pacing
+
+section("request pacing");
+
+check(
+  "a first request can run immediately",
+  requestDelayMs({ nowMs: 100_000, lastRunAtMs: 0, retryAtMs: 0, lastPointerAtMs: 0, minIntervalMs: 5250, touchLockMs: 1500 }) === 0,
+);
+check(
+  "queued work cannot bypass the minimum interval",
+  requestDelayMs({ nowMs: 12_000, lastRunAtMs: 10_000, retryAtMs: 0, lastPointerAtMs: 0, minIntervalMs: 5250, touchLockMs: 1500 }) === 3250,
+);
+check(
+  "the server cooldown wins when it is longer",
+  requestDelayMs({ nowMs: 12_000, lastRunAtMs: 10_000, retryAtMs: 20_000, lastPointerAtMs: 0, minIntervalMs: 5250, touchLockMs: 1500 }) === 8000,
+);
+check("Retry-After seconds are respected", retryAfterMs("17", 60_000, 1000) === 17_000);
+check("Retry-After dates are respected", retryAfterMs("Thu, 01 Jan 1970 00:00:20 GMT", 60_000, 1000) === 19_000);
+check("invalid Retry-After uses a safe fallback", retryAfterMs("later", 60_000, 1000) === 60_000);
 
 // ---------------------------------------------------------------- vocabulary
 

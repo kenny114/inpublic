@@ -72,12 +72,14 @@ export function RecordingPanel({
   mode,
   onTranscriptVisibilityChange,
   onRecordingFocusChange,
+  onListeningPause,
 }: {
   target: HTMLElement | null;
   getSnapshot: () => RecordingSnapshot;
   mode: InPublicMode;
   onTranscriptVisibilityChange: (visible: boolean) => void;
   onRecordingFocusChange?: (active: boolean) => void;
+  onListeningPause?: () => void;
 }) {
   const recorder = useCanvasRecorder(target, getSnapshot);
   const dock = useMovableSurface();
@@ -110,6 +112,7 @@ export function RecordingPanel({
     await recorder.toggleWebcam();
     if (opening) setSettingsOpen(false);
   };
+  const pauseRecording = () => { recorder.pause(); onListeningPause?.(); };
 
   return (
     <>
@@ -156,7 +159,7 @@ export function RecordingPanel({
         ) : recorder.status === "paused" ? (
           <button type="button" onClick={recorder.resume} className="canvas-record-button"><Circle size={11} />Resume</button>
         ) : (
-          <button type="button" onClick={recorder.pause} className="canvas-recorder-icon-action" aria-label="Pause recording" title="Pause"><Pause size={14} /></button>
+          <button type="button" onClick={pauseRecording} className="canvas-recorder-icon-action" aria-label="Pause recording" title="Pause"><Pause size={14} /></button>
         )}
 
         {active ? <button type="button" onClick={recorder.stop} className="canvas-recorder-icon-action danger" aria-label="Stop recording" title="Stop"><Square size={12} /></button> : null}

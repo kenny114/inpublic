@@ -1,5 +1,6 @@
 import { createClient } from "@deepgram/sdk";
 import { NextResponse } from "next/server";
+import { guardProviderRequest, reconcileProviderCost } from "@/lib/server/provider-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -13,11 +14,14 @@ const TTL_SECONDS = 60;
  * bearer access token. createProjectKey is the fallback — it needs a key with
  * `keys:write` (admin/owner), which most project keys don't have.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const guard = await guardProviderRequest(request, { feature: "deepgram", provider: "deepgram", model: "nova-3", audioSeconds: 45 });
+  if (guard instanceof Response) return guard;
   const rootKey = process.env.DEEPGRAM_API_KEY;
   if (!rootKey) {
+    await reconcileProviderCost(guard, "failed", { actualCostUsd: 0 });
     return NextResponse.json(
-      { error: "DEEPGRAM_API_KEY is not set" },
+      { error: { code: "provider_unavailable", message: "Transcription is temporarily unavailable." } },
       { status: 500 },
     );
   }
@@ -57,6 +61,7 @@ export async function GET() {
 
     return NextResponse.json({ key: key?.key, expiresIn: TTL_SECONDS });
   } catch (err) {
+    await reconcileProviderCost(guard, "failed", { actualCostUsd: 0 });
     console.error("[deepgram/token]", err);
     return NextResponse.json(
       { error: "Failed to mint Deepgram credential" },

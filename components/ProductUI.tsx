@@ -103,13 +103,13 @@ export function Tooltip({ label, children }: { label: string; children: ReactNod
   return <span className="ui-tooltip" data-tooltip={label}>{children}</span>;
 }
 
-export type SaveState = "saving" | "saved" | "error";
+export type SaveState = "saving" | "saved" | "offline" | "failed";
 
 export function SavedStatus({ state }: { state: SaveState }) {
   return (
     <span className={`ui-saved-status ${state}`} role="status">
       {state === "saving" ? <LoaderCircle size={13} className="ui-spin" /> : state === "saved" ? <Check size={13} /> : <span aria-hidden="true">!</span>}
-      {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : "Save failed"}
+      {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : state === "offline" ? "Saved locally" : "Cloud save failed"}
     </span>
   );
 }

@@ -15,6 +15,7 @@
 
 import type { SceneElement } from "./scene";
 import type { CompositionState } from "./composition";
+import type { MathReasoningStep } from "./math/types";
 
 export type ConceptKind =
   | "input"
@@ -25,11 +26,17 @@ export type ConceptKind =
   | "problem"
   | "solution"
   | "goal"
-  | "note";
+  | "note"
+  // Math domain — additive. A generic concept never becomes one of these
+  // implicitly; only the math pipeline (feature-flagged) creates them.
+  | "equation"
+  | "graph"
+  | "math_step";
 
 export const CONCEPT_KINDS: ConceptKind[] = [
   "input", "process", "output", "person", "product",
   "problem", "solution", "goal", "note",
+  "equation", "graph", "math_step",
 ];
 
 export interface Concept {
@@ -42,6 +49,8 @@ export interface Concept {
   confidence: number;
   createdAt: number;
   lastUpdatedAt: number;
+  /** Present only for kind "equation" | "graph" | "math_step". */
+  mathMeaning?: MathReasoningStep;
 }
 
 export interface Relationship {
@@ -194,6 +203,24 @@ export interface SemanticSnapshot {
   sections: Section[];
   activeSectionId: string;
   history: Operation[];
+  checkpoints?: SessionCheckpoint[];
+}
+
+/**
+ * A compressed record of content that has aged out of the live windows
+ * (the 24-concept cap in `scene()`, the 90s transcript window in Board.tsx).
+ * Truncation elsewhere is a hard cliff — the content simply becomes invisible
+ * to future model calls. A checkpoint is the one place that content survives,
+ * in compact form, so a long session doesn't lose all memory of its early
+ * minutes. Bounded like everything else here; see `addCheckpoint`.
+ */
+export interface SessionCheckpoint {
+  checkpointId: string;
+  topicSummary: string;
+  keyFacts: string[];
+  spanStart: number;
+  spanEnd: number;
+  createdAt: number;
 }
 
 /**
@@ -219,6 +246,8 @@ export interface SemanticScene {
   }[];
   recentCommands: string[];
   recentTranscript: string;
+  /** Compressed summaries of content that aged out of the concept window — see SessionCheckpoint. */
+  checkpointSummaries?: string[];
 }
 
 export class SemanticBoard {
@@ -228,6 +257,9 @@ export class SemanticBoard {
   activeSectionId = "";
   history: Operation[] = [];
   recentCommands: string[] = [];
+  checkpoints: SessionCheckpoint[] = [];
+  /** conceptIds already folded into a checkpoint, so they're never summarized twice. */
+  private checkpointedConceptIds = new Set<string>();
 
   constructor() {
     this.startSection("Untitled", 0);
@@ -288,6 +320,7 @@ export class SemanticBoard {
     kind?: ConceptKind;
     sourceText?: string;
     confidence?: number;
+    mathMeaning?: MathReasoningStep;
   }): Concept {
     const id = input.conceptId ? slugify(input.conceptId) : slugify(input.label);
     const unique = this.concepts.has(id) ? `${id}-${newId("x").slice(-4)}` : id;
@@ -302,6 +335,7 @@ export class SemanticBoard {
       confidence: input.confidence ?? 0.8,
       createdAt: now,
       lastUpdatedAt: now,
+      ...(input.mathMeaning ? { mathMeaning: input.mathMeaning } : {}),
     };
     this.concepts.set(unique, concept);
     return concept;
@@ -381,6 +415,54 @@ export class SemanticBoard {
     if (this.recentCommands.length > 6) this.recentCommands.shift();
   }
 
+  // --- checkpoints ---
+
+  addCheckpoint(topicSummary: string, keyFacts: string[], spanStart: number, spanEnd: number): SessionCheckpoint {
+    const cp: SessionCheckpoint = {
+      checkpointId: newId("cp"),
+      topicSummary,
+      keyFacts: keyFacts.slice(0, 8),
+      spanStart,
+      spanEnd,
+      createdAt: Date.now(),
+    };
+    this.checkpoints.push(cp);
+    // Bounded like every other list here (history, recentCommands) — a
+    // checkpoint of checkpoints would defeat the point.
+    if (this.checkpoints.length > 40) this.checkpoints.shift();
+    return cp;
+  }
+
+  /**
+   * Folds concepts that have fallen out of the live `scene()` window (beyond
+   * `maxConcepts` most-recently-updated) into one checkpoint per section, so
+   * they leave a compressed trace instead of silently vanishing from every
+   * future prompt. Concepts themselves are untouched — this only adds a
+   * summary alongside them. Idempotent: a concept is folded at most once.
+   */
+  compactAgedConcepts(maxConcepts = 24): SessionCheckpoint[] {
+    const sorted = [...this.concepts.values()].sort((a, b) => b.lastUpdatedAt - a.lastUpdatedAt);
+    const aged = sorted.slice(maxConcepts).filter((c) => !this.checkpointedConceptIds.has(c.conceptId));
+    if (aged.length === 0) return [];
+
+    const bySection = new Map<string, Concept[]>();
+    for (const c of aged) {
+      const list = bySection.get(c.sectionId) ?? [];
+      list.push(c);
+      bySection.set(c.sectionId, list);
+    }
+
+    const created: SessionCheckpoint[] = [];
+    for (const [sectionId, list] of bySection) {
+      const title = this.sections.get(sectionId)?.title ?? "Untitled";
+      const spanStart = Math.min(...list.map((c) => c.createdAt));
+      const spanEnd = Math.max(...list.map((c) => c.lastUpdatedAt));
+      created.push(this.addCheckpoint(title, list.map((c) => c.label), spanStart, spanEnd));
+      for (const c of list) this.checkpointedConceptIds.add(c.conceptId);
+    }
+    return created;
+  }
+
   // --- prompt view ---
   scene(opts: {
     currentPage: number;
@@ -420,6 +502,11 @@ export class SemanticBoard {
         })),
       recentCommands: [...this.recentCommands],
       recentTranscript: opts.recentTranscript,
+      // Last 3 only: this is meant as a brief "what came before" nudge, not a
+      // second transcript to re-read every call.
+      checkpointSummaries: this.checkpoints
+        .slice(-3)
+        .map((cp) => `${cp.topicSummary}: ${cp.keyFacts.join(", ")}`),
     };
   }
 
@@ -431,6 +518,7 @@ export class SemanticBoard {
       sections: [...this.sections.values()],
       activeSectionId: this.activeSectionId,
       history: this.history,
+      checkpoints: this.checkpoints,
     };
   }
 
@@ -443,6 +531,7 @@ export class SemanticBoard {
     board.sections = new Map(snap.sections.map((s) => [s.sectionId, s]));
     board.activeSectionId = snap.activeSectionId;
     board.history = snap.history ?? [];
+    board.checkpoints = snap.checkpoints ?? [];
     return board;
   }
 }

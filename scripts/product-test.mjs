@@ -22,7 +22,9 @@ const checks = [
   ["landing explains Standard Mode", landing.includes("Standard Mode")],
   ["landing explains Story Mode", landing.includes("Story Mode")],
   ["landing uses real product proof", landing.includes("/product-standard.png")],
-  ["pricing does not pretend checkout works", pricing.includes("billing is not connected")],
+  ["pricing shows exact Creator price", pricing.includes("$15/month")],
+  ["pricing keeps product quality identical", pricing.includes("same modes, AI models, canvas, recording quality and exports")],
+  ["checkout return does not claim entitlement", pricing.includes("does not change access")],
   ["Discord destination is centrally configured", product.includes("NEXT_PUBLIC_DISCORD_URL")],
   ["client source does not read provider secrets", ![recorder, panel, landing].some((source) => /DEEPGRAM_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY/.test(source))],
 ];

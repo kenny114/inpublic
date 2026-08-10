@@ -15,6 +15,16 @@ export interface CompleteOptions {
   temperature: number;
   /** Gemini only: allow the model to spend thinking tokens. Off keeps beats fast. */
   allowThinking?: boolean;
+  /** Provider-reported usage, delivered after the response completes. */
+  onUsage?: (usage: CompletionUsage) => void;
+}
+
+export interface CompletionUsage {
+  providerRequestId?: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
 }
 
 export function providerFor(model: string): "google" | "anthropic" {
@@ -28,6 +38,12 @@ export const STORY_MODEL = process.env.STORY_MODEL || BEAT_MODEL;
 /** The live hand. Latency matters more than anything else here. */
 export const SCRIBE_MODEL =
   process.env.SCRIBE_MODEL || "claude-haiku-4-5-20251001";
+/**
+ * Defaults to ARTIST_MODEL deliberately: reusing the same provider/model
+ * means the existing provider_rate_cards row already covers it, so turning
+ * on math mode needs no new billing configuration.
+ */
+export const MATH_MODEL = process.env.MATH_MODEL || ARTIST_MODEL;
 
 export async function complete(opts: CompleteOptions): Promise<string> {
   return providerFor(opts.model) === "google"
@@ -66,7 +82,19 @@ async function* streamAnthropic(
     stream: true,
   });
 
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let providerRequestId: string | undefined;
+  let cacheCreationInputTokens = 0;
+  let cacheReadInputTokens = 0;
   for await (const event of stream) {
+    if (event.type === "message_start") {
+      providerRequestId = event.message.id;
+      inputTokens = event.message.usage.input_tokens;
+      cacheCreationInputTokens = event.message.usage.cache_creation_input_tokens ?? 0;
+      cacheReadInputTokens = event.message.usage.cache_read_input_tokens ?? 0;
+    }
+    if (event.type === "message_delta") outputTokens = event.usage.output_tokens;
     if (
       event.type === "content_block_delta" &&
       event.delta.type === "text_delta"
@@ -74,6 +102,7 @@ async function* streamAnthropic(
       yield event.delta.text;
     }
   }
+  opts.onUsage?.({ providerRequestId, inputTokens, outputTokens, cacheCreationInputTokens, cacheReadInputTokens });
 }
 
 async function* streamGoogle(opts: CompleteOptions): AsyncGenerator<string> {
@@ -111,6 +140,8 @@ async function* streamGoogle(opts: CompleteOptions): AsyncGenerator<string> {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let inputTokens = 0;
+  let outputTokens = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -125,7 +156,10 @@ async function* streamGoogle(opts: CompleteOptions): AsyncGenerator<string> {
       try {
         const json = JSON.parse(payload) as {
           candidates?: { content?: { parts?: { text?: string }[] } }[];
+          usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number };
         };
+        inputTokens = Math.max(inputTokens, json.usageMetadata?.promptTokenCount ?? 0);
+        outputTokens = Math.max(outputTokens, json.usageMetadata?.candidatesTokenCount ?? 0);
         for (const part of json.candidates?.[0]?.content?.parts ?? []) {
           if (part.text) yield part.text;
         }
@@ -134,6 +168,7 @@ async function* streamGoogle(opts: CompleteOptions): AsyncGenerator<string> {
       }
     }
   }
+  opts.onUsage?.({ inputTokens, outputTokens });
 }
 
 let anthropic: Anthropic | null = null;
@@ -150,6 +185,14 @@ async function completeAnthropic(opts: CompleteOptions): Promise<string> {
     temperature: opts.temperature,
     system: opts.system,
     messages: [{ role: "user", content: opts.user }],
+  });
+
+  opts.onUsage?.({
+    providerRequestId: response.id,
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+    cacheCreationInputTokens: response.usage.cache_creation_input_tokens ?? 0,
+    cacheReadInputTokens: response.usage.cache_read_input_tokens ?? 0,
   });
 
   return response.content
@@ -220,7 +263,13 @@ async function completeGoogle(opts: CompleteOptions): Promise<string> {
       finishReason?: string;
       content?: { parts?: { text?: string }[] };
     }[];
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number };
   };
+
+  opts.onUsage?.({
+    inputTokens: json.usageMetadata?.promptTokenCount ?? 0,
+    outputTokens: json.usageMetadata?.candidatesTokenCount ?? 0,
+  });
 
   const candidate = json.candidates?.[0];
   const text = (candidate?.content?.parts ?? [])

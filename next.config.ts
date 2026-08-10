@@ -9,7 +9,12 @@ const nextConfig: NextConfig = {
   // the chunks the running server is serving, and the page dies with
   // "Cannot find module './331.js'". `next build` and `next start` both run
   // with NODE_ENV=production, so they agree on .next-build; dev keeps .next.
-  distDir: process.env.NODE_ENV === "production" ? ".next-build" : ".next",
+  // Vercel's Next.js builder expects the framework output at .next.
+  distDir: process.env.VERCEL
+    ? ".next"
+    : process.env.NODE_ENV === "production"
+      ? ".next-build"
+      : ".next",
 };
 
 export default nextConfig;

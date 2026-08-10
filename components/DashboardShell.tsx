@@ -7,6 +7,7 @@ import { ButtonLink, DropdownMenu, Logo, PageContainer } from "@/components/Prod
 import { useAuth } from "@/hooks/useAuth";
 import { usePreferences } from "@/hooks/usePreferences";
 import { signOut } from "@/lib/auth";
+import { useRouter } from "next/navigation";
 
 const nav = [
   { label: "Sessions", href: "/dashboard/sessions", Icon: FolderOpen },
@@ -15,15 +16,16 @@ const nav = [
 ];
 
 function AccountMenu() {
+  const router = useRouter();
   const { ready, user } = useAuth();
   if (!ready || !user) return <Link href="/login" className="dashboard-sign-in">Sign in</Link>;
-  const initial = user.email.trim().charAt(0).toUpperCase() || "?";
+  const initial = (user.email ?? "").trim().charAt(0).toUpperCase() || "?";
   return (
     <DropdownMenu label="Account menu" trigger={<span className="dashboard-avatar">{initial}<ChevronDown size={13} /></span>}>
-      <div className="dashboard-account-copy"><strong>{user.email}</strong><span>Local preview account</span></div>
+      <div className="dashboard-account-copy"><strong>{user.email}</strong><span>InPublic account</span></div>
       <Link href="/dashboard/settings" role="menuitem"><Settings size={15} />Settings</Link>
       <Link href="/" role="menuitem">View landing page</Link>
-      <button type="button" role="menuitem" onClick={signOut}>Sign out</button>
+      <button type="button" role="menuitem" onClick={() => void signOut().then(() => { router.replace("/login"); router.refresh(); })}>Sign out</button>
     </DropdownMenu>
   );
 }

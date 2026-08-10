@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { noteFinalTranscript, providerRequestHeaders } from "@/lib/usage-client";
 import type { Op } from "@/lib/ops";
 
 export type LiveStatus = "idle" | "connecting" | "live" | "error";
@@ -137,7 +138,7 @@ export function useGeminiLive({
   const reconnectRef = useRef<() => void>(() => {});
 
   const connect = useCallback(async (resume?: string) => {
-    const res = await fetch("/api/gemini/token");
+    const res = await fetch("/api/gemini/token", { headers: providerRequestHeaders() });
     if (!res.ok) throw new Error(`token ${res.status}: ${await res.text()}`);
     const { token, model } = (await res.json()) as {
       token: string;
@@ -227,6 +228,7 @@ export function useGeminiLive({
           const heard = msg?.serverContent?.inputTranscription?.text;
           if (heard) cbs.current.onTranscript(heard, false);
           if (msg?.serverContent?.turnComplete) {
+            noteFinalTranscript();
             cbs.current.onTranscript("", true);
           }
 
