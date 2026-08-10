@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { noteFinalTranscript, providerRequestHeaders } from "@/lib/usage-client";
 
 export type MicStatus = "idle" | "connecting" | "live" | "reconnecting" | "error";
 
@@ -171,13 +172,24 @@ export function useDeepgram({
     const ac = new AbortController();
     abortRef.current = ac;
 
-    const res = await fetch("/api/deepgram/token", { signal: ac.signal });
+    const res = await fetch("/api/deepgram/token", { signal: ac.signal, headers: providerRequestHeaders() });
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(
-        `token ${res.status}: ${body}. The Deepgram key needs a role that ` +
-          `can mint credentials (Owner or Admin); a usage-only key cannot.`,
-      );
+      // The Owner/Admin hint is only ever relevant to a 500 here — that's
+      // the one path (app/api/deepgram/token/route.ts's catch block) where
+      // the actual Deepgram credential-mint call failed, which a
+      // usage-only key can do. A 429/503 is our OWN guardProviderRequest
+      // rejecting the request (rate limit, spend limit, session lease) —
+      // entirely unrelated to what the key is allowed to do, and the guard's
+      // own message in `body` already explains the real reason. Appending
+      // the hint unconditionally previously told a correctly-configured key
+      // it needed permissions it already had, whenever the real cause was
+      // just "too many requests, wait and retry."
+      const hint =
+        res.status === 500
+          ? " The Deepgram key needs a role that can mint credentials (Owner or Admin); a usage-only key cannot."
+          : "";
+      throw new Error(`token ${res.status}: ${body}.${hint}`);
     }
     const { accessToken, key } = (await res.json()) as {
       accessToken?: string;
@@ -264,6 +276,7 @@ export function useDeepgram({
         ((data.start ?? 0) + (data.duration ?? 0)) * 1000;
 
       if (data.is_final) {
+        noteFinalTranscript();
         const tEnd = cbs.current.now();
         const durationMs = (data.duration ?? 0) * 1000;
         cbs.current.onFinal(

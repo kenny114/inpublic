@@ -8,8 +8,12 @@ import { ControlBar, ErrorBanner } from "@/components/ControlBar";
 import type { SaveState } from "@/components/ProductUI";
 import { TranscriptStrip } from "@/components/TranscriptStrip";
 import { RecordingPanel } from "@/components/RecordingPanel";
+import { AudioReplayPanel } from "@/components/AudioReplayPanel";
 import { useDeepgram } from "@/hooks/useDeepgram";
 import { useGeminiLive } from "@/hooks/useGeminiLive";
+import { useUsageSession } from "@/hooks/useUsageSession";
+import { providerRequestHeaders } from "@/lib/usage-client";
+import { requestDelayMs, retryAfterMs } from "@/lib/requestScheduling";
 import { buildBeat, truncateLabel, type SceneElement } from "@/lib/scene";
 import { downloadLog } from "@/lib/sessionLog";
 import { parseActions, type CanvasAction } from "@/lib/actions";
@@ -51,6 +55,10 @@ import {
   type Op,
   type Pen,
 } from "@/lib/ops";
+import { buildMathStepBox, buildMathVisual, measureMathStepBox, measureMathVisual } from "@/lib/math/visuals";
+import { isMathActionType } from "@/lib/math/actions";
+import { verifyTransformStep } from "@/lib/math/verify";
+import { groundEquationInSource } from "@/lib/math/ground";
 import {
   decidePageTurn,
   isThoughtComplete,
@@ -88,6 +96,7 @@ import {
   recordingViewport,
   rectUnion,
   type CameraView,
+  type CompositionRect,
   type CompositionState,
   type ReadabilityRole,
   type TextReadabilitySample,
@@ -158,12 +167,10 @@ const STAGGER_MS = 180;
 const POLISH_STAGGER_MS = 70;
 const FADE_MS = 250;
 const FADE_STEPS = 5;
-/**
- * How often the Scribe may fire. Was 1400ms, which combined with the call's
- * own latency put marks ~3s apart at best — and the speaker noticed, and
- * started pausing to accommodate it. Draw sooner, more often.
- */
-const SCRIBE_INTERVAL_MS = 700;
+/** Stay safely below the server's rolling limit of 12 Scribe calls/minute. */
+const SCRIBE_INTERVAL_MS = 5250;
+const SCRIBE_RETRY_FALLBACK_MS = 60_000;
+const SCRIBE_FAILURE_MESSAGE = "Scribe is failing — still writing, marks are local only.";
 /**
  * How long the wrap-up renderer will wait for the sentence in progress to
  * settle before placing a diagram anyway. Long enough to cover an ordinary
@@ -195,6 +202,9 @@ const TRANSCRIPT_WINDOW_MS = 90_000;
 const ENGINE = (process.env.NEXT_PUBLIC_ENGINE ?? "deepgram") as
   | "deepgram"
   | "gemini";
+
+/** Off by default. Standard/Story mode and the live pipeline are unaffected either way. */
+const AUDIO_REPLAY_ENABLED = process.env.NEXT_PUBLIC_ENABLE_AUDIO_REPLAY === "true";
 
 /**
  * The Scribe is now a second pass, not the thing you wait for — the live line
@@ -260,6 +270,7 @@ export default function Board({
 
   const [interim, setInterim] = useState("");
   const [showTranscript, setShowTranscript] = useState(false);
+  const [showAudioReplay, setShowAudioReplay] = useState(false);
   const [busy, setBusy] = useState(false);
   const [recordingFocus, setRecordingFocus] = useState(false);
   const [sessionTitle, setSessionTitle] = useState("Untitled visual session");
@@ -320,6 +331,10 @@ export default function Board({
    * exactly one of them.
    */
   const boardRef = useRef<SemanticBoard>(new SemanticBoard());
+  /** conceptId of the equation/step currently being worked on in math mode, if any. */
+  const activeMathConceptIdRef = useRef<string | null>(null);
+  /** conceptId -> element ids of its current long_multiplication visual, so a redraw can replace rather than pile on top of the previous one. */
+  const mathVisualElementIdsRef = useRef<Map<string, string[]>>(new Map());
   const storyRef = useRef<StoryState>(newStoryState());
   const compositionRef = useRef<CompositionState>(initialCompositionState());
   const compositionHistoryRef = useRef<CompositionState[]>([]);
@@ -704,8 +719,28 @@ export default function Board({
     requestAnimationFrame(frame);
   }, [log]);
 
-  /** Frame meaningful content inside the exported rectangle, never the infinite sheet. */
-  const framePage = useCallback((force = false, reason = force ? "explicit page navigation" : "content entered safe frame") => {
+  /**
+   * Frame meaningful content inside the exported rectangle, never the
+   * infinite sheet.
+   *
+   * `mathFocalConceptId`, when set, scopes the PRIMARY focal bounds to just
+   * that concept's own elements (the MathStep group that was just
+   * committed) instead of the union of everything ever drawn on the page,
+   * with the whole-page union demoted to optional `contextBounds` that
+   * proposeCamera only includes if it still fits at a readable zoom.
+   * Previously every commit — math included — framed the full-page union,
+   * so a long-running derivation's accumulated boxes eventually needed a
+   * zoom below the readable floor to all fit, and since proposeCamera never
+   * zooms below that floor, the camera reported contentFits:false forever
+   * with a frozen target rather than losing track of just the OLD steps.
+   * Reproduced on real replay output: contentFits:false on 9 consecutive
+   * commits once accumulated math content exceeded readable-zoom capacity.
+   */
+  const framePage = useCallback((
+    force = false,
+    reason = force ? "explicit page navigation" : "content entered safe frame",
+    mathFocalConceptId: string | null = null,
+  ) => {
     if (compositionRef.current.proposedTarget && !force) return;
     const app = apiRef.current?.getAppState?.();
     if (!app?.width || !app?.height) return;
@@ -725,9 +760,28 @@ export default function Board({
       width: Math.max(1, element.width),
       height: Math.max(1, element.height),
     })));
-    const focalBounds = modeRef.current === "story"
+    const defaultFocalBounds = modeRef.current === "story"
       ? { x: origin.x + STORY_BOUNDS.x, y: origin.y + STORY_BOUNDS.y, width: STORY_BOUNDS.width, height: STORY_BOUNDS.height }
       : elementBounds ?? { x: origin.x + PAGE_PAD, y: origin.y + PAGE_PAD, width: PAGE_W - PAGE_PAD * 2, height: 500 };
+
+    let focalBounds = defaultFocalBounds;
+    let contextBounds: CompositionRect | undefined;
+    if (mathFocalConceptId && modeRef.current !== "story") {
+      const activeConcept = boardRef.current.concepts.get(mathFocalConceptId);
+      const activeIds = new Set(activeConcept?.elementIds ?? []);
+      const activeBounds = activeIds.size
+        ? rectUnion(onPage.filter((el) => activeIds.has(el.id)).map((el) => ({
+            x: el.x,
+            y: el.y,
+            width: Math.max(1, el.width),
+            height: Math.max(1, el.height),
+          })))
+        : null;
+      if (activeBounds) {
+        focalBounds = activeBounds;
+        contextBounds = elementBounds ?? undefined;
+      }
+    }
     const text = onPage.flatMap<TextReadabilitySample>((element) => {
       const fontSize = Number(element.fontSize ?? 0);
       if (element.type !== "text" || !fontSize) return [];
@@ -749,6 +803,7 @@ export default function Board({
       viewport: recordingViewport(Number(app.width), Number(app.height)),
       currentCamera,
       focalBounds,
+      contextBounds,
       focalSubject,
       activeCluster,
       reason,
@@ -925,6 +980,7 @@ export default function Board({
     },
     [findElement, log, now, turnPage],
   );
+  const cloudUpdatedAtRef = useRef<string | undefined>(undefined);
 
   /** Render one operation. This is the only path marks reach the canvas by —
    *  the Scribe and the local fallback both go through here. */
@@ -1768,6 +1824,7 @@ export default function Board({
   const scribeQueuedRef = useRef(false);
   const scribeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scribeLastRunRef = useRef(0);
+  const scribeRetryAtRef = useRef(0);
   const scribeFailuresRef = useRef(0);
 
   const runScribe = useCallback(async () => {
@@ -1776,14 +1833,20 @@ export default function Board({
       scribeQueuedRef.current = true;
       return;
     }
-    const pointerLockRemaining =
-      SKETCH_TOUCH_LOCK_MS - (Date.now() - lastPointerInputRef.current);
-    if (pointerLockRemaining > 0) {
+    const waitMs = requestDelayMs({
+      nowMs: Date.now(),
+      lastRunAtMs: scribeLastRunRef.current,
+      retryAtMs: scribeRetryAtRef.current,
+      lastPointerAtMs: lastPointerInputRef.current,
+      minIntervalMs: SCRIBE_INTERVAL_MS,
+      touchLockMs: SKETCH_TOUCH_LOCK_MS,
+    });
+    if (waitMs > 0) {
       if (!scribeTimerRef.current) {
         scribeTimerRef.current = setTimeout(() => {
           scribeTimerRef.current = null;
           void runScribe();
-        }, pointerLockRemaining);
+        }, waitMs);
       }
       return;
     }
@@ -1810,7 +1873,7 @@ export default function Board({
       scribeAbortRef.current = new AbortController();
       const res = await fetch("/api/scribe", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: providerRequestHeaders({ "content-type": "application/json" }),
         signal: scribeAbortRef.current.signal,
         body: JSON.stringify({
           fresh,
@@ -1818,6 +1881,32 @@ export default function Board({
           onPage: sketchRef.current.labels.slice(-24),
         }),
       });
+      if (res.status === 429) {
+        const payload = await res.json().catch(() => null) as {
+          error?: { code?: string; message?: string; retryAfterSeconds?: number };
+        } | null;
+        if (payload?.error?.code !== "rate_limited") {
+          throw new Error(payload?.error?.message || `scribe ${res.status}`);
+        }
+        const cooldownMs = retryAfterMs(
+          res.headers.get("retry-after") ??
+            (payload.error.retryAfterSeconds !== undefined
+              ? String(payload.error.retryAfterSeconds)
+              : null),
+          SCRIBE_RETRY_FALLBACK_MS,
+        );
+        // Add a small boundary buffer so the next request cannot land in the
+        // same rolling window because of clock or network jitter.
+        scribeRetryAtRef.current = Date.now() + cooldownMs + 250;
+        scribeFailuresRef.current = 0;
+        log({
+          type: "note",
+          text: `scribe rate limited; cooling down for ${Math.ceil(cooldownMs / 1000)}s`,
+        });
+        await growSketch(fresh, false);
+        setErrorText((current) => current === SCRIBE_FAILURE_MESSAGE ? null : current);
+        return;
+      }
       if (!res.ok || !res.body) throw new Error(`scribe ${res.status}`);
 
       const reader = res.body.getReader();
@@ -1868,6 +1957,8 @@ export default function Board({
       if (buffer.trim()) await handle(buffer);
 
       scribeFailuresRef.current = 0;
+      scribeRetryAtRef.current = 0;
+      setErrorText((current) => current === SCRIBE_FAILURE_MESSAGE ? null : current);
       if (drawn.length > 0) log({ type: "sketch", labels: drawn });
       // Log every call, drawn or not. The previous session showed marks 5.5s
       // apart and the log could not say whether the Scribe was slow, throttled,
@@ -1892,37 +1983,21 @@ export default function Board({
       // must never stop the live canvas.
       await growSketch(fresh, false);
       if (scribeFailuresRef.current >= 3) {
-        setErrorText("Scribe is failing — still writing, marks are local only.");
+        setErrorText(SCRIBE_FAILURE_MESSAGE);
       }
     } finally {
       scribeInFlightRef.current = false;
       if (scribePendingRef.current.trim()) scribeQueuedRef.current = true;
       if (scribeQueuedRef.current) {
         scribeQueuedRef.current = false;
-        scribeLastRunRef.current = 0;
         queueMicrotask(() => void runScribe());
       }
     }
   }, [applyOp, growSketch, log]);
 
-  /** Called on every transcript update; self-throttles. */
+  /** Called on every transcript update; runScribe owns all scheduling. */
   const nudgeScribe = useCallback(() => {
     if (!SCRIBE_ENABLED) return;
-    if (scribeInFlightRef.current) {
-      scribeQueuedRef.current = true;
-      return;
-    }
-    const throttleRemaining =
-      SCRIBE_INTERVAL_MS - (Date.now() - scribeLastRunRef.current);
-    if (throttleRemaining > 0) {
-      if (!scribeTimerRef.current) {
-        scribeTimerRef.current = setTimeout(() => {
-          scribeTimerRef.current = null;
-          void runScribe();
-        }, throttleRemaining);
-      }
-      return;
-    }
     void runScribe();
   }, [runScribe]);
 
@@ -2469,6 +2544,283 @@ export default function Board({
           doUndo();
           return "undid last operation";
         }
+
+        // --- math domain --------------------------------------------------
+        // Each step becomes its own concept (kind "equation"/"math_step"),
+        // linked to what it followed from by an ordinary relationship arrow.
+        // That reuses the existing undo/history/reuse machinery for free
+        // instead of inventing a parallel one for math.
+
+        case "create_equation": {
+          const existing = board.match(action.conceptId);
+          if (existing) {
+            existing.lastUpdatedAt = Date.now();
+            return `reused ${existing.conceptId}`;
+          }
+
+          // create_equation is the axiom, not a derived claim — there is no
+          // prior board state for lib/math/verify.ts's step checks to run
+          // against. Grounding it in the transcript is the equivalent guard,
+          // the same role groundedInSource plays for Scribe marks. Caught
+          // live: a spoken "three x plus five equals twenty" came back as
+          // the expression "5 = 20" — the "3x +" term silently vanished.
+          const grounding = groundEquationInSource(action.expression, sourceText);
+          // Regular Scribe marks and structured diagrams check willOverflow()
+          // before placing; math steps used to skip this and just kept
+          // accumulating on one page, which is what eventually forced the
+          // camera's union bounds below the readability floor with nowhere
+          // to go (contentFits:false forever). Same fix, same pattern.
+          const newEquationSize = measureMathStepBox(action.expression);
+          if (willOverflow(penRef.current, newEquationSize.w, newEquationSize.h)) {
+            requestPageTurn("overflow");
+          }
+          const concept = board.addConcept({
+            conceptId: action.conceptId,
+            label: action.expression,
+            kind: action.domain === "coordinate_graph" ? "graph" : "equation",
+            sourceText,
+            mathMeaning: {
+              stepId: newId("step"),
+              operation: "state",
+              from: "",
+              reason: action.goal ?? "starting expression",
+              before: action.expression,
+              result: action.expression,
+              verified: grounding.grounded,
+              verificationDetail: grounding.message,
+            },
+          });
+          const built = await buildMathStepBox(`el_${concept.conceptId}`, concept.label, grounding.grounded, penRef.current);
+          if (!built) {
+            board.concepts.delete(concept.conceptId);
+            return `failed ${action.conceptId}`;
+          }
+          concept.elementIds = built.elements.map((el) => el.id);
+          conceptElementRef.current.set(concept.conceptId, built.nodeId);
+          conceptPageRef.current.set(concept.conceptId, pageRef.current);
+          marksRef.current.set(built.mark.key, built.mark);
+          elementsRef.current = [...elementsRef.current, ...built.elements];
+          for (const el of built.elements) sketchRef.current.ids.push(el.id);
+          sketchRef.current.count += 1;
+
+          const undo = emptyUndo();
+          undo.addedElementIds = concept.elementIds;
+          undo.addedConceptIds = [concept.conceptId];
+          recordOperation("create_concept", undo, { sourceText, conceptIds: [concept.conceptId] });
+          activeMathConceptIdRef.current = concept.conceptId;
+          return grounding.grounded
+            ? `created ${concept.conceptId}`
+            : `created ${concept.conceptId} (ungrounded: ${grounding.message ?? ""})`;
+        }
+
+        case "transform_equation": {
+          const from = resolve(action.conceptId);
+          if (!from) return `missing ${action.conceptId}`;
+
+          // Checks continuity (does "before" match what's actually on the
+          // board?) before arithmetic — a model can apply a correct operation
+          // to a STALE "before" and the arithmetic alone would check out. See
+          // lib/math/verify.ts's verifyTransformStep for the live-caught bug
+          // this guards against.
+          const verification = verifyTransformStep(
+            from.label,
+            action.step.operation,
+            action.step.value,
+            action.step.before,
+            action.step.result,
+          );
+
+          // Never split a single step's box across pages — check whether the
+          // WHOLE step (this box, as one unit) fits before placing any of
+          // it, and turn the page first if not, same as create_equation.
+          const stepSize = measureMathStepBox(action.step.result);
+          if (willOverflow(penRef.current, stepSize.w, stepSize.h)) {
+            requestPageTurn("overflow");
+          }
+
+          const stepId = newId("step");
+          const nextConcept = board.addConcept({
+            conceptId: `${from.conceptId}-${stepId}`,
+            label: action.step.result,
+            kind: "math_step",
+            sourceText,
+            mathMeaning: {
+              stepId,
+              operation: action.step.operation,
+              value: action.step.value,
+              from: action.step.from,
+              reason: action.step.reason,
+              before: action.step.before,
+              result: action.step.result,
+              verified: verification.verified,
+              verificationDetail: verification.message,
+              commonMistake: action.step.commonMistake,
+              connection: action.step.connection,
+            },
+          });
+          const built = await buildMathStepBox(
+            `el_${nextConcept.conceptId}`,
+            nextConcept.label,
+            verification.verified,
+            penRef.current,
+          );
+          if (!built) {
+            board.concepts.delete(nextConcept.conceptId);
+            return `failed ${nextConcept.conceptId}`;
+          }
+          nextConcept.elementIds = built.elements.map((el) => el.id);
+          conceptElementRef.current.set(nextConcept.conceptId, built.nodeId);
+          conceptPageRef.current.set(nextConcept.conceptId, pageRef.current);
+          marksRef.current.set(built.mark.key, built.mark);
+          elementsRef.current = [...elementsRef.current, ...built.elements];
+          for (const el of built.elements) sketchRef.current.ids.push(el.id);
+          sketchRef.current.count += 1;
+
+          const undo = emptyUndo();
+          undo.addedElementIds = nextConcept.elementIds;
+          undo.addedConceptIds = [nextConcept.conceptId];
+          recordOperation("create_concept", undo, { sourceText, conceptIds: [nextConcept.conceptId] });
+
+          const fromEl = nodeForConcept(from.conceptId);
+          const toEl = nodeForConcept(nextConcept.conceptId);
+          if (fromEl && toEl) {
+            const rel = board.addRelationship({
+              fromConceptId: from.conceptId,
+              toConceptId: nextConcept.conceptId,
+              relationshipType: action.step.operation,
+              label: action.step.reason,
+            });
+            if (rel) {
+              const arrow = await buildBoundArrow(
+                `el_${rel.relationshipId}`,
+                fromEl,
+                toEl,
+                action.step.reason,
+                elementsRef.current,
+              );
+              if (arrow) {
+                const added = [arrow.arrow, ...arrow.extras];
+                rel.elementIds = added.map((el) => el.id);
+                elementsRef.current = [...elementsRef.current, ...added];
+                for (const el of added) sketchRef.current.ids.push(el.id);
+                const undo2 = emptyUndo();
+                undo2.addedElementIds = rel.elementIds;
+                undo2.addedRelationshipIds = [rel.relationshipId];
+                recordOperation("create_relationship", undo2, {
+                  sourceText,
+                  conceptIds: [from.conceptId, nextConcept.conceptId],
+                });
+              }
+            }
+          }
+
+          activeMathConceptIdRef.current = nextConcept.conceptId;
+          return verification.verified
+            ? `verified step ${nextConcept.conceptId}`
+            : `unverified step ${nextConcept.conceptId}: ${verification.message ?? ""}`;
+        }
+
+        case "add_math_explanation": {
+          const concept = resolve(action.conceptId);
+          if (!concept) return `missing ${action.conceptId}`;
+          const text = `${action.meaning} — ${action.invariant}`;
+          const explanationOp: Op = { op: "note", text: text.length > 90 ? `${text.slice(0, 89)}…` : text };
+          const explanationSize = measureOp(explanationOp, marksRef.current);
+          if (explanationSize && !explanationSize.noPlace && willOverflow(penRef.current, explanationSize.w, explanationSize.h)) {
+            requestPageTurn("overflow");
+          }
+          const built = await buildOp(
+            explanationOp,
+            penRef.current,
+            marksRef.current,
+          );
+          if (!built) return `failed explanation for ${action.conceptId}`;
+          elementsRef.current = [...elementsRef.current, ...built.elements];
+          for (const el of built.elements) sketchRef.current.ids.push(el.id);
+          if (built.mark) marksRef.current.set(built.mark.key, built.mark);
+          concept.elementIds = [...concept.elementIds, ...built.elements.map((el) => el.id)];
+          const undo = emptyUndo();
+          undo.addedElementIds = built.elements.map((el) => el.id);
+          recordOperation("update_concept", undo, { sourceText, conceptIds: [concept.conceptId] });
+          activeMathConceptIdRef.current = concept.conceptId;
+          return `explained ${concept.conceptId}`;
+        }
+
+        case "create_math_visual": {
+          const concept = resolve(action.conceptId);
+          if (!concept) return `missing ${action.conceptId}`;
+
+          // The model sometimes redraws the same long_multiplication visual
+          // repeatedly as its narration of one problem evolves — observed
+          // live during the audio-replay audit: 11 redraws of one 369×43
+          // walkthrough, each with slightly different (occasionally
+          // internally inconsistent) carry data. Each individual redraw is
+          // geometrically fine on its own, but appending every one left a
+          // trail of near-duplicate diagrams across many pages. A same-type
+          // redraw for the same concept REPLACES its previous visual rather
+          // than adding another; other visual types keep the original
+          // additive behaviour since this is the concretely observed
+          // pattern, not a general one.
+          if (action.visual.type === "long_multiplication") {
+            const priorIds = mathVisualElementIdsRef.current.get(action.conceptId);
+            if (priorIds?.length) {
+              const dropIds = new Set(priorIds);
+              elementsRef.current = elementsRef.current.filter((el) => !dropIds.has(el.id));
+              concept.elementIds = concept.elementIds.filter((id) => !dropIds.has(id));
+              sketchRef.current.ids = sketchRef.current.ids.filter((id) => !dropIds.has(id));
+            }
+          }
+
+          const visualSize = measureMathVisual(action.visual);
+          if (willOverflow(penRef.current, visualSize.w, visualSize.h)) {
+            requestPageTurn("overflow");
+          }
+          const built = await buildMathVisual(action.visual, penRef.current);
+          if (!built) return `failed visual for ${action.conceptId}`;
+          concept.elementIds = [...concept.elementIds, ...built.elements.map((el) => el.id)];
+          elementsRef.current = [...elementsRef.current, ...built.elements];
+          for (const el of built.elements) sketchRef.current.ids.push(el.id);
+          if (action.visual.type === "long_multiplication") {
+            mathVisualElementIdsRef.current.set(action.conceptId, built.elements.map((el) => el.id));
+          }
+          const undo = emptyUndo();
+          undo.addedElementIds = built.elements.map((el) => el.id);
+          recordOperation("update_concept", undo, { sourceText, conceptIds: [concept.conceptId] });
+          activeMathConceptIdRef.current = concept.conceptId;
+          return `drew visual for ${concept.conceptId}`;
+        }
+
+        case "verify_step": {
+          const concept = resolve(action.conceptId);
+          if (!concept || !concept.mathMeaning) return `missing ${action.conceptId}`;
+          const before = { ...concept };
+          concept.mathMeaning = { ...concept.mathMeaning, verified: action.verified, verificationDetail: action.detail };
+          concept.lastUpdatedAt = Date.now();
+          const undo = emptyUndo();
+          undo.removedConcepts = [before];
+          recordOperation("update_concept", undo, { sourceText, conceptIds: [concept.conceptId] });
+          return `${action.verified ? "verified" : "flagged"} ${concept.conceptId}`;
+        }
+
+        case "correct_math_step": {
+          const concept = resolve(action.conceptId);
+          if (!concept) return `missing ${action.conceptId}`;
+          const before = { ...concept };
+          concept.label = action.correctedResult;
+          if (concept.mathMeaning) {
+            concept.mathMeaning = {
+              ...concept.mathMeaning,
+              result: action.correctedResult,
+              verified: true,
+              verificationDetail: action.reason,
+            };
+          }
+          concept.lastUpdatedAt = Date.now();
+          const undo = emptyUndo();
+          undo.removedConcepts = [before];
+          recordOperation("update_concept", undo, { sourceText, conceptIds: [concept.conceptId] });
+          return `corrected ${concept.conceptId}`;
+        }
       }
     },
     [doClear, doUndo, log, nodeForConcept, now, recordOperation, requestPageTurn],
@@ -2614,7 +2966,13 @@ export default function Board({
       }
       if (applied.length) {
         commit();
-        framePage();
+        // A batch made up ENTIRELY of math actions frames just the active
+        // MathStep group (falling back to the whole page as optional
+        // context) instead of the whole-page union every other batch uses —
+        // see framePage's mathFocalConceptId param. Mixed or non-math
+        // batches keep the original whole-page framing unchanged.
+        const isMathOnlyBatch = actions.length > 0 && actions.every((a) => isMathActionType(a.type));
+        framePage(false, undefined, isMathOnlyBatch ? activeMathConceptIdRef.current : null);
         checkLiveOverlap();
       }
       return applied;
@@ -2728,7 +3086,7 @@ export default function Board({
 
       const beatRes = await fetch("/api/beat", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: providerRequestHeaders({ "content-type": "application/json" }),
         signal: aiAbortRef.current.signal,
         body: JSON.stringify({
           pendingText,
@@ -2772,6 +3130,48 @@ export default function Board({
         return;
       }
 
+      // Math mode: an equation or a step on one, verified deterministically
+      // client-side rather than trusted from the model. Only ever reachable
+      // when the flag is on — the beat route only ever returns this action
+      // when NEXT_PUBLIC_ENABLE_MATH_MODE is set server-side too.
+      if (decision.action === "math_step") {
+        pendingTextRef.current = "";
+        scribePendingRef.current = "";
+        const activeConceptId = activeMathConceptIdRef.current ?? undefined;
+        const activeConcept = activeConceptId ? boardRef.current.concepts.get(activeConceptId) : undefined;
+        const depth = /\b(why|what does .* mean|another way|show .* differently|show it differently)\b/i.test(
+          pendingText,
+        )
+          ? "deep"
+          : "default";
+        try {
+          const mathRes = await fetch("/api/math", {
+            method: "POST",
+            headers: providerRequestHeaders({ "content-type": "application/json" }),
+            signal: aiAbortRef.current?.signal,
+            body: JSON.stringify({
+              focus: decision.focus,
+              transcript: recentTranscript(),
+              scene: semanticScene(),
+              activeConceptId,
+              currentExpression: activeConcept?.label,
+              depth,
+            }),
+          });
+          const { action: mathAction } = (await mathRes.json()) as { action?: CanvasAction | null };
+          if (mathAction) {
+            const applied = await applyActions([mathAction], pendingText);
+            log({ type: "note", text: `math step: ${applied.join("; ")}` });
+          } else {
+            log({ type: "note", text: "math route returned no action" });
+          }
+        } catch (err) {
+          if ((err as Error)?.name === "AbortError") throw err;
+          log({ type: "note", text: `math pipeline error: ${String(err)}` });
+        }
+        return;
+      }
+
       // A topic change makes a section. It used to be a skip, which is why
       // "now let's move on to X" did nothing at all.
       if (decision.action === "section") {
@@ -2799,7 +3199,7 @@ export default function Board({
       try {
         const artistRes = await fetch("/api/artist", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: providerRequestHeaders({ "content-type": "application/json" }),
           signal: aiAbortRef.current?.signal,
           body: JSON.stringify({
             focus: decision.focus,
@@ -2990,7 +3390,7 @@ export default function Board({
       storyAbortRef.current = new AbortController();
       const response = await fetch("/api/story", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: providerRequestHeaders({ "content-type": "application/json" }),
         body: JSON.stringify(context),
         signal: storyAbortRef.current.signal,
       });
@@ -3488,10 +3888,29 @@ export default function Board({
     enabled: ENGINE === "gemini",
   });
 
-  const { status, toggle } =
+  const engine =
     ENGINE === "gemini"
-      ? { status: gemini.status, toggle: gemini.toggle }
-      : { status: deepgram.status, toggle: deepgram.toggle };
+      ? { status: gemini.status, start: gemini.start, stop: gemini.stop }
+      : { status: deepgram.status, start: deepgram.start, stop: deepgram.stop };
+  const status = engine.status;
+  const stopEngine = engine.stop;
+  const startEngine = engine.start;
+  const usage = useUsageSession({
+    projectId: useCallback(() => sessionIdRef.current, []),
+    mode: useCallback(() => modeRef.current, []),
+    onForcedStop: useCallback(() => stopEngine(), [stopEngine]),
+    onWarning: useCallback((message: string) => setErrorText(message), []),
+  });
+  const toggle = useCallback(async () => {
+    const listening = status === "live" || status === "connecting" || status === "reconnecting";
+    if (listening) {
+      stopEngine();
+      await usage.stop("paused");
+      return;
+    }
+    await autosaveRef.current?.flushNow();
+    if (await usage.start()) await startEngine();
+  }, [startEngine, status, stopEngine, usage]);
 
   const wasListeningRef = useRef(false);
   useEffect(() => {
@@ -3499,6 +3918,11 @@ export default function Board({
     if (wasListeningRef.current && status === "idle") {
       aiAbortRef.current?.abort();
       scribeAbortRef.current?.abort();
+      if (scribeTimerRef.current) clearTimeout(scribeTimerRef.current);
+      scribeTimerRef.current = null;
+      scribeQueuedRef.current = false;
+      scribeRetryAtRef.current = 0;
+      scribeFailuresRef.current = 0;
       storyAbortRef.current?.abort();
       storyQueueRef.current = [];
     }
@@ -3512,6 +3936,7 @@ export default function Board({
   useEffect(() => {
     autosaveRef.current = makeAutosave(() => ({
       id: sessionIdRef.current,
+      cloudUpdatedAt: cloudUpdatedAtRef.current,
       title: sessionTitleRef.current,
       savedAt: Date.now(),
       startedAt: t0Ref.current,
@@ -3535,6 +3960,7 @@ export default function Board({
   const restoreSession = useCallback(
     (session: PersistedSession) => {
       sessionIdRef.current = session.id ?? sessionIdRef.current;
+      cloudUpdatedAtRef.current = session.cloudUpdatedAt;
       const restoredTitle = session.title?.trim() || "Untitled visual session";
       sessionTitleRef.current = restoredTitle;
       setSessionTitle(restoredTitle);
@@ -3823,7 +4249,7 @@ export default function Board({
       onWheel={markPointerInput}
       onKeyDownCapture={markUserInput}
     >
-      <CanvasTopBar title={sessionTitle} saveState={saveStatus} onTitleChange={handleTitleChange} onExport={handleExport} onDownloadLog={handleDownloadLog} />
+      <CanvasTopBar title={sessionTitle} saveState={saveStatus} remainingSeconds={usage.remainingSeconds} onTitleChange={handleTitleChange} onExport={handleExport} onDownloadLog={handleDownloadLog} />
 
       <Excalidraw
         excalidrawAPI={(instance: unknown) => setApi(instance)}
@@ -3885,6 +4311,7 @@ export default function Board({
         mode={mode}
         onTranscriptVisibilityChange={setShowTranscript}
         onRecordingFocusChange={setRecordingFocus}
+        onListeningPause={() => { if (status === "live" || status === "connecting" || status === "reconnecting") void toggle(); }}
         getSnapshot={() => {
           const transcript = finalsRef.current.map((item) => item.text).join(" ").trim();
           return {
@@ -3900,6 +4327,23 @@ export default function Board({
           };
         }}
       />
+
+      {AUDIO_REPLAY_ENABLED && !showAudioReplay && (
+        <button
+          onClick={() => setShowAudioReplay(true)}
+          className="fixed top-24 right-4 z-40 rounded-full border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/80 hover:bg-black/90"
+        >
+          Audio Replay
+        </button>
+      )}
+      {AUDIO_REPLAY_ENABLED && showAudioReplay && (
+        <AudioReplayPanel
+          applyActions={applyActions}
+          semanticScene={semanticScene}
+          log={log}
+          onClose={() => setShowAudioReplay(false)}
+        />
+      )}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FREE_RECORDING_LIMIT_MS } from "@/lib/product";
 import {
   downloadBlob,
+  extensionForMimeType,
   saveRecording,
   type RecordingMetadata,
 } from "@/lib/recordings";
@@ -40,10 +41,24 @@ const initialOptions: RecordingOptions = {
   quality: "1080p",
 };
 
+/**
+ * MP4/H.264 first, where the browser actually supports recording it —
+ * WebM plays natively in a browser tab but isn't accepted by many places
+ * people actually want to put a recording (most video editors, some social
+ * upload flows, older Windows/macOS media players without a codec pack).
+ * Falls back to WebM, which every Chromium-based browser can record.
+ */
 function preferredMimeType(hasVideo: boolean) {
   const candidates = hasVideo
-    ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
-    : ["audio/webm;codecs=opus", "audio/webm"];
+    ? [
+        "video/mp4;codecs=avc1.640028,mp4a.40.2",
+        "video/mp4;codecs=h264,aac",
+        "video/mp4",
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm",
+      ]
+    : ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"];
   return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
 }
 
@@ -375,7 +390,8 @@ export function useCanvasRecorder(
 
   const exportLast = useCallback(() => {
     if (!lastRecording) return;
-    downloadBlob(lastRecording.blob, `inpublic-${lastRecording.metadata.sessionId}.webm`);
+    const ext = extensionForMimeType(lastRecording.metadata.mimeType || lastRecording.blob.type);
+    downloadBlob(lastRecording.blob, `inpublic-${lastRecording.metadata.sessionId}.${ext}`);
   }, [lastRecording]);
 
   useEffect(() => {

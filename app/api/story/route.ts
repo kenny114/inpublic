@@ -7,6 +7,8 @@ import {
   parseStoryInterpretation,
   type StoryInterpreterContext,
 } from "@/lib/story";
+import { guardProviderRequest, reconcileProviderCost, type ProviderUsage } from "@/lib/server/provider-guard";
+import { providerFor } from "@/lib/llm";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +27,10 @@ export async function POST(request: Request) {
   if (!isThoughtComplete(sourceText)) {
     return NextResponse.json({ sourceText, normalizedText, confidence: 1, actions: [], incomplete: true });
   }
+
+  const guard = await guardProviderRequest(request, { feature: "story", provider: providerFor(STORY_MODEL), model: STORY_MODEL, requestBytes: Buffer.byteLength(JSON.stringify(body)), maxOutputTokens: 1000 });
+  if (guard instanceof Response) return guard;
+  let usage: ProviderUsage = {};
 
   const user = [
     `TRANSCRIPT: ${body.transcript}`,
@@ -47,7 +53,9 @@ export async function POST(request: Request) {
       user,
       maxTokens: 1000,
       temperature: 0.1,
+      onUsage: (value) => { usage = value; },
     });
+    await reconcileProviderCost(guard, "succeeded", usage, Buffer.byteLength(raw));
     const interpreted = parseStoryInterpretation(raw, sourceText);
     if (!interpreted) {
       return NextResponse.json({
@@ -64,6 +72,7 @@ export async function POST(request: Request) {
       ...interpreted,
     });
   } catch (error) {
+    await reconcileProviderCost(guard, "failed", usage);
     return NextResponse.json({
       sourceText,
       normalizedText,

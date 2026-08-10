@@ -12,8 +12,10 @@
  */
 
 import { CONCEPT_KINDS, type ConceptKind } from "./semantic";
+import { isMathActionType, parseMathAction, type MathCanvasAction } from "./math/actions";
 
 export type CanvasAction =
+  | MathCanvasAction
   | {
       type: "create_concept";
       conceptId: string;
@@ -141,34 +143,52 @@ export function parseAction(raw: unknown): CanvasAction | null {
     case "undo_last":
       return { type };
     default:
-      return null;
+      // Math actions are zod-validated rather than hand-coerced — see
+      // lib/math/actions.ts for why this domain gets a schema and the rest
+      // of this file doesn't.
+      return isMathActionType(type) ? parseMathAction(o) : null;
   }
 }
 
 /**
- * Pull an action list out of whatever the model returned. Tolerates code
- * fences and leading prose, because both show up occasionally regardless of
- * what the prompt says.
+ * Pull the JSON payload out of whatever the model returned, tolerating code
+ * fences and leading/trailing prose. Preference order:
+ *  1. Content inside a ```json ... ``` (or bare ``` ... ```) fence, wherever
+ *     it appears in the text — anchoring the strip to the start of the
+ *     string (as this used to) misses the very common "Here's the JSON:\n```json\n...`"
+ *     shape, since the fence isn't at position 0.
+ *  2. The raw text as-is, in case there was no fence at all.
+ *  3. The first balanced-looking {...}/[...] block, as a last resort.
+ * Each candidate is tried in turn; the first one that parses wins, rather
+ * than a single strip-then-parse-or-fail pass.
  */
-export function parseActions(rawText: string): CanvasAction[] {
-  const cleaned = rawText
-    .replace(/^\s*```(?:json)?/i, "")
-    .replace(/```\s*$/, "")
-    .trim();
+function extractJsonCandidates(rawText: string): string[] {
+  const candidates: string[] = [];
+  const fenceRe = /```(?:json)?\s*\n?([\s\S]*?)```/gi;
+  let match: RegExpExecArray | null;
+  while ((match = fenceRe.exec(rawText))) {
+    const inner = match[1].trim();
+    if (inner) candidates.push(inner);
+  }
+  candidates.push(rawText.trim());
+  const bracket = rawText.match(/[[{][\s\S]*[\]}]/);
+  if (bracket) candidates.push(bracket[0]);
+  return candidates;
+}
 
+export function parseActions(rawText: string): CanvasAction[] {
   let payload: unknown = null;
-  try {
-    payload = JSON.parse(cleaned);
-  } catch {
-    // Salvage the first {...} or [...] block.
-    const match = cleaned.match(/[[{][\s\S]*[\]}]/);
-    if (!match) return [];
+  for (const candidate of extractJsonCandidates(rawText)) {
     try {
-      payload = JSON.parse(match[0]);
+      payload = JSON.parse(candidate);
+      break;
     } catch {
-      return [];
+      // Try the next candidate — a fenced block that isn't valid JSON on
+      // its own (truncated, or the model fenced explanatory prose instead)
+      // shouldn't stop us from trying the raw text or the bracket salvage.
     }
   }
+  if (payload === null) return [];
 
   const list = Array.isArray(payload)
     ? payload

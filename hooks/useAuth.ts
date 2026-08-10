@@ -1,23 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { readAuth, subscribeAuth, SIGNED_OUT, type AuthState } from "@/lib/auth";
+import { SIGNED_OUT, type AuthState } from "@/lib/auth";
+import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 
-/**
- * Auth state for rendering.
- *
- * The first client render must match the server's HTML, so this starts at
- * `{ ready: false, user: null }` on both sides and only reads localStorage in
- * an effect. Callers render a neutral placeholder while `ready` is false rather
- * than guessing at "Log in" or "Log out".
- */
 export function useAuth(): AuthState {
   const [state, setState] = useState<AuthState>(SIGNED_OUT);
 
   useEffect(() => {
-    const sync = () => setState({ ready: true, user: readAuth() });
-    sync();
-    return subscribeAuth(sync);
+    let supabase: ReturnType<typeof createBrowserSupabaseClient>;
+    try { supabase = createBrowserSupabaseClient(); }
+    catch { setState({ ready: true, user: null }); return; }
+    void supabase.auth.getUser().then(({ data }) =>
+      setState({ ready: true, user: data.user }),
+    );
+    const { data } = supabase.auth.onAuthStateChange((_event, session) =>
+      setState({ ready: true, user: session?.user ?? null }),
+    );
+    return () => data.subscription.unsubscribe();
   }, []);
 
   return state;

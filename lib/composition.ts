@@ -248,10 +248,36 @@ export function occupiedCanvasRatio(bounds: CompositionRect, safe: CompositionRe
   return Math.round(clamp(occupied / Math.max(1, safe.width * safe.height), 0, 1) * 1000) / 1000;
 }
 
+const CAMERA_FIT_PADDING = 28;
+
+/** The zoom that would let `bounds` fit inside `safe`, before any readability floor is applied. */
+function fitZoomFor(bounds: CompositionRect, safe: CompositionRect): number {
+  return Math.min(
+    CAMERA_RULES.maximumZoom,
+    safe.width / Math.max(1, bounds.width + CAMERA_FIT_PADDING * 2),
+    safe.height / Math.max(1, bounds.height + CAMERA_FIT_PADDING * 2),
+  );
+}
+
 export function proposeCamera(input: CameraProposalInput): CameraProposal {
-  const bounds = input.contextBounds
+  const combinedBounds = input.contextBounds
     ? rectUnion([input.focalBounds, input.contextBounds]) ?? input.focalBounds
     : input.focalBounds;
+  const readableZoom = minimumReadableZoom(input.text ?? []);
+  // contextBounds is optional nearby context, included only if the union
+  // still fits at a readable zoom. If honouring it would force zoom below
+  // the readability floor, drop it and frame just the active content —
+  // completed history sitting outside the frame is not a failure the way
+  // the ACTIVE content becoming unreadable is. Without this, a caller that
+  // keeps passing "everything on the page" as contextBounds (as Board.tsx's
+  // math commits used to pass it as the sole focalBounds) permanently
+  // outgrows the readable floor as content accumulates, and since zoom
+  // never goes below that floor, contentFits stays false forever with a
+  // frozen target — reproduced on real replay output (9 consecutive
+  // commits, occupiedCanvasRatio climbing 0.10 -> 0.84, target frozen).
+  const bounds = input.contextBounds && fitZoomFor(combinedBounds, input.viewport.safeBounds) < readableZoom
+    ? input.focalBounds
+    : combinedBounds;
   const currentScreenBounds = worldToScreen(bounds, input.currentCamera);
   const fitsNow = rectInside(currentScreenBounds, input.viewport.safeBounds);
   const webcamCollisions = input.viewport.webcamBounds &&
@@ -284,17 +310,26 @@ export function proposeCamera(input: CameraProposalInput): CameraProposal {
     };
   }
 
-  const padding = 28;
-  const fitZoom = Math.min(
-    CAMERA_RULES.maximumZoom,
-    input.viewport.safeBounds.width / Math.max(1, bounds.width + padding * 2),
-    input.viewport.safeBounds.height / Math.max(1, bounds.height + padding * 2),
-  );
-  const readableZoom = minimumReadableZoom(input.text ?? []);
+  const fitZoom = fitZoomFor(bounds, input.viewport.safeBounds);
+  // readableZoom was already computed above, against the (possibly
+  // context-dropped) `bounds` decision — reused here rather than recomputed.
+  // Zoom actually needs to change to fix one of these — explicit navigation
+  // alone (recentering on already-fitting content) is not this: that case
+  // should keep the hysteresis snap, per "small zoom difference is held by
+  // hysteresis" below.
+  const zoomCorrectionRequired = !fitsNow || webcamCollisions > 0 || currentViolations.length > 0;
+  const urgent = zoomCorrectionRequired || Boolean(input.explicitNavigation);
   // Readability wins over showing more things. If both cannot be achieved,
   // callers receive contentFits=false and can suppress/summarize/delay.
   let zoom = Math.max(fitZoom, readableZoom);
-  if (Math.abs(zoom - input.currentCamera.zoom) < CAMERA_RULES.zoomHysteresis) {
+  // Hysteresis exists to stop cosmetic micro-adjustments, not to veto a
+  // correction that's actually needed. Snapping back to the current zoom
+  // when content doesn't fit reproduces the exact bug this guards against:
+  // the target zoom differs from current by less than zoomHysteresis, so it
+  // gets discarded, the camera never corrects, and every subsequent frame
+  // proposes the identical (still-too-small) delta forever — "Camera zoom
+  // failure prevents visibility" logged on repeat at a fixed zoom/scroll.
+  if (!zoomCorrectionRequired && Math.abs(zoom - input.currentCamera.zoom) < CAMERA_RULES.zoomHysteresis) {
     zoom = input.currentCamera.zoom;
   }
   zoom = clamp(
@@ -307,8 +342,15 @@ export function proposeCamera(input: CameraProposalInput): CameraProposal {
   const zoomDelta = Math.abs(input.currentCamera.zoom - target.zoom);
   const meaningful = displacement >= CAMERA_RULES.minimumDisplacementPx || zoomDelta >= CAMERA_RULES.zoomHysteresis;
   const coolingDown = input.now - input.state.lastMovementAt < CAMERA_RULES.cooldownMs;
-  const urgent = !fitsNow || webcamCollisions > 0 || currentViolations.length > 0 || Boolean(input.explicitNavigation);
-  const move = meaningful && (!coolingDown || urgent);
+  // An urgent correction (content doesn't fit, readability violated, webcam
+  // collision, explicit navigation) must not be gated by the
+  // meaningful-displacement threshold — that threshold exists to suppress
+  // cosmetic jitter, not to block a fix the frame actually needs. Previously
+  // `meaningful && (!coolingDown || urgent)` still required `meaningful` even
+  // when urgent, so a small-but-necessary correction (e.g. a few percent of
+  // zoom) was silently dropped every frame and contentFits stayed false
+  // indefinitely.
+  const move = urgent || (meaningful && !coolingDown);
   const finalTarget = move ? target : input.currentCamera;
   const finalScreen = worldToScreen(bounds, finalTarget);
   const violations = readabilityViolations(input.text ?? [], finalTarget.zoom);

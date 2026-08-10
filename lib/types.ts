@@ -11,7 +11,9 @@ export type BeatAction =
   | "section"
   | "skip"
   | "undo"
-  | "clear";
+  | "clear"
+  /** Only ever returned when math mode is enabled server-side — see BEAT_MATH_ADDENDUM. */
+  | "math_step";
 
 export interface BeatDecision {
   action: BeatAction;
@@ -278,4 +280,16 @@ export interface ArtistRequest {
   scene?: SemanticScene;
   /** "draw" for content, "command" when the speaker gave an instruction. */
   intent?: "draw" | "command";
+}
+
+export interface MathRequest {
+  focus: string;
+  transcript: string;
+  scene?: SemanticScene;
+  /** conceptId of the equation currently being worked on, if any. */
+  activeConceptId?: string;
+  /** Current expression as the board has it, so the model can't drift from what's shown. */
+  currentExpression?: string;
+  /** "deep" when the speaker asked "why"/"another way" about the current step. */
+  depth?: "default" | "deep";
 }

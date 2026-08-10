@@ -1,0 +1,11 @@
+.git
+.next
+.next-build
+node_modules
+output
+.playwright-cli
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+supabase/tests

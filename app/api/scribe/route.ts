@@ -1,5 +1,7 @@
 import { completeStream, SCRIBE_MODEL } from "@/lib/llm";
 import { SCRIBE_SYSTEM } from "@/lib/prompts";
+import { guardProviderRequest, reconcileProviderCost, type ProviderUsage } from "@/lib/server/provider-guard";
+import { providerFor } from "@/lib/llm";
 
 export const dynamic = "force-dynamic";
 
@@ -21,8 +23,12 @@ export async function POST(req: Request) {
   try {
     body = (await req.json()) as ScribeRequest;
   } catch {
-    return new Response("", { status: 400 });
+    return Response.json({ error: { code: "invalid_request", message: "Invalid request." } }, { status: 400 });
   }
+
+  const guard = await guardProviderRequest(req, { feature: "scribe", provider: providerFor(SCRIBE_MODEL), model: SCRIBE_MODEL, requestBytes: Buffer.byteLength(JSON.stringify(body)), maxOutputTokens: 200 });
+  if (guard instanceof Response) return guard;
+  let usage: ProviderUsage = {};
 
   const onPage = Array.isArray(body.onPage) ? body.onPage : [];
 
@@ -46,11 +52,14 @@ export async function POST(req: Request) {
           user,
           maxTokens: 200,
           temperature: 0.4,
+          onUsage: (value) => { usage = value; },
         })) {
           controller.enqueue(encoder.encode(chunk));
         }
+        await reconcileProviderCost(guard, "succeeded", usage);
         controller.close();
       } catch (err) {
+        await reconcileProviderCost(guard, "failed", usage);
         console.warn("[scribe]", err);
         // Make the body reader reject. A clean, empty stream looks like a
         // legitimate "nothing worth drawing" response and would silently
