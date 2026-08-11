@@ -17,6 +17,7 @@ const dashboard = read("components/DashboardHome.tsx");
 const shell = read("components/DashboardShell.tsx");
 const usage = read("components/UsageSurfaces.tsx");
 const settings = read("components/SettingsForm.tsx");
+const rootLayout = read("app/layout.tsx");
 /** Everything a visitor or a signed-in user can read. */
 const userFacing = [landing, pricing, dashboard, shell, usage, settings, demos, demoPlayer].join("\n");
 
@@ -68,6 +69,7 @@ const checks = [
   ["settings can actually clear local recordings", settings.includes("deleteRecording")],
   ["Discord destination is centrally configured", product.includes("NEXT_PUBLIC_DISCORD_URL")],
   ["client source does not read provider secrets", ![recorder, panel, landing].some((source) => /DEEPGRAM_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY/.test(source))],
+  ["Vercel Analytics covers every route from the root layout", rootLayout.includes('@vercel/analytics/next') && rootLayout.includes("<Analytics />")],
 ];
 
 for (const [name, passed] of checks) {
