@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "@excalidraw/excalidraw/index.css";
 import "./globals.css";
 import "./product.css";
@@ -28,7 +29,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" data-scroll-behavior="smooth" suppressHydrationWarning>
-      <body className={geist.variable} suppressHydrationWarning>{children}</body>
+      <body className={geist.variable} suppressHydrationWarning>
+        {children}
+        <Analytics />
+      </body>
     </html>
   );
 }
