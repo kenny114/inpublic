@@ -20,6 +20,17 @@ export interface CameraView {
   zoom: number;
 }
 
+export interface CameraVelocity {
+  scrollX: number;
+  scrollY: number;
+  zoom: number;
+}
+
+export interface CameraSpringStep {
+  camera: CameraView;
+  velocity: CameraVelocity;
+}
+
 export interface SafeAreaMargins {
   top: number;
   right: number;
@@ -100,6 +111,8 @@ export interface CameraProposalInput {
   primarySubjectChanged?: boolean;
   explicitNavigation?: boolean;
   followMovingSubject?: boolean;
+  /** Override the per-move zoom limit for an intentional overview reveal. */
+  maximumZoomChange?: number;
 }
 
 export interface CameraProposal {
@@ -121,10 +134,42 @@ export const CAMERA_RULES = {
   minimumDisplacementPx: 32,
   maximumZoomChange: 0.16,
   maximumZoom: 1.08,
-  transitionMs: 420,
+  /** Natural frequency of the critically damped follow camera. */
+  springFrequency: 10,
 } as const;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+/**
+ * Advance a critically damped camera spring without resetting its velocity.
+ * This closed-form step is frame-rate independent and can be smoothly
+ * retargeted whenever a new live transcript revision arrives.
+ */
+export function stepCameraSpring(
+  camera: CameraView,
+  target: CameraView,
+  velocity: CameraVelocity,
+  deltaMs: number,
+  frequency = CAMERA_RULES.springFrequency,
+): CameraSpringStep {
+  const seconds = Math.max(0, Math.min(deltaMs, 64)) / 1000;
+  const step = (value: number, destination: number, speed: number) => {
+    const error = value - destination;
+    const coefficient = speed + frequency * error;
+    const decay = Math.exp(-frequency * seconds);
+    return {
+      value: destination + (error + coefficient * seconds) * decay,
+      speed: (speed - frequency * coefficient * seconds) * decay,
+    };
+  };
+  const x = step(camera.scrollX, target.scrollX, velocity.scrollX);
+  const y = step(camera.scrollY, target.scrollY, velocity.scrollY);
+  const zoom = step(camera.zoom, target.zoom, velocity.zoom);
+  return {
+    camera: { scrollX: x.value, scrollY: y.value, zoom: zoom.value },
+    velocity: { scrollX: x.speed, scrollY: y.speed, zoom: zoom.speed },
+  };
+}
 
 export function recordingViewport(
   width: number,
@@ -332,10 +377,11 @@ export function proposeCamera(input: CameraProposalInput): CameraProposal {
   if (!zoomCorrectionRequired && Math.abs(zoom - input.currentCamera.zoom) < CAMERA_RULES.zoomHysteresis) {
     zoom = input.currentCamera.zoom;
   }
+  const maximumZoomChange = input.maximumZoomChange ?? CAMERA_RULES.maximumZoomChange;
   zoom = clamp(
     zoom,
-    Math.max(0.1, input.currentCamera.zoom - CAMERA_RULES.maximumZoomChange),
-    Math.min(CAMERA_RULES.maximumZoom, input.currentCamera.zoom + CAMERA_RULES.maximumZoomChange),
+    Math.max(0.1, input.currentCamera.zoom - maximumZoomChange),
+    Math.min(CAMERA_RULES.maximumZoom, input.currentCamera.zoom + maximumZoomChange),
   );
   const target = cameraFor(bounds, input.viewport.safeBounds, zoom);
   const displacement = distancePx(input.currentCamera, target);

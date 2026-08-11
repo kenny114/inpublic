@@ -1,6 +1,9 @@
 export interface AudioTiming {
   audioEndMs: number;
   streamEpoch: number;
+  kind?: "interim" | "final";
+  receivedAtMs?: number;
+  firstWordEndMs?: number;
 }
 
 export interface LatencySample {
@@ -29,4 +32,3 @@ export function liveLatencySample(
   if (lagMs > MAX_VALID_LIVE_LAG_MS) return { valid: false, reason: "stale-audio" };
   return { valid: true, lagMs: Math.max(0, lagMs) };
 }
-
