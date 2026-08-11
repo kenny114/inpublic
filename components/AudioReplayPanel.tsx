@@ -334,6 +334,16 @@ export function AudioReplayPanel({ applyActions, semanticScene, log, onClose }: 
     const t = audio.currentTime;
     setCurrentTime(t);
     controllerRef.current.updateAudioTime(t);
+    // useUsageSession's live-microphone idle watchdog force-stops listening
+    // after 90s without an "inpublic-final-transcript" event — it has no
+    // notion of Audio Replay, which never produces one (there's no live mic
+    // input to finalize). Without this, a still-active live-listening
+    // session gets killed out from under the user 90s into a replay that is
+    // working perfectly fine, with a scary "needs your attention" banner.
+    // Reusing the exact same signal the watchdog already listens for is the
+    // minimal fix — it correctly reads replay activity as "not idle"
+    // without either system needing to know about the other's internals.
+    window.dispatchEvent(new Event("inpublic-final-transcript"));
     const generation = controllerRef.current.currentGeneration;
 
     // Producer: keep preparedThroughTime running ahead of audioTime by
