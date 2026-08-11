@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { safeNext, siteOrigin } from "@/lib/server/site-url";
 
 type Context = { params: Promise<{ action: string }> };
 const MAX_BODY_BYTES = 4096;
@@ -25,13 +26,19 @@ export async function POST(request: Request, { params }: Context) {
   const raw = await request.text();
   if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return NextResponse.json({ error: generic }, { status: 413 });
   const { action } = await params;
-  if (!["sign-in", "sign-up", "reset"].includes(action)) return NextResponse.json({ error: "not found" }, { status: 404 });
-  let body: { email?: string; password?: string; displayName?: string };
+  if (!["sign-in", "sign-up", "reset", "resend"].includes(action)) return NextResponse.json({ error: "not found" }, { status: 404 });
+  let body: { email?: string; password?: string; displayName?: string; next?: string };
   try { body = JSON.parse(raw); } catch { return NextResponse.json({ error: generic }, { status: 400 }); }
   const email = body.email?.trim().toLowerCase() ?? "";
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "unknown";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return NextResponse.json({ error: generic }, { status: 400 });
-  if (action !== "reset" && (typeof body.password !== "string" || body.password.length < 8 || body.password.length > 128)) return NextResponse.json({ error: generic }, { status: 400 });
+  const needsPassword = action === "sign-in" || action === "sign-up";
+  if (needsPassword && (typeof body.password !== "string" || body.password.length < 8 || body.password.length > 128)) return NextResponse.json({ error: generic }, { status: 400 });
+  // Where the reader should land once the emailed link is confirmed. Without
+  // this the middleware's `next` was dropped and everyone was dumped on the
+  // dashboard, mid-onboarding, wherever they had actually been headed.
+  const destination = safeNext(body.next);
+  const confirmRedirect = `${siteOrigin(request)}/auth/callback?next=${encodeURIComponent(destination)}`;
   try {
     const [ipLimit, emailLimit] = await Promise.all([
       limit(`auth:${action}:ip`, ip, positive("RATE_LIMIT_AUTH_IP_PER_15_MINUTES", 20)),
@@ -41,13 +48,31 @@ export async function POST(request: Request, { params }: Context) {
     const supabase = await createServerSupabaseClient();
     if (action === "sign-in") {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password: body.password as string });
-      return error ? NextResponse.json({ error: generic }, { status: 400 }) : NextResponse.json({ authenticated: Boolean(data.session) });
+      if (!error) return NextResponse.json({ authenticated: Boolean(data.session) });
+      /*
+       * "Email not confirmed" deserves its own answer. Collapsing it into the
+       * generic message told people with the *correct* password to check their
+       * details, with no way forward — the sign-in dead end. GoTrue only
+       * returns this code after the password has already been verified, so
+       * saying it out loud reveals nothing to someone who is guessing.
+       */
+      const unverified = error.code === "email_not_confirmed" || /not confirmed/i.test(error.message);
+      return NextResponse.json(
+        { error: unverified ? "Confirm your email address to finish signing in." : generic, reason: unverified ? "email-unconfirmed" : "invalid-credentials" },
+        { status: unverified ? 403 : 400 },
+      );
     }
     if (action === "sign-up") {
-      const { data, error } = await supabase.auth.signUp({ email, password: body.password as string, options: { emailRedirectTo: `${new URL(request.url).origin}/auth/callback?next=/dashboard`, data: { display_name: body.displayName?.trim().slice(0, 80) || null } } });
+      const { data, error } = await supabase.auth.signUp({ email, password: body.password as string, options: { emailRedirectTo: confirmRedirect, data: { display_name: body.displayName?.trim().slice(0, 80) || null } } });
       return error ? NextResponse.json({ error: generic }, { status: 400 }) : NextResponse.json({ authenticated: Boolean(data.session) });
     }
-    await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${new URL(request.url).origin}/auth/callback?next=/reset-password` });
+    if (action === "resend") {
+      // Same shape of answer whether or not the address is waiting on a
+      // confirmation, so this cannot be used to enumerate accounts.
+      await supabase.auth.resend({ type: "signup", email, options: { emailRedirectTo: confirmRedirect } });
+      return NextResponse.json({ accepted: true });
+    }
+    await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${siteOrigin(request)}/auth/callback?next=%2Freset-password` });
     return NextResponse.json({ accepted: true });
   } catch {
     return NextResponse.json({ error: generic }, { status: 503 });
