@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { setActiveUsageSessionId } from "@/lib/usage-client";
 
-export interface ClientEntitlement { plan: "free" | "creator"; remainingSeconds: number; maxSessionSeconds: number; periodEnd: string; mayStart: boolean; }
+export interface ClientEntitlement { plan: "free" | "creator"; remainingSeconds: number; maxSessionSeconds: number; periodEnd: string; mayStart: boolean; unlimitedMinutes: boolean; }
 interface Options { projectId: () => string; mode: () => "standard" | "story"; onForcedStop: (reason: string) => void; onWarning?: (message: string) => void; }
 
 export function useUsageSession({ projectId, mode, onForcedStop, onWarning }: Options) {
@@ -60,8 +60,8 @@ export function useUsageSession({ projectId, mode, onForcedStop, onWarning }: Op
     }, 20_000);
     return () => window.clearInterval(timer);
   }, [forceStop, refreshEntitlement]);
-  useEffect(() => { const timer = window.setInterval(() => { if (sessionIdRef.current) setRemainingSeconds((value) => value === null ? value : Math.max(0, value - 1)); }, 1000); return () => window.clearInterval(timer); }, []);
-  useEffect(() => { if (remainingSeconds === null) return; for (const threshold of [300, 60]) if (remainingSeconds <= threshold && !warnedRef.current.has(threshold)) { warnedRef.current.add(threshold); onWarning?.(threshold === 300 ? "Five minutes of visual-speech time remain." : "One minute of visual-speech time remains."); } }, [onWarning, remainingSeconds]);
+  useEffect(() => { const timer = window.setInterval(() => { if (sessionIdRef.current && !entitlement?.unlimitedMinutes) setRemainingSeconds((value) => value === null ? value : Math.max(0, value - 1)); }, 1000); return () => window.clearInterval(timer); }, [entitlement?.unlimitedMinutes]);
+  useEffect(() => { if (remainingSeconds === null || entitlement?.unlimitedMinutes) return; for (const threshold of [300, 60]) if (remainingSeconds <= threshold && !warnedRef.current.has(threshold)) { warnedRef.current.add(threshold); onWarning?.(threshold === 300 ? "Five minutes of visual-speech time remain." : "One minute of visual-speech time remains."); } }, [entitlement?.unlimitedMinutes, onWarning, remainingSeconds]);
   useEffect(() => {
     const changed = () => { if (backgroundTimerRef.current) clearTimeout(backgroundTimerRef.current); if (document.hidden && sessionIdRef.current) { const seconds = Number(process.env.NEXT_PUBLIC_BACKGROUND_PAUSE_SECONDS) || 30; backgroundTimerRef.current = setTimeout(() => forceStop("tab_backgrounded", "Listening paused while this tab was in the background."), seconds * 1000); } };
     document.addEventListener("visibilitychange", changed); return () => { document.removeEventListener("visibilitychange", changed); if (backgroundTimerRef.current) clearTimeout(backgroundTimerRef.current); };

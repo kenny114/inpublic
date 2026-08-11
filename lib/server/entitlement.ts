@@ -20,6 +20,8 @@ export interface Entitlement {
    * Creator membership first verifies — see the founding-allowances migration.
    */
   foundingNumber: number | null;
+  isAdmin: boolean;
+  unlimitedMinutes: boolean;
 }
 
 export async function resolveEntitlement(userId: string): Promise<Entitlement> {
@@ -55,6 +57,9 @@ export async function resolveEntitlement(userId: string): Promise<Entitlement> {
     // Absent until the founding-allowances migration is applied; a missing
     // column reads as "no founding position", which is the safe answer.
     foundingNumber: row.founding_number == null ? null : Number(row.founding_number),
+    // Older databases omit these until the admin-entitlements migration is applied.
+    isAdmin: row.is_admin === true,
+    unlimitedMinutes: row.unlimited_minutes === true,
   };
 }
 

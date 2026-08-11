@@ -32,6 +32,7 @@ for (const [position, seconds] of [[1, 14400], [10, 14400], [11, 12600], [25, 12
   assert.equal(foundingAllowanceSeconds(position), seconds, `founding #${position}`);
 }
 const founding = read("supabase/migrations/202608110001_founding_allowances.sql");
+const adminEntitlements = read("supabase/migrations/202608110002_admin_entitlements.sql");
 for (const tier of FOUNDING_TIERS) {
   assert.equal(founding.includes(`<= ${tier.upTo} then ${tier.allowanceSeconds}`), true, `SQL ladder covers #${tier.upTo}`);
 }
@@ -58,6 +59,9 @@ check("cost reservations are server-only under RLS", spend.includes("alter table
 check("public auth endpoints use atomic IP and email-hash limits", authRoute.includes("consume_rate_limit") && authRoute.includes("auth:${action}:ip") && authRoute.includes("auth:${action}:email"));
 check("reservations precede provider execution in shared guard", guard.indexOf("reserve_provider_cost") < guard.lastIndexOf("return { userId"));
 check("expired leases are rejected", guard.includes("lease_expires_at") && guard.includes("expired_lease"));
+check("admin flags are database-owned and default off", adminEntitlements.includes("is_admin boolean not null default false") && adminEntitlements.includes("unlimited_minutes boolean not null default false"));
+check("unlimited minutes are explicit in the entitlement contract", adminEntitlements.includes("is_admin boolean, unlimited_minutes boolean") && adminEntitlements.includes("v_allowance := 2147483647") && adminEntitlements.includes("v_max := 2147483647"));
+check("unlimited minutes retain provider cost controls", adminEntitlements.includes("cost and emergency controls still apply") && guard.includes("reserve_provider_cost"));
 
 // An unreadable beat response is retried once rather than silently becoming a
 // skip — a malformed answer is a lost thought, not a decision. The retry has

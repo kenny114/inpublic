@@ -4380,7 +4380,7 @@ export default function Board({
       onWheel={markPointerInput}
       onKeyDownCapture={markUserInput}
     >
-      <CanvasTopBar title={sessionTitle} saveState={saveStatus} remainingSeconds={usage.remainingSeconds} onTitleChange={handleTitleChange} onExport={handleExport} onDownloadLog={handleDownloadLog} />
+      <CanvasTopBar title={sessionTitle} saveState={saveStatus} remainingSeconds={usage.remainingSeconds} unlimitedMinutes={usage.entitlement?.unlimitedMinutes} onTitleChange={handleTitleChange} onExport={handleExport} onDownloadLog={handleDownloadLog} />
 
       <Excalidraw
         excalidrawAPI={(instance: unknown) => setApi(instance)}

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isAdminAccount } from "@/lib/server/admin";
 
 export const dynamic = "force-dynamic";
 const money = (value: number) => `$${value.toFixed(4)}`;
@@ -10,8 +11,7 @@ const group = (rows: Array<Record<string, unknown>>, key: string): CostRows => (
 
 export default async function AdminCostsPage() {
   const user = await getAuthenticatedUser();
-  const allowlist = new Set((process.env.ADMIN_EMAIL_ALLOWLIST ?? "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean));
-  if (!user?.email || !allowlist.has(user.email.toLowerCase())) redirect("/dashboard");
+  if (!(await isAdminAccount(user))) redirect("/dashboard");
   const admin = createAdminClient();
   const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0);
   const monthStart = new Date(Date.UTC(dayStart.getUTCFullYear(), dayStart.getUTCMonth(), 1));

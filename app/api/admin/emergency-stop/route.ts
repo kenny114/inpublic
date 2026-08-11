@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { spendLimits } from "@/lib/server/limits";
+import { isAdminAccount } from "@/lib/server/admin";
 
 async function authorized() {
   const user = await getAuthenticatedUser().catch(() => null);
-  const allowlist = new Set((process.env.ADMIN_EMAIL_ALLOWLIST ?? "").split(",").map((item) => item.trim().toLowerCase()).filter(Boolean));
-  return user?.email && allowlist.has(user.email.toLowerCase()) ? user : null;
+  return (await isAdminAccount(user)) ? user : null;
 }
 
 export async function GET() {

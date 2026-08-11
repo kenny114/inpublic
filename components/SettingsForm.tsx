@@ -114,15 +114,19 @@ export function SettingsForm() {
         ) : (
           <>
             <Row label="Plan"><span className="settings-value">{planLabel(entitlement)}</span></Row>
-            <Row label="Monthly allowance"><span className="settings-value">{minutesOf(entitlement.allowanceSeconds)} minutes</span></Row>
+            <Row label="Monthly allowance"><span className="settings-value">{entitlement.unlimitedMinutes ? "Unlimited" : `${minutesOf(entitlement.allowanceSeconds)} minutes`}</span></Row>
             <Row label="Used this period"><span className="settings-value">{minutesOf(entitlement.consumedSeconds)} minutes</span></Row>
-            <Row label="Remaining"><span className="settings-value">{minutesRemaining(entitlement.remainingSeconds)} minutes</span></Row>
-            <Row label="Maximum session length"><span className="settings-value">{minutesOf(entitlement.maxSessionSeconds)} minutes</span></Row>
+            <Row label="Remaining"><span className="settings-value">{entitlement.unlimitedMinutes ? "Unlimited" : `${minutesRemaining(entitlement.remainingSeconds)} minutes`}</span></Row>
+            <Row label="Maximum session length"><span className="settings-value">{entitlement.unlimitedMinutes ? "Unlimited" : `${minutesOf(entitlement.maxSessionSeconds)} minutes`}</span></Row>
             {/* UTC, to match the server's period boundaries. */}
-            <Row label="Resets"><span className="settings-value">{new Date(entitlement.periodEnd).toLocaleDateString(undefined, { timeZone: "UTC" })}</span></Row>
-            {entitlement.plan === "free" ? (
+            {!entitlement.unlimitedMinutes ? <Row label="Resets"><span className="settings-value">{new Date(entitlement.periodEnd).toLocaleDateString(undefined, { timeZone: "UTC" })}</span></Row> : null}
+            {entitlement.plan === "free" && !entitlement.isAdmin ? (
               <Row label="Upgrade" hint="Creator gives you more live time. Same product, same canvas.">
                 <CreatorCheckoutButton label="Upgrade to Creator" />
+              </Row>
+            ) : entitlement.isAdmin ? (
+              <Row label="Access" hint="Administrative access includes unlimited visual-speech time.">
+                <span className="settings-value">Active</span>
               </Row>
             ) : (
               <Row label="Subscription" hint="Your Creator subscription is managed where you bought it, on Whop.">

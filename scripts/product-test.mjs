@@ -61,6 +61,8 @@ const checks = [
   ["upgrade goes straight to pricing", usage.includes('href="/pricing"')],
   ["usage numbers come from the server entitlement", usage.includes("useEntitlement") && !/allowanceSeconds:\s*\d/.test(usage)],
   ["founding position is shown from the server, not inferred", usage.includes("planLabel")],
+  ["administrative accounts show unlimited usage", usage.includes("Unlimited visual-speech time") && settings.includes('entitlement.unlimitedMinutes ? "Unlimited"')],
+  ["administrative accounts are not prompted to upgrade", usage.includes('entitlement.plan === "free" && !entitlement.unlimitedMinutes') && settings.includes('entitlement.plan === "free" && !entitlement.isAdmin')],
   ["new users are offered a real example without leaving the app", dashboard.includes("See an example") && dashboard.includes("VisualDemoTabs")],
   ["the empty dashboard invites speaking", dashboard.includes("No visual sessions yet.")],
   // Settings is a control panel: only settings that are stored and read.
