@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePreferences } from "@/hooks/usePreferences";
 import { signOut } from "@/lib/auth";
-import { billing } from "@/lib/billing";
+import { CreatorCheckoutButton } from "@/components/CreatorCheckoutButton";
 import { FREE_RECORDING_LIMIT_MS, FREE_SESSION_LIMIT } from "@/lib/product";
 import { features } from "@/lib/features";
+
+interface Entitlement { plan: "free" | "creator"; remainingSeconds: number; allowanceSeconds: number; periodEnd: string; }
 
 function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
@@ -29,9 +32,24 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 const inputClass = "rounded-lg border border-zinc-200 px-3 py-2 text-sm font-normal outline-none focus:border-zinc-400";
 
+function minutesFrom(seconds: number) {
+  return Math.round(seconds / 60);
+}
+
 export function SettingsForm() {
   const { ready: authReady, user } = useAuth();
   const { preferences, update } = usePreferences();
+  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
+
+  useEffect(() => {
+    if (!user) { setEntitlement(null); return; }
+    let cancelled = false;
+    void fetch("/api/entitlement", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((value) => { if (!cancelled) setEntitlement(value); })
+      .catch(() => { if (!cancelled) setEntitlement(null); });
+    return () => { cancelled = true; };
+  }, [user]);
 
   return (
     <div className="mt-6 grid max-w-3xl gap-4">
@@ -99,16 +117,28 @@ export function SettingsForm() {
       </Section>
 
       <Section title="Billing">
-        <p className="text-sm font-medium">{billing.configured ? "Paid plan" : "Free plan"}</p>
-        <p className="mt-1.5 text-sm leading-6 text-zinc-500">
-          {billing.configured
-            ? "Manage your subscription with your payment provider."
-            : "Billing is not connected in this preview. No payment method is stored and no charge can be made. Usage tracking arrives with billing, so no usage figures are shown."}
-        </p>
-        {!billing.configured && (
-          <button type="button" disabled className="mt-4 cursor-not-allowed rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-400">
-            Upgrade — not available yet
-          </button>
+        {!user ? (
+          <>
+            <p className="text-sm font-medium">Free plan</p>
+            <p className="mt-1.5 text-sm leading-6 text-zinc-500">Sign in to see your plan and upgrade to Creator.</p>
+          </>
+        ) : entitlement === null ? (
+          <p className="text-sm text-zinc-500">Loading billing status…</p>
+        ) : entitlement.plan === "creator" ? (
+          <>
+            <p className="text-sm font-medium">Creator plan</p>
+            <p className="mt-1.5 text-sm leading-6 text-zinc-500">
+              {minutesFrom(entitlement.remainingSeconds)} of {minutesFrom(entitlement.allowanceSeconds)} visual-speech minutes remaining this billing period. Renews {new Date(entitlement.periodEnd).toLocaleDateString()}.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-medium">Free plan</p>
+            <p className="mt-1.5 text-sm leading-6 text-zinc-500">
+              {minutesFrom(entitlement.remainingSeconds)} of {minutesFrom(entitlement.allowanceSeconds)} visual-speech minutes remaining this UTC month. Upgrade to Creator for 200 minutes/month.
+            </p>
+            <CreatorCheckoutButton />
+          </>
         )}
       </Section>
 

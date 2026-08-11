@@ -6,7 +6,7 @@ export default function SettingsPage() {
     <div>
       <PageHeader
         title="Settings"
-        description="Profile, defaults, and plan. Everything here is stored in this browser until accounts and billing are connected."
+        description="Profile, defaults, and plan. Recordings and preferences stay in this browser; plan and billing are verified with your account."
       />
       <SettingsForm />
     </div>
