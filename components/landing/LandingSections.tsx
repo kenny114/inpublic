@@ -92,13 +92,13 @@ export function UseCases() {
 }
 
 const pricing = [
-  { name: "Free", description: "Try the live canvas and create your first visual sessions.", features: ["Standard Mode", ...(features.storyMode ? ["Limited Story Mode"] : []), "20-minute recording limit", "Editable exports"], href: "/create?new=1", cta: "Start speaking" },
-  { name: "Creator", description: "The complete recording and visual-story workflow, currently in early access.", features: [features.storyMode ? "Standard and Story Mode" : "Standard Mode", "Camera and microphone recording", "Session history", "Full canvas exports"], href: "/dashboard", cta: "Start speaking" },
+  { name: "Free", description: "Try the live canvas and create your first visual sessions.", features: ["Standard Mode", ...(features.storyMode ? ["Limited Story Mode"] : []), "30 visual-speech minutes each UTC month", "Editable exports"], href: "/create?new=1", cta: "Start speaking" },
+  { name: "Creator", description: "The complete recording and visual-story workflow.", features: [features.storyMode ? "Standard and Story Mode" : "Standard Mode", "200 visual-speech minutes each billing period", "Camera and microphone recording", "Full canvas exports"], href: "/pricing", cta: "Choose Creator" },
 ];
 
 export function Pricing() {
   return (
-    <section id="pricing" className="cohesive-section"><PageContainer><div className="cohesive-heading"><p className="cohesive-eyebrow">Simple pricing</p><h2>Start with the idea.</h2><p>Billing is not connected in this preview. No payment will be taken.</p></div><div className="cohesive-pricing">{pricing.map((plan) => <article key={plan.name}><h3>{plan.name}</h3><p>{plan.description}</p><ul>{plan.features.map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}</ul><ButtonLink href={plan.href} tone={plan.name === "Free" ? "secondary" : "primary"}>{plan.cta}</ButtonLink></article>)}</div></PageContainer></section>
+    <section id="pricing" className="cohesive-section"><PageContainer><div className="cohesive-heading"><p className="cohesive-eyebrow">Simple pricing</p><h2>Start with the idea.</h2><p>Creator checkout is handled securely by Whop.</p></div><div className="cohesive-pricing">{pricing.map((plan) => <article key={plan.name}><h3>{plan.name}</h3><p>{plan.description}</p><ul>{plan.features.map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}</ul><ButtonLink href={plan.href} tone={plan.name === "Free" ? "secondary" : "primary"}>{plan.cta}</ButtonLink></article>)}</div></PageContainer></section>
   );
 }
 
