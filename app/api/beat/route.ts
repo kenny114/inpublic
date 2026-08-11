@@ -2,12 +2,11 @@ import { NextResponse } from "next/server";
 import { BEAT_MODEL, complete } from "@/lib/llm";
 import { BEAT_SYSTEM } from "@/lib/prompts";
 import type { BeatDecision, BeatRequest } from "@/lib/types";
+import { BEAT_RETRY_INSTRUCTION, SKIP, excerpt, parseDecision } from "@/lib/beat";
 import { guardProviderRequest, reconcileProviderCost, type ProviderUsage } from "@/lib/server/provider-guard";
 import { providerFor } from "@/lib/llm";
 
 export const dynamic = "force-dynamic";
-
-const SKIP: BeatDecision = { action: "skip", reason: "parse failure", focus: "" };
 
 /**
  * Only appended when math mode is on. Kept out of BEAT_SYSTEM itself so
@@ -22,52 +21,6 @@ MATH MODE IS ON. Add one more action to your vocabulary:
 
 A math_step takes priority over draw when the content is explicitly mathematical — an equation is not "a system with parts" for the purposes of "draw", it goes to math_step so it can be verified deterministically instead of sketched as a generic diagram.`;
 
-/**
- * Nine of fifty-eight beats in the 10:09 session came back as "parse failure",
- * and the log recorded only that phrase — not what had actually been returned,
- * so there was no way to tell a truncated response from a fenced one from a
- * model writing prose. Two changes: salvage the JSON object out of whatever
- * came back, and when that still fails, put the first eighty characters of the
- * raw response in the reason so the next session file explains itself.
- */
-function parseDecision(raw: string): BeatDecision {
-  try {
-    // Strip ``` fences the model was told not to emit but sometimes does.
-    let cleaned = raw
-      .replace(/^\s*```(?:json)?/i, "")
-      .replace(/```\s*$/, "")
-      .trim();
-    if (!cleaned.startsWith("{")) {
-      // Leading prose, or a stray token before the object.
-      const match = cleaned.match(/\{[\s\S]*\}/);
-      if (match) cleaned = match[0];
-    }
-    const parsed = JSON.parse(cleaned) as Partial<BeatDecision>;
-    const action = parsed.action;
-    if (
-      action !== "draw" &&
-      action !== "command" &&
-      action !== "section" &&
-      action !== "skip" &&
-      action !== "undo" &&
-      action !== "clear" &&
-      action !== "math_step"
-    ) {
-      return SKIP;
-    }
-    return {
-      action,
-      reason: typeof parsed.reason === "string" ? parsed.reason : "",
-      focus: typeof parsed.focus === "string" ? parsed.focus : "",
-    };
-  } catch {
-    return {
-      ...SKIP,
-      reason: `parse failure: ${raw.slice(0, 80).replace(/\s+/g, " ")}`,
-    };
-  }
-}
-
 export async function POST(req: Request) {
   let body: BeatRequest;
   try {
@@ -78,9 +31,24 @@ export async function POST(req: Request) {
 
   const serialized = JSON.stringify(body);
   const provider = providerFor(BEAT_MODEL);
-  const guard = await guardProviderRequest(req, { feature: "beat", provider, model: BEAT_MODEL, requestBytes: Buffer.byteLength(serialized), maxOutputTokens: 300 });
+  // Reserved for two attempts, because an unparseable response gets one retry
+  // below. Reconciliation reports what was actually spent either way; this
+  // only stops a retry from overrunning its own reservation.
+  const guard = await guardProviderRequest(req, { feature: "beat", provider, model: BEAT_MODEL, requestBytes: Buffer.byteLength(serialized), maxOutputTokens: 600 });
   if (guard instanceof Response) return guard;
+
+  // Usage accumulates across attempts, so a retry is not billed as if the
+  // first call never happened.
   let usage: ProviderUsage = {};
+  const addUsage = (next: ProviderUsage) => {
+    usage = {
+      providerRequestId: next.providerRequestId ?? usage.providerRequestId,
+      inputTokens: (usage.inputTokens ?? 0) + (next.inputTokens ?? 0),
+      outputTokens: (usage.outputTokens ?? 0) + (next.outputTokens ?? 0),
+      cacheCreationInputTokens: (usage.cacheCreationInputTokens ?? 0) + (next.cacheCreationInputTokens ?? 0),
+      cacheReadInputTokens: (usage.cacheReadInputTokens ?? 0) + (next.cacheReadInputTokens ?? 0),
+    };
+  };
 
   const sceneSummary = Array.isArray(body.sceneSummary) ? body.sceneSummary : [];
 
@@ -137,19 +105,58 @@ export async function POST(req: Request) {
 
   const mathEnabled = process.env.NEXT_PUBLIC_ENABLE_MATH_MODE === "true";
 
+  const system = mathEnabled ? `${BEAT_SYSTEM}${BEAT_MATH_ADDENDUM}` : BEAT_SYSTEM;
+
   try {
     const raw = await complete({
       model: BEAT_MODEL,
-      system: mathEnabled ? `${BEAT_SYSTEM}${BEAT_MATH_ADDENDUM}` : BEAT_SYSTEM,
+      system,
       user,
       // 150 truncated the JSON mid-object on longer focus strings, which the
       // parser then threw away as a skip. Two of twenty calls died that way.
       maxTokens: 300,
       temperature: 0,
-      onUsage: (value) => { usage = value; },
+      onUsage: (value) => { addUsage(value); },
     });
-    await reconcileProviderCost(guard, "succeeded", usage, Buffer.byteLength(raw));
-    return NextResponse.json(parseDecision(raw));
+
+    let result = parseDecision(raw);
+    let bytes = Buffer.byteLength(raw);
+
+    /*
+     * One retry on an unreadable response.
+     *
+     * A malformed beat is not a decision — it is a lost thought. The old code
+     * turned it into `skip`, and because nothing downstream schedules another
+     * beat once the speaker has stopped talking, whatever they had just said
+     * was gone for good. Observed in the wild: a fenced, truncated object
+     * ("```json {\"action\": \"skip\", ... \"focus\":") that read as a
+     * deliberate skip in the session log.
+     *
+     * The retry restates the output contract and gives it more room, rather
+     * than resending the identical request and hoping — temperature is
+     * already 0, so an identical request would most likely fail identically.
+     */
+    if (!result.ok) {
+      console.warn("[beat] unreadable response, retrying:", excerpt(raw));
+      const retry = await complete({
+        model: BEAT_MODEL,
+        system,
+        user: `${user}\n\n${BEAT_RETRY_INSTRUCTION}`,
+        maxTokens: 400,
+        temperature: 0,
+        onUsage: (value) => { addUsage(value); },
+      });
+      bytes += Buffer.byteLength(retry);
+      result = parseDecision(retry);
+      if (!result.ok) console.warn("[beat] retry also unreadable:", excerpt(retry));
+    }
+
+    await reconcileProviderCost(guard, "succeeded", usage, bytes);
+    return NextResponse.json(
+      result.ok
+        ? result.decision
+        : { ...SKIP, reason: `parse failure after retry: ${excerpt(result.raw)}` },
+    );
   } catch (err) {
     await reconcileProviderCost(guard, "failed", usage);
     console.error("[beat]", err);

@@ -6,7 +6,7 @@ export default function RecordingsPage() {
     <div>
       <PageHeader
         title="Recordings"
-        description="Canvas, microphone, and optional camera captured together. Recordings are stored in this browser and can be downloaded as WebM with their transcript and session state."
+        description="Saved in this browser. Download a recording with its transcript and session state."
       />
       <SessionsList />
     </div>

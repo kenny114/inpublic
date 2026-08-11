@@ -1,8 +1,13 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, Check, Mic, Play, Share2 } from "lucide-react";
+import { ArrowRight, Check, Play, Share2 } from "lucide-react";
 import { ButtonLink, Logo, PageContainer } from "@/components/ProductUI";
-import { features } from "@/lib/features";
+import { VisualDemo, VisualDemoTabs } from "@/components/VisualDemo";
+import { VISUAL_DEMOS } from "@/lib/demos";
+import { PLAN_DEFINITIONS, minutesOf } from "@/lib/plans";
+
+const FREE_MINUTES = minutesOf(PLAN_DEFINITIONS.free.allowanceSeconds);
+const CREATOR_MINUTES = minutesOf(PLAN_DEFINITIONS.creator.allowanceSeconds);
 
 export function Hero() {
   return (
@@ -10,22 +15,24 @@ export function Hero() {
       <PageContainer>
         <p className="cohesive-eyebrow">Live visual communication</p>
         <h1>Turn speaking into a live visual experience.</h1>
-        <p>InPublic listens as you speak and turns your thoughts into diagrams, drawings, text and visual stories—in real time.</p>
+        <p>InPublic listens while you talk and builds the explanation as you go — the words, the ideas, and how they connect.</p>
         <ButtonLink href="/create?new=1">Start speaking <ArrowRight size={15} /></ButtonLink>
       </PageContainer>
     </section>
   );
 }
 
-export function ProductProof() {
+/**
+ * The first thing below the headline is the product running. A visitor should
+ * see speech become structure before they have read a second paragraph, so
+ * this is a real recording rather than a screenshot, and it is the only demo
+ * on the page that loads eagerly.
+ */
+export function HeroDemo() {
   return (
     <section id="product" className="product-proof">
       <PageContainer>
-        <div className="real-product-frame">
-          <div className="real-product-bar"><span><i /> InPublic · Standard Mode</span><span>Live canvas session</span></div>
-          <Image src="/product-standard.png" alt="A real InPublic Standard Mode session with spoken ideas organized on the canvas" width={1440} height={900} priority sizes="(max-width: 1120px) 100vw, 1080px" />
-          <div className="real-product-caption"><span><Mic size={14} /> Listening as the speaker explains</span><span><Check size={14} /> Editable canvas</span></div>
-        </div>
+        <VisualDemo id="demo-a" priority caption={null} />
       </PageContainer>
     </section>
   );
@@ -46,10 +53,29 @@ export function Comparison() {
   );
 }
 
+/**
+ * Three real sessions behind one selector. Stacking three videos would bury
+ * the third and cost three downloads; one large canvas keeps the recording
+ * the subject of the section.
+ */
+export function DemoShowcase() {
+  return (
+    <section id="examples" className="cohesive-section demo-showcase">
+      <PageContainer>
+        <div className="cohesive-heading">
+          <p className="cohesive-eyebrow">Real recorded sessions</p>
+          <h2>See what happens when you speak.</h2>
+        </div>
+        <VisualDemoTabs />
+      </PageContainer>
+    </section>
+  );
+}
+
 const steps = [
-  { number: "01", title: "Start speaking", copy: "Talk through the idea naturally. There is no prompt to engineer and no slide to prepare.", image: "/product-standard.png", position: "left" },
-  { number: "02", title: "Watch your idea take shape", copy: "Important concepts, relationships, drawings and scenes appear while your thought develops.", image: "/product-standard.png", position: "center" },
-  { number: "03", title: "Refine and share", copy: "Edit the native canvas, continue the thought, or export the session in a useful format.", image: "/product-story-scene.png", position: "right" },
+  { number: "01", title: "Start speaking", copy: "Talk through the idea naturally. Nothing to prompt, nothing to prepare." },
+  { number: "02", title: "Watch it take shape", copy: "Words land immediately. Concepts and the relationships between them follow as the thought finishes." },
+  { number: "03", title: "Keep it", copy: "The canvas is editable. Save the session, record it, or export it." },
 ];
 
 export function HowItWorks() {
@@ -58,28 +84,17 @@ export function HowItWorks() {
       <PageContainer>
         <div className="cohesive-heading"><p className="cohesive-eyebrow">One continuous flow</p><h2>From thought to something people can follow.</h2></div>
         <div className="proof-steps">
-          {steps.map((step) => <article key={step.number}><div className="proof-crop"><Image src={step.image} alt="" fill loading="lazy" sizes="(max-width: 720px) 100vw, 33vw" style={{ objectPosition: step.position }} /></div><span>{step.number}</span><h3>{step.title}</h3><p>{step.copy}</p></article>)}
+          {steps.map((step, index) => (
+            <article key={step.number}>
+              <div className="proof-crop">
+                <Image src={VISUAL_DEMOS[index].poster} alt="" fill loading="lazy" sizes="(max-width: 720px) 100vw, 33vw" />
+              </div>
+              <span>{step.number}</span>
+              <h3>{step.title}</h3>
+              <p>{step.copy}</p>
+            </article>
+          ))}
         </div>
-      </PageContainer>
-    </section>
-  );
-}
-
-// Story Mode is parked (lib/features.ts) — the two Story examples keep
-// their images (removing them would leave a lopsided 3-column grid) but
-// their caption no longer claims it's a mode you can pick today.
-const examples = [
-  { src: "/product-standard.png", title: "Explain a system", type: "Standard Mode" },
-  { src: "/product-story-scene.png", title: "Build a living scene", type: features.storyMode ? "Story Mode" : "Coming soon" },
-  { src: "/product-story.png", title: "Tell a visual story", type: features.storyMode ? "Story Mode" : "Coming soon" },
-];
-
-export function ExamplesGallery() {
-  return (
-    <section id="examples" className="cohesive-section examples-section">
-      <PageContainer>
-        <div className="cohesive-heading"><p className="cohesive-eyebrow">Real InPublic sessions</p><h2>Ideas do not all need the same shape.</h2></div>
-        <div className="examples-gallery">{examples.map((example) => <figure key={example.title}><div><Image src={example.src} alt={`${example.title} in InPublic`} fill loading="lazy" sizes="(max-width: 720px) 100vw, 33vw" /></div><figcaption><strong>{example.title}</strong><span>{example.type}</span></figcaption></figure>)}</div>
       </PageContainer>
     </section>
   );
@@ -92,21 +107,33 @@ export function UseCases() {
 }
 
 const pricing = [
-  { name: "Free", description: "Try the live canvas and create your first visual sessions.", features: ["Standard Mode", ...(features.storyMode ? ["Limited Story Mode"] : []), "30 visual-speech minutes each UTC month", "Editable exports"], href: "/create?new=1", cta: "Start speaking" },
-  { name: "Creator", description: "The complete recording and visual-story workflow.", features: [features.storyMode ? "Standard and Story Mode" : "Standard Mode", "200 visual-speech minutes each billing period", "Camera and microphone recording", "Full canvas exports"], href: "/pricing", cta: "Choose Creator" },
+  {
+    name: "Free",
+    description: "Try the live canvas and make your first visual sessions.",
+    features: [`${FREE_MINUTES} visual-speech minutes each month`, "20-minute maximum session", "Editable canvas and every export"],
+    href: "/create?new=1",
+    cta: "Start speaking",
+  },
+  {
+    name: "Creator",
+    description: "For people who explain things every week.",
+    features: [`${CREATOR_MINUTES} visual-speech minutes each month`, "60-minute maximum session", "Founding 100 keep a larger allowance"],
+    href: "/pricing",
+    cta: "See Creator",
+  },
 ];
 
 export function Pricing() {
   return (
-    <section id="pricing" className="cohesive-section"><PageContainer><div className="cohesive-heading"><p className="cohesive-eyebrow">Simple pricing</p><h2>Start with the idea.</h2><p>Creator checkout is handled securely by Whop.</p></div><div className="cohesive-pricing">{pricing.map((plan) => <article key={plan.name}><h3>{plan.name}</h3><p>{plan.description}</p><ul>{plan.features.map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}</ul><ButtonLink href={plan.href} tone={plan.name === "Free" ? "secondary" : "primary"}>{plan.cta}</ButtonLink></article>)}</div></PageContainer></section>
+    <section id="pricing" className="cohesive-section"><PageContainer><div className="cohesive-heading"><p className="cohesive-eyebrow">Simple pricing</p><h2>Start with the idea.</h2><p>Free to begin. Upgrade when you need more live time — the product is identical on both plans.</p></div><div className="cohesive-pricing">{pricing.map((plan) => <article key={plan.name}><h3>{plan.name}</h3><p>{plan.description}</p><ul>{plan.features.map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}</ul><ButtonLink href={plan.href} tone={plan.name === "Free" ? "secondary" : "primary"}>{plan.cta}</ButtonLink></article>)}</div></PageContainer></section>
   );
 }
 
 const questions = [
   ["Is InPublic a transcription tool?", "No. InPublic uses live speech as the input, then creates an editable visual explanation from the meaning and relationships inside it."],
   ["Can I edit what InPublic creates?", "Yes. The canvas is made from native editable elements, so you can move, rename, resize and reconnect the result."],
-  ["What can I export?", "The current canvas supports PNG, SVG, Excalidraw and JSON. Recordings can be exported as WebM, and the session log can be downloaded."],
-  ...(features.storyMode ? [["Does Story Mode generate images?", "No. Story Mode composes persistent, editable canvas drawings and keeps the same characters and objects as a scene changes."]] : []),
+  ["What is a visual-speech minute?", "A minute of live listening. It is only counted while InPublic is actually listening to you speak — editing, reviewing and exporting cost nothing."],
+  ["What can I export?", "The current canvas supports PNG, SVG, Excalidraw and JSON. Recordings can be exported as video, and the session log can be downloaded."],
 ];
 
 export function FAQ() {
@@ -123,6 +150,6 @@ export function FinalCta() {
 
 export function LandingFooter() {
   return (
-    <footer className="cohesive-footer"><PageContainer><div><Logo /><p>InPublic turns speaking into a live visual experience.</p></div><nav aria-label="Footer navigation"><a href="#product">Product</a><a href="#examples">Examples</a><a href="#pricing">Pricing</a><a href="#faq">FAQ</a><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/contact">Contact</Link><Link href="/dashboard"><Share2 size={13} /> Dashboard</Link></nav></PageContainer></footer>
+    <footer className="cohesive-footer"><PageContainer><div><Logo /><p>InPublic turns speaking into a live visual experience.</p></div><nav aria-label="Footer navigation"><a href="#product">Product</a><a href="#examples">Examples</a><Link href="/pricing">Pricing</Link><a href="#faq">FAQ</a><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/contact">Contact</Link><Link href="/dashboard"><Share2 size={13} /> Dashboard</Link></nav></PageContainer></footer>
   );
 }

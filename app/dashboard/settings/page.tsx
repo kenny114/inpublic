@@ -4,10 +4,7 @@ import { SettingsForm } from "@/components/SettingsForm";
 export default function SettingsPage() {
   return (
     <div>
-      <PageHeader
-        title="Settings"
-        description="Profile, defaults, and plan. Recordings and preferences stay in this browser; plan and billing are verified with your account."
-      />
+      <PageHeader title="Settings" />
       <SettingsForm />
     </div>
   );

@@ -10,3 +10,5 @@ output/
 next-env.d.ts
 
 .vercel
+public/_demo-src/
+.demo-chrome-profile/

@@ -1,14 +1,14 @@
 import { SiteHeader } from "@/components/SiteHeader";
 import {
   Comparison,
-  ExamplesGallery,
+  DemoShowcase,
   FAQ,
   FinalCta,
   Hero,
+  HeroDemo,
   HowItWorks,
   LandingFooter,
   Pricing,
-  ProductProof,
   UseCases,
 } from "@/components/landing/LandingSections";
 
@@ -17,10 +17,10 @@ export default function Page() {
     <main className="landing-page">
       <SiteHeader />
       <Hero />
-      <ProductProof />
+      <HeroDemo />
+      <DemoShowcase />
       <Comparison />
       <HowItWorks />
-      <ExamplesGallery />
       <UseCases />
       <Pricing />
       <FAQ />

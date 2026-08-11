@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { readPreferences } from "@/lib/preferences";
 import { FREE_RECORDING_LIMIT_MS } from "@/lib/product";
 import {
   downloadBlob,
@@ -90,7 +91,18 @@ export function useCanvasRecorder(
   const [status, setStatus] = useState<RecordingStatus>("idle");
   const statusRef = useRef<RecordingStatus>("idle");
   statusRef.current = status;
-  const [options, setOptions] = useState<RecordingOptions>(initialOptions);
+  // Seeded from the user's saved defaults rather than fixed: Settings offers
+  // "camera on by default" and "show transcript by default" as real controls,
+  // and this is what makes them real. Only the starting state — the control
+  // bar still owns the toggles for the take in progress.
+  const [options, setOptions] = useState<RecordingOptions>(() => {
+    const preferences = readPreferences();
+    return {
+      ...initialOptions,
+      webcam: preferences.recordCameraByDefault,
+      transcript: preferences.showTranscriptByDefault,
+    };
+  });
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const [durationMs, setDurationMs] = useState(0);

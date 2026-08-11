@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { EmptyState, ModeBadge } from "@/components/DashboardUI";
 import { exportSession } from "@/components/SessionActions";
 import { useSessionSummaries } from "@/hooks/useSessionSummaries";
-import { downloadBlob, downloadRecordingMetadata, listRecordings, type SavedRecording } from "@/lib/recordings";
+import { downloadBlob, downloadRecordingMetadata, extensionForMimeType, listRecordings, type SavedRecording } from "@/lib/recordings";
 import { formatRelative } from "@/lib/sessions";
 
 /**
@@ -65,7 +65,7 @@ export function ExportsList() {
               <li key={recording.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3">
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">{recording.metadata.title}</span>
                 <span className="text-xs text-zinc-500">{(recording.blob.size / 1_048_576).toFixed(1)} MB</span>
-                <button type="button" onClick={() => downloadBlob(recording.blob, `inpublic-${recording.id}.webm`)} className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-50">WebM</button>
+                <button type="button" onClick={() => downloadBlob(recording.blob, `inpublic-${recording.id}.${extensionForMimeType(recording.metadata.mimeType || recording.blob.type)}`)} className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-50">Video</button>
                 <button type="button" onClick={() => downloadRecordingMetadata(recording.metadata)} className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-50">JSON</button>
               </li>
             ))}

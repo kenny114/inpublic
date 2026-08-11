@@ -5,7 +5,7 @@ import { useState } from "react";
 import { CloseIcon, StarIcon } from "@/components/DashboardIcons";
 import { ModeBadge, StatusBadge } from "@/components/DashboardUI";
 import { exportSession } from "@/components/SessionActions";
-import { downloadBlob, downloadRecordingMetadata } from "@/lib/recordings";
+import { downloadBlob, downloadRecordingMetadata, extensionForMimeType } from "@/lib/recordings";
 import { formatDuration, formatRelative, statusOf, type SessionSummary } from "@/lib/sessions";
 
 const tabs = ["Details", "Activity", "Exports"] as const;
@@ -112,7 +112,7 @@ export function SessionDetailsPanel({
                 <p className="text-sm font-medium">{new Date(recording.metadata.timestamp).toLocaleString()}</p>
                 <p className="mt-0.5 text-xs text-zinc-500">{(recording.blob.size / 1_048_576).toFixed(1)} MB · {recording.metadata.mimeType}</p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <button type="button" onClick={() => downloadBlob(recording.blob, `inpublic-${recording.id}.webm`)} className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-50">Download WebM</button>
+                  <button type="button" onClick={() => downloadBlob(recording.blob, `inpublic-${recording.id}.${extensionForMimeType(recording.metadata.mimeType || recording.blob.type)}`)} className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-50">Download video</button>
                   <button type="button" onClick={() => downloadRecordingMetadata(recording.metadata)} className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-50">Recording JSON</button>
                 </div>
               </div>
