@@ -1,14 +1,99 @@
+import Image from "next/image";
 import Link from "next/link";
+import { Check, Mic } from "lucide-react";
 import { SiteHeader } from "@/components/SiteHeader";
+import { PageContainer } from "@/components/ProductUI";
 import { CreatorCheckoutButton } from "@/components/CreatorCheckoutButton";
 import { features } from "@/lib/features";
 
-const shared = [features.storyMode ? "Standard and Story Mode" : "Standard Mode", "Visualization intelligence", "Camera recording and voice commands", "Editable canvas and every export format", "Identical video quality", "No watermark"];
-const plans = [
-  { name: "Free", price: "$0", time: "30 visual-speech minutes each UTC calendar month", max: "20-minute maximum session" },
-  { name: "Creator", price: "$15/month", time: "200 visual-speech minutes each verified billing period", max: "60-minute maximum session" },
+const freeFeatures = [
+  features.storyMode ? "Standard and Story Mode" : "Standard Mode",
+  "Camera recording and voice commands",
+  "Editable canvas and every export format",
+  "No credit card required",
+];
+
+const creatorFeatures = [
+  "Everything in Free",
+  "Nearly 7x the monthly visual-speech minutes",
+  "Longer sessions for full-length explanations",
+  "Same models, canvas and export quality — just more time",
 ];
 
 export default function PricingPage() {
-  return <main className="min-h-screen bg-white"><SiteHeader /><section className="section-shell"><div className="section-heading"><p className="eyebrow">Pricing</p><h1 className="mt-3 text-4xl font-semibold tracking-[-.04em] sm:text-5xl">The same InPublic experience. More time when you need it.</h1><p className="section-copy">Both plans use the same modes, AI models, canvas, recording quality and exports. The only difference is available visual-speech time.</p></div><div className="grid gap-5 lg:grid-cols-2">{plans.map((plan) => <article key={plan.name} className="pricing-card"><p className="eyebrow">{plan.name}</p><h2 className="price">{plan.price}</h2><p className="leading-7 text-zinc-600">{plan.time}. {plan.max}. One active listening session at a time.</p><ul className="feature-list">{shared.map((feature) => <li key={feature}><span className="text-indigo-600">✓</span>{feature}</li>)}</ul>{plan.name === "Creator" ? <CreatorCheckoutButton /> : <Link href="/create?new=1" className="button-secondary mt-8">Start free</Link>}</article>)}</div><p className="mt-8 text-sm leading-6 text-zinc-500">Creator checkout is handled securely by Whop. Returning from checkout does not change access; InPublic waits for a verified membership webhook or server reconciliation.</p></section></main>;
+  return (
+    <main className="landing-page min-h-screen bg-white">
+      <SiteHeader />
+
+      <section className="pricing-hero">
+        <PageContainer>
+          <p className="cohesive-eyebrow">Pricing</p>
+          <h1>Choose how much time you need to think out loud.</h1>
+          <p>
+            Free and Creator run the identical product — same visualization intelligence, same canvas, same export
+            quality. The only thing you&apos;re buying is more visual-speech time per month.
+          </p>
+        </PageContainer>
+      </section>
+
+      <section className="pricing-proof">
+        <PageContainer>
+          <div className="real-product-frame">
+            <div className="real-product-bar">
+              <span><i /> InPublic · Standard Mode</span>
+              <span>Live canvas session</span>
+            </div>
+            <Image
+              src="/product-standard.png"
+              alt="A real InPublic session with spoken ideas organized into an editable canvas"
+              width={1440}
+              height={900}
+              sizes="(max-width: 1120px) 100vw, 1080px"
+            />
+            <div className="real-product-caption">
+              <span><Mic size={14} /> Listening as the speaker explains</span>
+              <span><Check size={14} /> Editable canvas</span>
+            </div>
+          </div>
+        </PageContainer>
+      </section>
+
+      <section className="pricing-plans">
+        <PageContainer>
+          <div className="plan-grid">
+            <article className="plan-card">
+              <h2>Free</h2>
+              <p className="plan-price">$0<span>/month</span></p>
+              <p className="plan-summary">Try the live canvas and see a spoken idea become a diagram.</p>
+              <div className="plan-highlights">
+                <div><strong>30 min</strong><span>visual-speech time / month</span></div>
+                <div><strong>20 min</strong><span>maximum session length</span></div>
+              </div>
+              <ul>{freeFeatures.map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}</ul>
+              <Link href="/create?new=1" className="ui-button ui-button-secondary">Start free</Link>
+            </article>
+
+            <article className="plan-card featured">
+              <span className="plan-badge">For regular use</span>
+              <h2>Creator</h2>
+              <p className="plan-price">$15<span>/month</span></p>
+              <p className="plan-summary">For creators, teachers and founders who explain things every week.</p>
+              <div className="plan-highlights">
+                <div><strong>200 min</strong><span>visual-speech time / billing period</span></div>
+                <div><strong>60 min</strong><span>maximum session length</span></div>
+              </div>
+              <ul>{creatorFeatures.map((feature) => <li key={feature}><Check size={15} />{feature}</li>)}</ul>
+              <CreatorCheckoutButton />
+            </article>
+          </div>
+
+          <p className="pricing-trust">
+            One active listening session at a time on either plan. Creator checkout is handled securely by Whop —
+            returning from checkout does not change access; InPublic waits for a verified membership webhook or
+            server reconciliation.
+          </p>
+        </PageContainer>
+      </section>
+    </main>
+  );
 }
