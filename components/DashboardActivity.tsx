@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { billing } from "@/lib/billing";
 import { listRecordings, type SavedRecording } from "@/lib/recordings";
+
+interface Entitlement { plan: "free" | "creator"; }
 
 /**
  * Real local activity only.
@@ -28,6 +29,7 @@ function Stat({ label, value, note }: { label: string; value: string; note: stri
 
 export function DashboardActivity() {
   const [items, setItems] = useState<SavedRecording[] | null>(null);
+  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,17 +39,26 @@ export function DashboardActivity() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/entitlement", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((value) => { if (!cancelled) setEntitlement(value); })
+      .catch(() => { if (!cancelled) setEntitlement(null); });
+    return () => { cancelled = true; };
+  }, []);
+
   const loading = items === null;
   const recorded = items ?? [];
   const totalMs = recorded.reduce((sum, item) => sum + item.metadata.durationMs, 0);
-  const plan = billing.configured ? "Paid" : "Free trial";
+  const plan = entitlement === null ? "—" : entitlement.plan === "creator" ? "Creator" : "Free";
 
   return (
     <>
       <div className="mt-12 grid gap-4 sm:grid-cols-3">
         <Stat label="Total sessions" value={loading ? "—" : String(recorded.length)} note="Saved in this browser" />
         <Stat label="Minutes recorded" value={loading ? "—" : String(minutes(totalMs))} note="Across saved recordings" />
-        <Stat label="Current plan" value={plan} note={billing.configured ? "Billing active" : "Billing is not connected yet"} />
+        <Stat label="Current plan" value={plan} note={entitlement?.plan === "creator" ? "Billing active" : "Upgrade in Settings"} />
       </div>
 
       <section className="mt-10">
