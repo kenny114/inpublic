@@ -9,7 +9,7 @@ import type { SaveState } from "@/components/ProductUI";
 import { TranscriptStrip } from "@/components/TranscriptStrip";
 import { RecordingPanel } from "@/components/RecordingPanel";
 import { AudioReplayPanel } from "@/components/AudioReplayPanel";
-import { useDeepgram } from "@/hooks/useDeepgram";
+import { useDeepgram, type DeepgramResultTiming } from "@/hooks/useDeepgram";
 import { useGeminiLive } from "@/hooks/useGeminiLive";
 import { useUsageSession } from "@/hooks/useUsageSession";
 import { providerRequestHeaders } from "@/lib/usage-client";
@@ -90,14 +90,15 @@ import {
 } from "@/lib/liveSpeech";
 import { liveLatencySample, type AudioTiming } from "@/lib/telemetry";
 import {
-  CAMERA_RULES,
   READABILITY_CONTRACT,
   effectiveTextSize,
   initialCompositionState,
   proposeCamera,
   recordingViewport,
   rectUnion,
+  stepCameraSpring,
   type CameraView,
+  type CameraVelocity,
   type CompositionRect,
   type CompositionState,
   type ReadabilityRole,
@@ -180,6 +181,8 @@ const SCRIBE_FAILURE_MESSAGE = "Scribe is failing — still writing, marks are l
  * clause, short enough that continuous speech doesn't block the board.
  */
 const LIVE_SETTLE_WAIT_MS = 1500;
+/** Hold close on the spoken line, then reveal how it joined the full page. */
+const LIVE_CAMERA_OVERVIEW_MS = 1800;
 /** Keep each sheet readable. Reaching this limit turns the page; it must never
  * stop the live hand. */
 const MAX_MARKS_PER_PAGE = 22;
@@ -342,7 +345,20 @@ export default function Board({
   const storyRef = useRef<StoryState>(newStoryState());
   const compositionRef = useRef<CompositionState>(initialCompositionState());
   const compositionHistoryRef = useRef<CompositionState[]>([]);
-  const cameraAnimationSeqRef = useRef(0);
+  const cameraMotionRef = useRef<{
+    camera: CameraView;
+    target: CameraView;
+    velocity: CameraVelocity;
+    lastFrameAt: number;
+    reason: string;
+    rafId: number;
+  } | null>(null);
+  const liveCameraHoldRef = useRef(false);
+  const liveCameraOverviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (liveCameraOverviewTimerRef.current) clearTimeout(liveCameraOverviewTimerRef.current);
+    if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
+  }, []);
   const autosaveRef = useRef<ReturnType<typeof makeAutosave> | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
 
@@ -618,9 +634,10 @@ export default function Board({
    * `live` event when it settles. Logging every partial would bury a 30-minute
    * session under ten thousand entries and tell you nothing a median wouldn't.
    */
-  const liveLagRef = useRef<{ lag: number[]; render: number[]; streamEpoch: number; invalid: number }>({
+  const liveLagRef = useRef<{ lag: number[]; render: number[]; paint: number[]; finalLag?: number; streamEpoch: number; invalid: number }>({
     lag: [],
     render: [],
+    paint: [],
     streamEpoch: 0,
     invalid: 0,
   });
@@ -689,38 +706,68 @@ export default function Board({
       scrollY: Number(app.scrollY ?? 0),
       zoom: Number(app.zoom?.value ?? app.zoom ?? 1),
     };
-    const sequence = ++cameraAnimationSeqRef.current;
     const reduced = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    log({ type: "camera", event: "started", target, reason });
+    const existing = cameraMotionRef.current;
+    const isAtTarget = Math.abs(from.scrollX - target.scrollX) < 0.5
+      && Math.abs(from.scrollY - target.scrollY) < 0.5
+      && Math.abs(from.zoom - target.zoom) < 0.001;
+    if (isAtTarget && !existing) {
+      compositionRef.current = { ...compositionRef.current, camera: target, proposedTarget: undefined, movementReason: undefined };
+      return;
+    }
     if (reduced) {
+      if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
+      cameraMotionRef.current = null;
+      log({ type: "camera", event: "started", target, reason });
       apiRef.current?.updateScene({ appState: { scrollX: target.scrollX, scrollY: target.scrollY, zoom: { value: target.zoom } } });
       compositionRef.current = { ...compositionRef.current, camera: target, proposedTarget: undefined, movementReason: undefined };
       log({ type: "camera", event: "completed", target, reason });
       return;
     }
-    const started = performance.now();
+
+    if (existing) {
+      log({ type: "camera", event: "cancelled", target: existing.target, reason: existing.reason });
+      existing.target = target;
+      existing.reason = reason;
+      log({ type: "camera", event: "started", target, reason });
+      return;
+    }
+
+    log({ type: "camera", event: "started", target, reason });
     const frame = (time: number) => {
-      if (sequence !== cameraAnimationSeqRef.current) {
-        log({ type: "camera", event: "cancelled", target, reason });
+      const motion = cameraMotionRef.current;
+      if (!motion) return;
+      const next = stepCameraSpring(motion.camera, motion.target, motion.velocity, time - motion.lastFrameAt);
+      motion.camera = next.camera;
+      motion.velocity = next.velocity;
+      motion.lastFrameAt = time;
+      apiRef.current?.updateScene({ appState: { scrollX: next.camera.scrollX, scrollY: next.camera.scrollY, zoom: { value: next.camera.zoom } } });
+      const settled = Math.abs(next.camera.scrollX - motion.target.scrollX) < 0.35
+        && Math.abs(next.camera.scrollY - motion.target.scrollY) < 0.35
+        && Math.abs(next.camera.zoom - motion.target.zoom) < 0.0007
+        && Math.abs(next.velocity.scrollX) < 2
+        && Math.abs(next.velocity.scrollY) < 2
+        && Math.abs(next.velocity.zoom) < 0.004;
+      if (!settled) {
+        motion.rafId = requestAnimationFrame(frame);
         return;
       }
-      const progress = Math.min(1, (time - started) / CAMERA_RULES.transitionMs);
-      const eased = progress < 0.5
-        ? 4 * progress * progress * progress
-        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-      const camera = {
-        scrollX: from.scrollX + (target.scrollX - from.scrollX) * eased,
-        scrollY: from.scrollY + (target.scrollY - from.scrollY) * eased,
-        zoom: from.zoom + (target.zoom - from.zoom) * eased,
-      };
-      apiRef.current?.updateScene({ appState: { scrollX: camera.scrollX, scrollY: camera.scrollY, zoom: { value: camera.zoom } } });
-      if (progress < 1) requestAnimationFrame(frame);
-      else {
-        compositionRef.current = { ...compositionRef.current, camera: target, proposedTarget: undefined, movementReason: undefined };
-        log({ type: "camera", event: "completed", target, reason });
-      }
+      const completedTarget = motion.target;
+      const completedReason = motion.reason;
+      apiRef.current?.updateScene({ appState: { scrollX: completedTarget.scrollX, scrollY: completedTarget.scrollY, zoom: { value: completedTarget.zoom } } });
+      cameraMotionRef.current = null;
+      compositionRef.current = { ...compositionRef.current, camera: completedTarget, proposedTarget: undefined, movementReason: undefined };
+      log({ type: "camera", event: "completed", target: completedTarget, reason: completedReason });
     };
-    requestAnimationFrame(frame);
+    const startedAt = performance.now();
+    cameraMotionRef.current = {
+      camera: from,
+      target,
+      velocity: { scrollX: 0, scrollY: 0, zoom: 0 },
+      lastFrameAt: startedAt,
+      reason,
+      rafId: requestAnimationFrame(frame),
+    };
   }, [log]);
 
   /**
@@ -744,8 +791,13 @@ export default function Board({
     force = false,
     reason = force ? "explicit page navigation" : "content entered safe frame",
     mathFocalConceptId: string | null = null,
+    liveFocalElementId: string | null = null,
+    allowFullZoomChange = false,
   ) => {
-    if (compositionRef.current.proposedTarget && !force) return;
+    // Delayed Scribe/Beat commits may continue while the speaker is talking.
+    // They may draw, but the live line owns the shot until its overview timer.
+    if (liveCameraHoldRef.current && !liveFocalElementId && !force) return;
+    if (compositionRef.current.proposedTarget && !force && !liveFocalElementId) return;
     const app = apiRef.current?.getAppState?.();
     if (!app?.width || !app?.height) return;
     const origin = pageOrigin(pageRef.current);
@@ -770,7 +822,24 @@ export default function Board({
 
     let focalBounds = defaultFocalBounds;
     let contextBounds: CompositionRect | undefined;
-    if (mathFocalConceptId && modeRef.current !== "story") {
+    const liveFocalElement = liveFocalElementId
+      ? onPage.find((element) => element.id === liveFocalElementId)
+      : undefined;
+    if (liveFocalElement && modeRef.current !== "story") {
+      const focusWidth = Math.min(Math.max(1, liveFocalElement.width), 620);
+      const focusHeight = Math.min(Math.max(1, liveFocalElement.height), 180);
+      focalBounds = {
+        // Follow the newest words at the trailing edge rather than repeatedly
+        // recentering the complete, ever-growing transcript element.
+        x: liveFocalElement.x + Math.max(0, liveFocalElement.width - focusWidth),
+        y: liveFocalElement.y + Math.max(0, liveFocalElement.height - focusHeight),
+        width: focusWidth,
+        height: focusHeight,
+      };
+      // During speech, context is deliberately excluded. The current words
+      // are the shot; the delayed overview reveals the full composition.
+      contextBounds = undefined;
+    } else if (mathFocalConceptId && modeRef.current !== "story") {
       const activeConcept = boardRef.current.concepts.get(mathFocalConceptId);
       const activeIds = new Set(activeConcept?.elementIds ?? []);
       const activeBounds = activeIds.size
@@ -786,7 +855,8 @@ export default function Board({
         contextBounds = elementBounds ?? undefined;
       }
     }
-    const text = onPage.flatMap<TextReadabilitySample>((element) => {
+    const readabilityElements = liveFocalElement ? [liveFocalElement] : onPage;
+    const text = readabilityElements.flatMap<TextReadabilitySample>((element) => {
       const fontSize = Number(element.fontSize ?? 0);
       if (element.type !== "text" || !fontSize) return [];
       const role: ReadabilityRole = fontSize >= 26 ? "primary" : fontSize >= 18 ? "supporting" : "annotation";
@@ -800,8 +870,14 @@ export default function Board({
     const scene = activeStoryScene(storyRef.current);
     const focalSubject = modeRef.current === "story"
       ? storyRef.current.recentEntityIds[0] ?? "story-stage"
-      : sketchRef.current.labels.at(-1) ?? boardRef.current.activeSectionId ?? "current explanation";
-    const activeCluster = modeRef.current === "story" ? scene?.sceneId ?? "story-scene" : `page:${pageRef.current}`;
+      : liveFocalElement
+        ? "live narration"
+        : sketchRef.current.labels.at(-1) ?? boardRef.current.activeSectionId ?? "current explanation";
+    const activeCluster = modeRef.current === "story"
+      ? scene?.sceneId ?? "story-scene"
+      : liveFocalElement
+        ? `live:${pageRef.current}:${liveFocalElement.id}`
+        : `page:${pageRef.current}`;
     const proposal = proposeCamera({
       state: compositionRef.current,
       viewport: recordingViewport(Number(app.width), Number(app.height)),
@@ -815,7 +891,8 @@ export default function Board({
       text,
       primarySubjectChanged: force && compositionRef.current.activeCluster !== activeCluster,
       explicitNavigation: force,
-      followMovingSubject: false,
+      followMovingSubject: Boolean(liveFocalElement),
+      maximumZoomChange: allowFullZoomChange ? 1 : undefined,
     });
     compositionRef.current = proposal.state;
     sketchPannedRef.current = true;
@@ -1538,10 +1615,9 @@ export default function Board({
    * Write what is being said, as it is being said.
    *
    * This is the fast path and it must stay free of anything that can block:
-   * no model, no network, no throttle. Deepgram's interim stream already
-   * contains the words ~200ms after they leave your mouth; all this does is
-   * put them on the sheet. The Scribe and the wrap-up run behind it and are
-   * no longer what you are waiting for.
+   * no model, no network, no throttle. Deepgram's interim stream is the first
+   * source of recognized words; all this does is put each received update on
+   * the sheet. The Scribe and wrap-up run behind it.
    *
    * `settled` marks the difference between a phrase still being revised and
    * one Deepgram has committed to. A settled line also reserves its space, so
@@ -1664,12 +1740,27 @@ export default function Board({
       }
 
       commit();
-      framePage();
+      liveCameraHoldRef.current = true;
+      if (liveCameraOverviewTimerRef.current) {
+        clearTimeout(liveCameraOverviewTimerRef.current);
+        liveCameraOverviewTimerRef.current = null;
+      }
+      // While speech is arriving, the live line owns the shot. It keeps one
+      // stable element id across interims, so following it does not confuse a
+      // changing transcript with a changing subject.
+      framePage(false, "following live narration", null, elementId);
+      if (settled) {
+        liveCameraOverviewTimerRef.current = setTimeout(() => {
+          liveCameraOverviewTimerRef.current = null;
+          liveCameraHoldRef.current = false;
+          framePage(true, "overview after live narration", null, null, true);
+        }, LIVE_CAMERA_OVERVIEW_MS);
+      }
 
       // Ink is on the sheet as of here. Everything below is measurement.
       const inkedAt = now();
       const timings = liveLagRef.current;
-      timings.render.push(inkedAt - startedAt);
+      if (timing?.kind !== "final") timings.render.push(inkedAt - startedAt);
       if (timing) {
         if (!timings.streamEpoch) timings.streamEpoch = timing.streamEpoch;
         if (timings.streamEpoch !== timing.streamEpoch) {
@@ -1687,7 +1778,8 @@ export default function Board({
         }
         const sample = liveLatencySample(inkedAt, timing, timings.streamEpoch);
         if (sample.valid) {
-          timings.lag.push(sample.lagMs ?? 0);
+          if (timing.kind === "final") timings.finalLag = sample.lagMs ?? 0;
+          else timings.lag.push(sample.lagMs ?? 0);
         } else {
           timings.invalid += 1;
           log({
@@ -1714,10 +1806,15 @@ export default function Board({
           lagP50: median(timings.lag),
           lagMax: timings.lag.length ? Math.max(...timings.lag) : 0,
           renderP50: median(timings.render),
+          finalLag: timings.finalLag,
+          paintP50: median(timings.paint),
+          paintP95: timings.paint.length
+            ? [...timings.paint].sort((a, b) => a - b)[Math.min(timings.paint.length - 1, Math.floor(timings.paint.length * 0.95))]
+            : 0,
           streamEpoch: timings.streamEpoch || undefined,
           invalidSamples: timings.invalid,
         });
-        liveLagRef.current = { lag: [], render: [], streamEpoch: 0, invalid: 0 };
+        liveLagRef.current = { lag: [], render: [], paint: [], streamEpoch: 0, invalid: 0 };
       }
 
       // A settled line ends the thought a deferred page turn was waiting on.
@@ -3674,13 +3771,13 @@ export default function Board({
   );
 
   const handleFinal = useCallback(
-    (raw: string, tStart: number, tEnd: number, audioEndMs: number, streamEpoch: number) => {
+    (raw: string, tStart: number, tEnd: number, audioEndMs: number, streamEpoch: number, timing?: DeepgramResultTiming) => {
       const command = localVoiceCommand(raw);
       if (command) {
         liveSeqRef.current += 1;
         dropLiveLine();
         clearStoryCaption();
-        liveLagRef.current = { lag: [], render: [], streamEpoch: 0, invalid: 0 };
+        liveLagRef.current = { lag: [], render: [], paint: [], streamEpoch: 0, invalid: 0 };
         pendingTextRef.current = "";
         scribePendingRef.current = "";
         settledCountRef.current = 0;
@@ -3731,7 +3828,7 @@ export default function Board({
       setInterim("");
       // Lock the line Deepgram just committed to. Everything below this runs
       // behind the writing, not in front of it.
-      void writeLive(text, true, { audioEndMs, streamEpoch });
+      void writeLive(text, true, { audioEndMs, streamEpoch, ...timing, kind: "final" });
       nudgeScribe();
       resetSilenceTimer();
     },
@@ -3739,7 +3836,11 @@ export default function Board({
   );
 
   const handleInterim = useCallback(
-    (text: string, audioEndMs: number, streamEpoch: number, confidence = 0) => {
+    (text: string, audioEndMs: number, streamEpoch: number, confidence = 0, timing?: DeepgramResultTiming) => {
+      if (!text.trim()) {
+        setInterim("");
+        return;
+      }
       // Correct what is DRAWN, not what is tracked. The settled-word logic
       // below compares consecutive interims word by word, and a correction
       // that changes a word count between two interims would desynchronise
@@ -3750,16 +3851,20 @@ export default function Board({
       // one of them would emit a correction event for the same rewrite. The
       // final is where a correction gets recorded.
       const shown = correctTranscript(text, activeTermsRef.current).text || text;
+      const paintStarted = performance.now();
+      const timingBucket = liveLagRef.current;
       setInterim(shown);
+      requestAnimationFrame(() => {
+        timingBucket.paint.push(Math.round(performance.now() - paintStarted));
+      });
       if (modeRef.current === "story") {
         void writeStoryCaption(shown);
         handleStoryPartial(text, confidence);
         return;
       }
-      // The whole point. Deepgram has these words ~200ms after you say them,
-      // so they go on the sheet now — no model, no throttle, no waiting for
-      // you to stop talking.
-      void writeLive(shown, false, { audioEndMs, streamEpoch });
+      // Put each provider interim on the sheet immediately: no model, no
+      // throttle, and no wait for finalization.
+      void writeLive(shown, false, { audioEndMs, streamEpoch, ...timing, kind: "interim" });
 
       // Latency vs. accuracy. Waiting for a final costs 1-3s; lettering the
       // raw interim draws Deepgram's guesses, which it then revises. The
@@ -3887,6 +3992,7 @@ export default function Board({
     now,
     keyterms: activeTerms,
     onKeyterms: (terms) => log({ type: "keyterms", terms }),
+    onStreamMetrics: (metrics) => log({ type: "speech-stream", ...metrics }),
     onNote: (text) => log({ type: "note", text }),
     onError: (message) => {
       setErrorText(message);

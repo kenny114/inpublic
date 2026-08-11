@@ -66,8 +66,33 @@ export type LogEvent =
       lagP50: number;
       lagMax: number;
       renderP50: number;
+      /** Provider finalization lag, deliberately excluded from interim lag. */
+      finalLag?: number;
+      /** Callback-to-next-animation-frame delay for the transcript UI. */
+      paintP50?: number;
+      paintP95?: number;
       streamEpoch?: number;
       invalidSamples?: number;
+    }
+  | {
+      t: number;
+      type: "speech-stream";
+      streamEpoch: number;
+      capture: "audio-worklet-pcm16" | "media-recorder";
+      sampleRate?: number;
+      audioChunks: number;
+      chunkGapP50: number;
+      chunkGapP95: number;
+      chunkGapMax: number;
+      interimResults: number;
+      interimGapP50: number;
+      interimGapP95: number;
+      interimGapMax: number;
+      interimLagP50: number;
+      interimLagP95: number;
+      interimLagMax: number;
+      firstVisibleWordMs?: number;
+      finalLagMs?: number;
     }
   /**
    * A page turn, with the reason it happened.

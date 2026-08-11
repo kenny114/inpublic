@@ -383,17 +383,27 @@
 .canvas-topbar:hover,
 .canvas-topbar:focus-within { background: rgba(255, 255, 255, .98); }
 
-.canvas-speaking-control { background: rgba(255, 255, 255, .72); transition: background-color .15s ease, box-shadow .15s ease; }
+.canvas-speaking-control {
+  background: rgba(255, 255, 255, .54);
+  box-shadow: 0 3px 12px rgba(20, 24, 32, .055);
+  opacity: .78;
+  backdrop-filter: blur(8px) saturate(.9);
+  transition: background-color .18s ease, box-shadow .18s ease, opacity .18s ease;
+}
 .canvas-speaking-control:hover,
-.canvas-speaking-control:focus-within { background: white; }
+.canvas-speaking-control:focus-within { background: rgba(255, 255, 255, .98); opacity: 1; }
+.canvas-speaking-control .canvas-speak-secondary { background: rgba(255, 255, 255, .48); }
+.canvas-speaking-control:hover .canvas-speak-secondary,
+.canvas-speaking-control:focus-within .canvas-speak-secondary { background: white; }
 
 .canvas-recording-dock,
 .canvas-interface-preview { transition: opacity .15s ease; }
 .canvas-recording-dock:not(:hover):not(:focus-within),
 .canvas-interface-preview:not(:hover):not(:focus-within) { opacity: .62; }
 
-/* A live take is the one time the controls must stay unmistakable. */
-.canvas-speaking-control:has(.ui-recording-status.active) { background: white; }
+/* Keep the live state slightly stronger without turning it into an opaque
+   block over the words it is following. */
+.canvas-speaking-control:has(.ui-recording-status.active):not(:hover):not(:focus-within) { opacity: .88; }
 
 /* No hover to restore with, so touch gets a much lighter touch — enough to
    stop the toolbar hiding a title outright, not enough to look broken. */
@@ -414,7 +424,7 @@
   .canvas-recording-dock:not(:hover):not(:focus-within),
   .canvas-interface-preview:not(:hover):not(:focus-within) { opacity: 1; }
   .canvas-topbar { background: rgba(255, 255, 255, .98); }
-  .canvas-speaking-control { background: white; }
+  .canvas-speaking-control { background: white; opacity: 1; backdrop-filter: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

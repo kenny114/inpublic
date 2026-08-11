@@ -6,6 +6,7 @@ import {
   proposeCamera,
   recordingViewport,
   rectsOverlap,
+  stepCameraSpring,
   worldToScreen,
 } from "../lib/composition.ts";
 import { activeStoryScene, newStoryState, resolveStoryEntity } from "../lib/story.ts";
@@ -29,6 +30,25 @@ const baseInput = {
   reason: "important content left the safe frame",
   now: 10_000,
 };
+
+let springCamera = { scrollX: 0, scrollY: 0, zoom: 1 };
+let springVelocity = { scrollX: 0, scrollY: 0, zoom: 0 };
+const springTarget = { scrollX: 300, scrollY: -180, zoom: 0.82 };
+for (let frame = 0; frame < 90; frame += 1) {
+  const next = stepCameraSpring(springCamera, springTarget, springVelocity, 1000 / 60);
+  springCamera = next.camera;
+  springVelocity = next.velocity;
+}
+check("damped camera converges without an easing timer",
+  Math.abs(springCamera.scrollX - springTarget.scrollX) < 0.1
+    && Math.abs(springCamera.scrollY - springTarget.scrollY) < 0.1
+    && Math.abs(springCamera.zoom - springTarget.zoom) < 0.001);
+
+const beforeRetarget = springCamera;
+const retargeted = stepCameraSpring(beforeRetarget, { scrollX: -120, scrollY: 40, zoom: 1.04 }, springVelocity, 1000 / 60);
+check("retargeting preserves position continuity",
+  Math.abs(retargeted.camera.scrollX - beforeRetarget.scrollX) < 10
+    && Number.isFinite(retargeted.velocity.scrollX));
 
 console.log("VISUAL COMPOSITION — recording-space regressions\n");
 
@@ -71,6 +91,28 @@ const hysteresis = proposeCamera({
 check("small zoom difference is held by hysteresis", hysteresis.target.zoom === 0.96,
   `${hysteresis.target.zoom}`);
 check("zoom change is bounded", Math.abs(hysteresis.target.zoom - 0.96) <= CAMERA_RULES.maximumZoomChange);
+
+const liveFollow = proposeCamera({
+  ...baseInput,
+  state: initialCompositionState(),
+  currentCamera: { scrollX: 0, scrollY: 0, zoom: 1 },
+  focalBounds: { x: 760, y: 420, width: 420, height: 58 },
+  followMovingSubject: true,
+  reason: "following live narration",
+});
+check("live narration recenters even while it already fits", liveFollow.move && liveFollow.reason === "following live narration");
+
+const overviewReveal = proposeCamera({
+  ...baseInput,
+  state: liveFollow.state,
+  currentCamera: { ...liveFollow.target, zoom: 1.08 },
+  focalBounds: { x: 40, y: 40, width: 1800, height: 900 },
+  explicitNavigation: true,
+  maximumZoomChange: 1,
+  reason: "overview after live narration",
+});
+check("overview may widen enough to reveal the full composition", overviewReveal.move && overviewReveal.contentFits &&
+  1.08 - overviewReveal.target.zoom > CAMERA_RULES.maximumZoomChange, `${overviewReveal.target.zoom}`);
 
 // Regression: a live session logged contentFits:false held at zoom≈0.92,
 // scrollX≈-1116 across many frames, with every proposal reporting "below
