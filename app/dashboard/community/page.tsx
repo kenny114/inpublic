@@ -1,11 +1,12 @@
 import { PageHeader } from "@/components/DashboardUI";
 import { DISCORD_URL } from "@/lib/product";
+import { features } from "@/lib/features";
 
 const reasons = [
   "Early access and development updates",
   "Product feedback and feature requests",
   "Bug reports",
-  "Story Mode experiments",
+  ...(features.storyMode ? ["Story Mode experiments"] : []),
   "Creator examples",
   "New visual asset suggestions",
 ];

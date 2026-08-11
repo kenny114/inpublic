@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/DashboardUI";
 import { VocabularyEditor } from "@/components/VocabularyEditor";
+import { features } from "@/lib/features";
 
 export default function VocabularyPage() {
   return (
@@ -13,7 +14,7 @@ export default function VocabularyPage() {
         <ul className="mt-3 grid gap-1.5 text-sm leading-6 text-zinc-500">
           <li>A <span className="font-medium text-zinc-700">term</span> is a word speech recognition should not get wrong — a product or company name.</li>
           <li>An <span className="font-medium text-zinc-700">alias</span> resolves a casual phrase back to the term, so “the company” lands as your company.</li>
-          <li>In Story Mode, <span className="font-medium text-zinc-700">poses</span> list the states a character can be drawn in.</li>
+          {features.storyMode && <li>In Story Mode, <span className="font-medium text-zinc-700">poses</span> list the states a character can be drawn in.</li>}
         </ul>
       </div>
       <VocabularyEditor />

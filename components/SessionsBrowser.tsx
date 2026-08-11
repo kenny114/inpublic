@@ -12,9 +12,14 @@ import { SessionDetailsPanel } from "@/components/SessionDetailsPanel";
 import { useSessionSummaries } from "@/hooks/useSessionSummaries";
 import { deleteSession, duplicateSession, loadSessionById, renameSession, restoreDeletedSession, setSessionStarred, type PersistedSession } from "@/lib/persist";
 import { deriveTitle, formatDuration, formatRelative, statusOf, type SessionSummary } from "@/lib/sessions";
+import { features } from "@/lib/features";
 
 const filters = ["All sessions", "Standard Mode", "Story Mode", "Recorded", "Unrecorded", "Starred"] as const;
 type Filter = (typeof filters)[number];
+// Story Mode is parked (lib/features.ts) — the filter chip is hidden from
+// the main sessions view, but "All sessions" still includes any existing
+// story sessions (matches() below is untouched), so they stay findable.
+const visibleFilters = features.storyMode ? filters : filters.filter((name) => name !== "Story Mode");
 
 const sorts = { recent: "Recently edited", newest: "Newest first", oldest: "Oldest first" } as const;
 type Sort = keyof typeof sorts;
@@ -123,7 +128,7 @@ export function SessionsBrowser() {
         <input id="session-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" className="h-10 w-full rounded-[10px] border border-zinc-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-[#5b5bd6] focus:ring-2 focus:ring-[#eff0ff]" />
       </label>
       <div className="flex flex-wrap gap-1" role="group" aria-label="Filter sessions">
-        {filters.map((name) => (
+        {visibleFilters.map((name) => (
           <button
             key={name}
             type="button"

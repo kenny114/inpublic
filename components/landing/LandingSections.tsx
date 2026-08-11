@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, Check, Mic, Play, Share2 } from "lucide-react";
 import { ButtonLink, Logo, PageContainer } from "@/components/ProductUI";
+import { features } from "@/lib/features";
 
 export function Hero() {
   return (
@@ -64,10 +65,13 @@ export function HowItWorks() {
   );
 }
 
+// Story Mode is parked (lib/features.ts) — the two Story examples keep
+// their images (removing them would leave a lopsided 3-column grid) but
+// their caption no longer claims it's a mode you can pick today.
 const examples = [
   { src: "/product-standard.png", title: "Explain a system", type: "Standard Mode" },
-  { src: "/product-story-scene.png", title: "Build a living scene", type: "Story Mode" },
-  { src: "/product-story.png", title: "Tell a visual story", type: "Story Mode" },
+  { src: "/product-story-scene.png", title: "Build a living scene", type: features.storyMode ? "Story Mode" : "Coming soon" },
+  { src: "/product-story.png", title: "Tell a visual story", type: features.storyMode ? "Story Mode" : "Coming soon" },
 ];
 
 export function ExamplesGallery() {
@@ -88,8 +92,8 @@ export function UseCases() {
 }
 
 const pricing = [
-  { name: "Free", description: "Try the live canvas and create your first visual sessions.", features: ["Standard Mode", "Limited Story Mode", "20-minute recording limit", "Editable exports"], href: "/create?new=1", cta: "Start speaking" },
-  { name: "Creator", description: "The complete recording and visual-story workflow, currently in early access.", features: ["Standard and Story Mode", "Camera and microphone recording", "Session history", "Full canvas exports"], href: "/dashboard", cta: "Start speaking" },
+  { name: "Free", description: "Try the live canvas and create your first visual sessions.", features: ["Standard Mode", ...(features.storyMode ? ["Limited Story Mode"] : []), "20-minute recording limit", "Editable exports"], href: "/create?new=1", cta: "Start speaking" },
+  { name: "Creator", description: "The complete recording and visual-story workflow, currently in early access.", features: [features.storyMode ? "Standard and Story Mode" : "Standard Mode", "Camera and microphone recording", "Session history", "Full canvas exports"], href: "/dashboard", cta: "Start speaking" },
 ];
 
 export function Pricing() {
@@ -102,7 +106,7 @@ const questions = [
   ["Is InPublic a transcription tool?", "No. InPublic uses live speech as the input, then creates an editable visual explanation from the meaning and relationships inside it."],
   ["Can I edit what InPublic creates?", "Yes. The canvas is made from native editable elements, so you can move, rename, resize and reconnect the result."],
   ["What can I export?", "The current canvas supports PNG, SVG, Excalidraw and JSON. Recordings can be exported as WebM, and the session log can be downloaded."],
-  ["Does Story Mode generate images?", "No. Story Mode composes persistent, editable canvas drawings and keeps the same characters and objects as a scene changes."],
+  ...(features.storyMode ? [["Does Story Mode generate images?", "No. Story Mode composes persistent, editable canvas drawings and keeps the same characters and objects as a scene changes."]] : []),
 ];
 
 export function FAQ() {

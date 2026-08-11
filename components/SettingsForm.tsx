@@ -6,6 +6,7 @@ import { usePreferences } from "@/hooks/usePreferences";
 import { signOut } from "@/lib/auth";
 import { billing } from "@/lib/billing";
 import { FREE_RECORDING_LIMIT_MS, FREE_SESSION_LIMIT } from "@/lib/product";
+import { features } from "@/lib/features";
 
 function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
@@ -66,22 +67,24 @@ export function SettingsForm() {
         )}
       </Section>
 
-      <Section title="Preferences" description="Used by the dashboard. The canvas keeps its own controls.">
-        <Field label="Default mode">
-          <select
-            value={preferences.defaultMode}
-            onChange={(event) => update({ defaultMode: event.target.value === "story" ? "story" : "standard" })}
-            className={`${inputClass} max-w-xs`}
-          >
-            <option value="standard">Standard Mode</option>
-            <option value="story">Story Mode</option>
-          </select>
-        </Field>
-        <p className="mt-3 text-xs leading-5 text-zinc-500">
-          The “New session” button opens this mode. The two buttons on the dashboard home still open a specific
-          mode, and you can switch modes on the canvas at any time.
-        </p>
-      </Section>
+      {features.storyMode && (
+        <Section title="Preferences" description="Used by the dashboard. The canvas keeps its own controls.">
+          <Field label="Default mode">
+            <select
+              value={preferences.defaultMode}
+              onChange={(event) => update({ defaultMode: event.target.value === "story" ? "story" : "standard" })}
+              className={`${inputClass} max-w-xs`}
+            >
+              <option value="standard">Standard Mode</option>
+              <option value="story">Story Mode</option>
+            </select>
+          </Field>
+          <p className="mt-3 text-xs leading-5 text-zinc-500">
+            The “New session” button opens this mode. The two buttons on the dashboard home still open a specific
+            mode, and you can switch modes on the canvas at any time.
+          </p>
+        </Section>
+      )}
 
       <Section
         title="Recording and capture"

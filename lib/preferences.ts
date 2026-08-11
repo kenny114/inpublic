@@ -7,6 +7,7 @@
  */
 
 import type { InPublicMode } from "./story";
+import { features } from "./features";
 
 export interface Preferences {
   /** Which mode "New session" opens by default. */
@@ -27,7 +28,10 @@ export function readPreferences(): Preferences {
     if (!raw) return DEFAULT_PREFERENCES;
     const parsed = JSON.parse(raw) as Partial<Preferences>;
     return {
-      defaultMode: parsed.defaultMode === "story" ? "story" : "standard",
+      // Story Mode is parked (lib/features.ts) — a preference set to
+      // "story" from before it was parked (still sitting in someone's
+      // localStorage) must not silently route "New session" back into it.
+      defaultMode: parsed.defaultMode === "story" && features.storyMode ? "story" : "standard",
       displayName: typeof parsed.displayName === "string" ? parsed.displayName : "",
     };
   } catch {

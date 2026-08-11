@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { features } from "../lib/features.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const recorder = read("hooks/useCanvasRecorder.ts");
@@ -20,8 +21,13 @@ const checks = [
   ["webcam is optional", panel.includes("Camera") && recorder.includes("webcam: false")],
   ["transcript capture is optional", panel.includes("Transcript") && recorder.includes("transcriptVisible")],
   ["landing explains Standard Mode", landing.includes("Standard Mode")],
-  ["landing explains Story Mode", landing.includes("Story Mode")],
   ["landing uses real product proof", landing.includes("/product-standard.png")],
+  // Story Mode and Audio Replay are parked (lib/features.ts) — a
+  // product-surface shutdown, not a deletion. Standard Mode is the sole
+  // default; the other two remain fully implemented and gated off.
+  ["Standard Mode is the enabled default", features.standardMode === true],
+  ["Story Mode is parked via the features flag", features.storyMode === false],
+  ["Audio Replay is parked via the features flag", features.audioReplay === false],
   ["pricing shows exact Creator price", pricing.includes("$15/month")],
   ["pricing keeps product quality identical", pricing.includes("same modes, AI models, canvas, recording quality and exports")],
   ["checkout return does not claim entitlement", pricing.includes("does not change access")],
