@@ -14,6 +14,7 @@ const projectRoute = read("app/api/projects/route.ts");
 const projectItemRoute = read("app/api/projects/[id]/route.ts");
 const persist = read("lib/persist.ts");
 const authRoute = read("app/api/auth/[action]/route.ts");
+const middleware = read("middleware.ts");
 
 const checks = [];
 const check = (name, value) => { assert.equal(Boolean(value), true, name); checks.push(name); };
@@ -68,6 +69,23 @@ check("the retry restates the output contract", beatRoute.includes("BEAT_RETRY_I
 check("both attempts are reserved for", beatRoute.includes("maxOutputTokens: 600"));
 check("usage is accumulated across attempts, not overwritten", beatRoute.includes("addUsage") && !/onUsage: \(value\) => \{ usage = value/.test(beatRoute));
 check("a failure after the retry is still a safe skip", beatRoute.includes("parse failure after retry"));
+
+// The session refresh stamps "private, no-store" on everything it handles.
+// Public media must stay outside it, or a 1 MB demo video is re-downloaded on
+// every page view and each request pays for a Supabase refresh it never needed.
+// Checked by running the real matcher, not by grepping it for extensions.
+{
+  // JSON.parse resolves the TS string literal's escaping, so the pattern is
+  // the same regex Next compiles rather than an approximation of it.
+  const pattern = JSON.parse(`"${middleware.match(/matcher: \[\s*"([^"]+)"/s)[1]}"`);
+  const runs = (path) => new RegExp(`^${pattern}$`).test(path);
+  for (const asset of ["/demos/demo-a.webm", "/demos/demo-a.png", "/og.png", "/inter.woff2"]) {
+    check(`static asset bypasses the session middleware: ${asset}`, runs(asset) === false);
+  }
+  for (const page of ["/", "/pricing", "/create", "/dashboard/settings", "/api/entitlement"]) {
+    check(`session middleware still runs for ${page}`, runs(page) === true);
+  }
+}
 check("all budget classes are enforced", ["p_user_daily_limit","p_user_period_limit","p_global_hour_limit","p_global_day_limit","p_global_month_limit","p_artist_session_limit","p_session_call_limit"].every((name) => spend.includes(name)));
 check("failed calls reconcile estimated exposure", guard.includes('status: "failed"') || guard.includes('"failed"'));
 check("webhook signature is verified before event access", webhook.indexOf("webhooks.unwrap") < webhook.indexOf("event.api_version"));
