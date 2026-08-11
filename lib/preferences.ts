@@ -14,9 +14,18 @@ export interface Preferences {
   defaultMode: InPublicMode;
   /** Shown in the greeting and the account menu when set. */
   displayName: string;
+  /** Seeds the recorder's camera toggle. Read by hooks/useCanvasRecorder. */
+  recordCameraByDefault: boolean;
+  /** Seeds the canvas transcript strip. Read by components/Board. */
+  showTranscriptByDefault: boolean;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { defaultMode: "standard", displayName: "" };
+export const DEFAULT_PREFERENCES: Preferences = {
+  defaultMode: "standard",
+  displayName: "",
+  recordCameraByDefault: false,
+  showTranscriptByDefault: false,
+};
 
 const KEY = "inpublic-preferences";
 const EVENT = "inpublic-preferences-change";
@@ -33,6 +42,8 @@ export function readPreferences(): Preferences {
       // localStorage) must not silently route "New session" back into it.
       defaultMode: parsed.defaultMode === "story" && features.storyMode ? "story" : "standard",
       displayName: typeof parsed.displayName === "string" ? parsed.displayName : "",
+      recordCameraByDefault: parsed.recordCameraByDefault === true,
+      showTranscriptByDefault: parsed.showTranscriptByDefault === true,
     };
   } catch {
     return DEFAULT_PREFERENCES;

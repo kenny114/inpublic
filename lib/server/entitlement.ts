@@ -14,6 +14,12 @@ export interface Entitlement {
   membershipStatus: string;
   mayStart: boolean;
   blockedReason: string | null;
+  /**
+   * Position in the Founding 100, or null for Free and for Creators who
+   * joined after the programme closed. Assigned once, in the database, when a
+   * Creator membership first verifies — see the founding-allowances migration.
+   */
+  foundingNumber: number | null;
 }
 
 export async function resolveEntitlement(userId: string): Promise<Entitlement> {
@@ -46,5 +52,22 @@ export async function resolveEntitlement(userId: string): Promise<Entitlement> {
     membershipStatus: String(row.membership_status ?? "none"),
     mayStart: Boolean(row.may_start),
     blockedReason: row.blocked_reason ? String(row.blocked_reason) : null,
+    // Absent until the founding-allowances migration is applied; a missing
+    // column reads as "no founding position", which is the safe answer.
+    foundingNumber: row.founding_number == null ? null : Number(row.founding_number),
   };
+}
+
+/**
+ * How many of the 100 founding places are unclaimed.
+ *
+ * Returns null when the answer cannot be trusted — before the migration lands,
+ * or if the call fails. Callers must render nothing in that case rather than
+ * guess: a made-up scarcity number is worse than no number.
+ */
+export async function foundingPlacesRemaining(): Promise<number | null> {
+  const { data, error } = await createAdminClient().rpc("founding_places_remaining");
+  if (error || data == null) return null;
+  const remaining = Number(data);
+  return Number.isFinite(remaining) ? remaining : null;
 }

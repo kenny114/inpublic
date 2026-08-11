@@ -24,8 +24,10 @@ import {
   flushStructuralThought,
   localVoiceCommand,
   pushStructuralSegment,
+  retirePending,
 } from "../lib/liveSpeech.ts";
 import { liveLatencySample } from "../lib/telemetry.ts";
+import { parseDecision } from "../lib/beat.ts";
 import { composeAttentionBudget, withinInitialCompositionWindow } from "../lib/attention.ts";
 import { requestDelayMs, retryAfterMs } from "../lib/requestScheduling.ts";
 import {
@@ -496,6 +498,59 @@ check("fragment: bare pronoun", isFragment("they are"));
 check("not a fragment: a real phrase", !isFragment("lack of security"));
 check("parseLine drops a fragment", parseLine('word "build a"').length === 0);
 check("parseLine keeps a real mark", parseLine('word "mass calling"').length === 1);
+
+// ------------------------------------------------------- retiring pending text
+
+section("retiring pending text after a beat");
+
+// The regression this exists for: the beat is asked about sentence two, and
+// sentence three lands in the buffer while the Artist is still working. The
+// old code cleared the whole buffer, so the queued re-run found nothing and
+// the closing thought of an explanation never became structure.
+{
+  const sent = "Most of that churn came from new customers who cancelled after their first month.";
+  const arrivedMeanwhile = "So our next priority is improving onboarding and retention.";
+  const buffer = `${sent} ${arrivedMeanwhile}`;
+  check(
+    "the thought that arrived mid-flight survives",
+    retirePending(buffer, sent) === arrivedMeanwhile,
+  );
+}
+
+check("nothing new means an empty buffer", retirePending("a b c", "a b c") === "");
+check("a consumed prefix is retired exactly", retirePending("one two three", "one two") === "three");
+check("surrounding whitespace never leaks", retirePending("  one two   three  ", "one two") === "three");
+// If the word cap dropped the front of the buffer there is no safe leftover,
+// so it retires whole rather than re-drawing something already on the board.
+check("a buffer that no longer matches retires whole", retirePending("different words", "one two") === "");
+check("consuming nothing keeps the buffer", retirePending("one two", "") === "one two");
+
+// ------------------------------------------------------------- beat responses
+
+section("reading the beat's answer");
+
+// A malformed response is not a decision. It used to become `skip`, which is
+// indistinguishable from a deliberate one, so the thought was thrown away with
+// nothing to retry it. The real case, from a demo run: a fenced object,
+// truncated mid-key.
+const truncated = '```json\n{"action": "skip", "reason": "topic announced, no new content", "focus":';
+check("a truncated fenced object is a failure, not a skip", parseDecision(truncated).ok === false);
+check("the failure keeps the raw response for the retry", parseDecision(truncated).raw === truncated);
+
+const fenced = '```json\n{"action":"draw","reason":"two outcomes","focus":"revenue and churn both rose"}\n```';
+check("a well-formed fenced object still parses", parseDecision(fenced).ok === true);
+check("...and keeps its action", parseDecision(fenced).decision?.action === "draw");
+
+const withProse = 'Here you go:\n{"action":"section","reason":"topic change","focus":"Affiliate Capital"}';
+check("an object buried in prose is salvaged", parseDecision(withProse).ok === true);
+
+// Readable JSON with a bogus action is a genuine skip: a retry cannot help.
+const badAction = '{"action":"interpretive-dance","reason":"","focus":""}';
+check("readable JSON with an unknown action is a skip, not a retry", parseDecision(badAction).ok === true);
+check("...and that skip is inert", parseDecision(badAction).decision?.action === "skip");
+
+check("plain prose is a failure", parseDecision("I think we should draw something.").ok === false);
+check("an empty response is a failure", parseDecision("").ok === false);
 
 // ------------------------------------------------------------------ results
 

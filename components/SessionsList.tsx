@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/DashboardUI";
 import { ModeBadge } from "@/components/DashboardUI";
-import { deleteRecording, downloadBlob, downloadRecordingMetadata, listRecordings, type SavedRecording } from "@/lib/recordings";
+import { deleteRecording, downloadBlob, downloadRecordingMetadata, extensionForMimeType, listRecordings, type SavedRecording } from "@/lib/recordings";
 import { formatRelative } from "@/lib/sessions";
 
 function duration(value: number) {
@@ -12,7 +12,7 @@ function duration(value: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-/** The recording library. Everything shown is a WebM actually stored here. */
+/** The recording library. Everything shown is a video actually stored here. */
 export function SessionsList() {
   const [items, setItems] = useState<SavedRecording[] | null>(null);
 
@@ -54,7 +54,7 @@ export function SessionsList() {
             </div>
             <div className="flex flex-wrap gap-2">
               <Link href={`/create?session=${encodeURIComponent(item.metadata.sessionId)}&mode=${item.metadata.mode}`} className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-50">Open canvas</Link>
-              <button type="button" onClick={() => downloadBlob(item.blob, `inpublic-${item.id}.webm`)} className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-50">Download WebM</button>
+              <button type="button" onClick={() => downloadBlob(item.blob, `inpublic-${item.id}.${extensionForMimeType(item.metadata.mimeType || item.blob.type)}`)} className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-50">Download video</button>
               <button type="button" onClick={() => downloadRecordingMetadata(item.metadata)} className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-medium hover:bg-zinc-50">Session JSON</button>
               <button
                 type="button"

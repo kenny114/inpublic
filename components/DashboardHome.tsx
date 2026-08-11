@@ -1,14 +1,18 @@
 "use client";
 
-import { Mic2 } from "lucide-react";
-import { useCallback, useMemo, useState, type FormEvent } from "react";
+import Link from "next/link";
+import { FileDown, Mic2, PlayCircle, Video } from "lucide-react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Button, ButtonLink, EmptyState, Modal, Skeleton, Toast } from "@/components/ProductUI";
 import { exportSession, type SessionAction } from "@/components/SessionActions";
 import { SessionRow } from "@/components/SessionRow";
+import { UsagePanel } from "@/components/UsageSurfaces";
+import { VisualDemoTabs } from "@/components/VisualDemo";
 import { usePreferences } from "@/hooks/usePreferences";
 import { useSessionSummaries } from "@/hooks/useSessionSummaries";
 import { deleteSession, duplicateSession, loadSessionById, renameSession, restoreDeletedSession, type PersistedSession } from "@/lib/persist";
-import { deriveTitle, type SessionSummary } from "@/lib/sessions";
+import { downloadBlob, extensionForMimeType, listRecordings, type SavedRecording } from "@/lib/recordings";
+import { deriveTitle, formatRelative, type SessionSummary } from "@/lib/sessions";
 
 type ToastState = { message: string; actionLabel?: string; onAction?: () => void };
 
@@ -16,25 +20,32 @@ function SessionSkeleton() {
   return <div className="session-row session-row-skeleton"><Skeleton className="session-preview" /><span><Skeleton className="h-4 w-52 max-w-full" /><Skeleton className="mt-2 h-3 w-32" /></span><Skeleton className="h-4 w-14" /></div>;
 }
 
+function greeting(name: string) {
+  const hour = new Date().getHours();
+  const part = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  return name.trim() ? `${part}, ${name.trim()}` : part;
+}
+
+function formatSize(bytes: number) {
+  return bytes > 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
 export function DashboardHome() {
   const { sessions, loading, refresh } = useSessionSummaries();
   const { preferences } = usePreferences();
-  const recent = (sessions ?? []).slice(0, 8);
+  const recent = (sessions ?? []).slice(0, 5);
+  const [recordings, setRecordings] = useState<SavedRecording[] | null>(null);
   const [renameTarget, setRenameTarget] = useState<SessionSummary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [exampleOpen, setExampleOpen] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const dismissToast = useCallback(() => setToast(null), []);
   const newSessionHref = `/create?mode=${preferences.defaultMode}&new=1`;
 
-  const monthMinutes = useMemo(() => {
-    const now = new Date();
-    const total = (sessions ?? []).filter((session) => {
-      const date = new Date(session.updatedAt);
-      return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
-    }).reduce((sum, session) => sum + (session.durationMs ?? 0), 0);
-    return Math.round(total / 60_000);
-  }, [sessions]);
+  useEffect(() => {
+    void listRecordings().then(setRecordings).catch(() => setRecordings([]));
+  }, []);
 
   const act = async (session: SessionSummary, action: SessionAction) => {
     if (action === "rename") {
@@ -75,19 +86,77 @@ export function DashboardHome() {
     });
   };
 
+  const latestRecordings = (recordings ?? []).slice(0, 3);
+
   return (
     <div className="dashboard-home">
       <section className="dashboard-welcome">
-        <div><p className="dashboard-kicker">Your visual workspace</p><h1>What do you want to bring to life?</h1><p>Start a new thought or continue one that is already taking shape.</p></div>
-        <ButtonLink href={newSessionHref}><Mic2 size={16} />New visual session</ButtonLink>
+        <div>
+          <p className="dashboard-kicker">Your visual workspace</p>
+          <h1>{greeting(preferences.displayName)}</h1>
+        </div>
+        <div className="dashboard-welcome-actions">
+          <ButtonLink href={newSessionHref}><Mic2 size={16} />New visual session</ButtonLink>
+          {/* Secondary on purpose: someone who isn't ready to talk yet should
+              have somewhere to go, but speaking is still the product. */}
+          <Button tone="ghost" onClick={() => setExampleOpen(true)}><PlayCircle size={16} />See an example</Button>
+        </div>
       </section>
 
-      <section className="recent-sessions" aria-labelledby="recent-title">
-        <div className="recent-heading"><div><h2 id="recent-title">Recent Sessions</h2>{recent.length > 0 ? <p>You brought {monthMinutes} minute{monthMinutes === 1 ? "" : "s"} of ideas to life this month.</p> : null}</div>{recent.length > 0 ? <ButtonLink href="/dashboard/sessions" tone="ghost">View all sessions</ButtonLink> : null}</div>
-        {loading ? <div className="session-list" aria-label="Loading recent sessions"><SessionSkeleton /><SessionSkeleton /><SessionSkeleton /></div> : recent.length === 0 ? (
-          <EmptyState title="Create your first visual session." body="Press record, start talking and watch InPublic build with you." action={<ButtonLink href={newSessionHref}><Mic2 size={16} />Start speaking</ButtonLink>} />
-        ) : <div className="session-list">{recent.map((session) => <SessionRow key={session.id} session={session} onAction={(action) => void act(session, action)} />)}</div>}
+      <UsagePanel />
+
+      <section className="dashboard-block" aria-labelledby="recent-title">
+        <div className="recent-heading">
+          <h2 id="recent-title">Recent sessions</h2>
+          {recent.length > 0 ? <ButtonLink href="/dashboard/sessions" tone="ghost">View all</ButtonLink> : null}
+        </div>
+        {loading ? (
+          <div className="session-list" aria-label="Loading recent sessions"><SessionSkeleton /><SessionSkeleton /><SessionSkeleton /></div>
+        ) : recent.length === 0 ? (
+          <EmptyState
+            title="No visual sessions yet."
+            body="Start speaking and InPublic will organize your thoughts visually as you talk."
+            action={<ButtonLink href={newSessionHref}><Mic2 size={16} />Start speaking</ButtonLink>}
+          />
+        ) : (
+          <div className="session-list">{recent.map((session) => <SessionRow key={session.id} session={session} onAction={(action) => void act(session, action)} />)}</div>
+        )}
       </section>
+
+      {/* Recordings and exports only appear once there is something in them.
+          An empty table teaches a new user nothing. */}
+      {latestRecordings.length > 0 ? (
+        <section className="dashboard-block" aria-labelledby="recordings-title">
+          <div className="recent-heading">
+            <h2 id="recordings-title">Recent recordings</h2>
+            <ButtonLink href="/dashboard/recordings" tone="ghost">View all</ButtonLink>
+          </div>
+          <ul className="simple-list">
+            {latestRecordings.map((recording) => (
+              <li key={recording.id}>
+                <span className="simple-list-icon"><Video size={15} /></span>
+                <span className="simple-list-copy">
+                  <strong>{recording.metadata.title || "Untitled recording"}</strong>
+                  <span>{formatRelative(Date.parse(recording.metadata.timestamp))} · {formatSize(recording.metadata.fileSize)}</span>
+                </span>
+                <button type="button" onClick={() => downloadBlob(recording.blob, `inpublic-${recording.id}.${extensionForMimeType(recording.metadata.mimeType || recording.blob.type)}`)}>
+                  <FileDown size={14} />Download
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {(sessions ?? []).length > 0 || latestRecordings.length > 0 ? (
+        <p className="dashboard-footnote">
+          Everything downloadable from this browser is on the <Link href="/dashboard/exports">Exports</Link> page.
+        </p>
+      ) : null}
+
+      <Modal open={exampleOpen} size="wide" title="A real InPublic session" description="Recorded from the product. Nothing here is illustrated." onClose={() => setExampleOpen(false)}>
+        <VisualDemoTabs />
+      </Modal>
 
       <Modal open={Boolean(renameTarget)} title="Rename session" onClose={() => setRenameTarget(null)} footer={<><Button tone="secondary" onClick={() => setRenameTarget(null)}>Cancel</Button><Button type="submit" form="rename-session-form" disabled={!renameValue.trim()}>Save name</Button></>}>
         <form id="rename-session-form" onSubmit={submitRename}><label className="dashboard-field-label" htmlFor="session-name">Session title</label><input id="session-name" className="ui-input" value={renameValue} onChange={(event) => setRenameValue(event.target.value)} maxLength={120} autoFocus /></form>

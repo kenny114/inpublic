@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-export function CreatorCheckoutButton() {
+export function CreatorCheckoutButton({ label = "Choose Creator" }: { label?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const checkout = async () => {
@@ -12,5 +12,12 @@ export function CreatorCheckoutButton() {
     if (response.ok && payload?.checkoutUrl) { window.location.assign(payload.checkoutUrl); return; }
     setError(payload?.error?.message ?? "Checkout is temporarily unavailable."); setBusy(false);
   };
-  return <div className="mt-8"><button type="button" disabled={busy} onClick={() => void checkout()} className="button-primary">{busy ? "Opening checkout…" : "Choose Creator"}</button>{error ? <p role="alert" className="mt-3 text-sm text-red-700">{error}</p> : null}</div>;
+  return (
+    <>
+      <button type="button" disabled={busy} onClick={() => void checkout()} className="ui-button ui-button-primary">
+        {busy ? "Opening checkout…" : label}
+      </button>
+      {error ? <p role="alert" className="checkout-error">{error}</p> : null}
+    </>
+  );
 }

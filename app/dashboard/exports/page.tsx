@@ -6,7 +6,7 @@ export default function ExportsPage() {
     <div>
       <PageHeader
         title="Exports"
-        description="Download what this browser has stored: session state as JSON, and recordings as WebM with their transcript."
+        description="Everything this browser has stored, ready to download."
       />
       <ExportsList />
       <NotReadyNote>

@@ -350,6 +350,81 @@
   --color-surface-primary-container: #e0dfff;
 }
 
+/* ---------------------------------------------------------------- see-through chrome
+ *
+ * The canvas is the product; the controls sit on top of it. The shape toolbar
+ * covers the top-left of every page, and on a board that has grown upward or
+ * outward it lands squarely on the drawing — a section title vanishing behind
+ * the toolbar, the closing line of a thought hidden behind the speaking
+ * control.
+ *
+ * So the chrome rests translucent and returns to full strength the moment you
+ * reach for it. Hover for the mouse, focus-within for the keyboard, so nothing
+ * becomes unreachable. Backgrounds fade rather than whole elements wherever a
+ * panel carries text worth reading — faint labels would trade one legibility
+ * problem for another — and only the icon-only toolbar fades entirely, which
+ * is what actually puts ink back on screen.
+ *
+ * Distinct from .recording-focus in globals.css: that is a deliberate,
+ * near-total hide for the duration of a take, and its !important still wins.
+ */
+.excalidraw .App-toolbar,
+.excalidraw .App-toolbar__extra-tools-trigger {
+  opacity: .42;
+  transition: opacity .15s ease;
+}
+.excalidraw .App-toolbar:hover,
+.excalidraw .App-toolbar:focus-within,
+.excalidraw .App-toolbar__extra-tools-trigger:hover {
+  opacity: 1;
+}
+
+.canvas-topbar { background: rgba(255, 255, 255, .58); transition: background-color .15s ease; }
+.canvas-topbar:hover,
+.canvas-topbar:focus-within { background: rgba(255, 255, 255, .98); }
+
+.canvas-speaking-control { background: rgba(255, 255, 255, .72); transition: background-color .15s ease, box-shadow .15s ease; }
+.canvas-speaking-control:hover,
+.canvas-speaking-control:focus-within { background: white; }
+
+.canvas-recording-dock,
+.canvas-interface-preview { transition: opacity .15s ease; }
+.canvas-recording-dock:not(:hover):not(:focus-within),
+.canvas-interface-preview:not(:hover):not(:focus-within) { opacity: .62; }
+
+/* A live take is the one time the controls must stay unmistakable. */
+.canvas-speaking-control:has(.ui-recording-status.active) { background: white; }
+
+/* No hover to restore with, so touch gets a much lighter touch — enough to
+   stop the toolbar hiding a title outright, not enough to look broken. */
+@media (hover: none) {
+  .excalidraw .App-toolbar,
+  .excalidraw .App-toolbar__extra-tools-trigger { opacity: .8; }
+  .canvas-topbar { background: rgba(255, 255, 255, .9); }
+  .canvas-speaking-control { background: white; }
+  .canvas-recording-dock:not(:hover):not(:focus-within),
+  .canvas-interface-preview:not(:hover):not(:focus-within) { opacity: .85; }
+}
+
+/* Transparency is a preference and an accessibility setting, not a given.
+   Where it is turned down, or in forced-colours mode, the chrome is solid. */
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .excalidraw .App-toolbar,
+  .excalidraw .App-toolbar__extra-tools-trigger,
+  .canvas-recording-dock:not(:hover):not(:focus-within),
+  .canvas-interface-preview:not(:hover):not(:focus-within) { opacity: 1; }
+  .canvas-topbar { background: rgba(255, 255, 255, .98); }
+  .canvas-speaking-control { background: white; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .excalidraw .App-toolbar,
+  .canvas-topbar,
+  .canvas-speaking-control,
+  .canvas-recording-dock,
+  .canvas-interface-preview { transition: none; }
+}
+
 @media (max-width: 760px) {
   .canvas-topbar { padding-inline: 8px; }
   .canvas-title-input { width: min(42vw, 230px); }

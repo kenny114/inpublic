@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ChevronDown, FileDown, FolderOpen, Menu, Mic2, Settings, Video } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { ButtonLink, DropdownMenu, Logo, PageContainer } from "@/components/ProductUI";
+import { UsagePill } from "@/components/UsageSurfaces";
 import { useAuth } from "@/hooks/useAuth";
 import { usePreferences } from "@/hooks/usePreferences";
 import { signOut } from "@/lib/auth";
@@ -49,6 +50,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 {nav.map(({ label, href, Icon }) => <Link key={href} href={href} role="menuitem"><Icon size={15} />{label}</Link>)}
               </DropdownMenu>
             </div>
+            {/* Plan and minutes sit next to the account menu rather than
+                three clicks inside Settings — see components/UsageSurfaces. */}
+            <UsagePill />
             <ButtonLink href={newSessionHref}><Mic2 size={15} />New visual session</ButtonLink>
             <AccountMenu />
           </div>

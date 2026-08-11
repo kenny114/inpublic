@@ -48,7 +48,7 @@ export function EmptyState({ title, body, action }: { title: string; body: strin
   );
 }
 
-export function Modal({ open, title, description, children, footer, onClose }: { open: boolean; title: string; description?: string; children?: ReactNode; footer?: ReactNode; onClose: () => void }) {
+export function Modal({ open, title, description, children, footer, onClose, size = "default" }: { open: boolean; title: string; description?: string; children?: ReactNode; footer?: ReactNode; onClose: () => void; size?: "default" | "wide" }) {
   useEffect(() => {
     if (!open) return;
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
@@ -60,7 +60,7 @@ export function Modal({ open, title, description, children, footer, onClose }: {
   return (
     <div className="ui-modal-layer" role="presentation">
       <button className="ui-modal-backdrop" type="button" aria-label="Close dialog" onClick={onClose} />
-      <div className="ui-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div className={size === "wide" ? "ui-modal ui-modal-wide" : "ui-modal"} role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <button type="button" className="ui-modal-close" onClick={onClose} aria-label="Close dialog"><X size={17} /></button>
         <h2 id="modal-title">{title}</h2>
         {description ? <p className="ui-modal-description">{description}</p> : null}

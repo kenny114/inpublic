@@ -27,6 +27,7 @@ import {
   type UndoRecord,
 } from "@/lib/semantic";
 import { loadSession, loadSessionById, makeAutosave, type PersistedSession } from "@/lib/persist";
+import { readPreferences } from "@/lib/preferences";
 import {
   exportExcalidraw,
   exportPng,
@@ -84,6 +85,7 @@ import {
   flushStructuralThought,
   localVoiceCommand,
   pushStructuralSegment,
+  retirePending,
   type StructuralThoughtState,
 } from "@/lib/liveSpeech";
 import { liveLatencySample, type AudioTiming } from "@/lib/telemetry";
@@ -270,7 +272,8 @@ export default function Board({
   apiRef.current = api;
 
   const [interim, setInterim] = useState("");
-  const [showTranscript, setShowTranscript] = useState(false);
+  // Settings offers "show transcript by default"; this is where it lands.
+  const [showTranscript, setShowTranscript] = useState(() => readPreferences().showTranscriptByDefault);
   const [showAudioReplay, setShowAudioReplay] = useState(false);
   const [busy, setBusy] = useState(false);
   const [recordingFocus, setRecordingFocus] = useState(false);
@@ -3233,8 +3236,19 @@ export default function Board({
         return;
       }
 
-      // Retire this text now, not when the render finishes.
-      pendingTextRef.current = "";
+      // Retire this text now, not when the render finishes — but retire only
+      // the words THIS beat consumed.
+      //
+      // Clearing the whole buffer also discarded anything said while the beat
+      // and the Artist were running, and that is precisely the window the next
+      // sentence lands in: a beat takes ~4s and the Artist another ~4s, which
+      // is longer than the gap between two spoken sentences. The queued re-run
+      // then found an empty buffer and returned. That is why the closing
+      // thought of an explanation — "so our next priority is improving
+      // onboarding and retention", "it uses that energy to create glucose and
+      // releases oxygen" — kept reaching the canvas as raw handwriting and
+      // never became structure.
+      pendingTextRef.current = retirePending(pendingTextRef.current, pendingText);
       scribePendingRef.current = "";
 
       // Apply on the referenced page, then return the camera. Doing the return

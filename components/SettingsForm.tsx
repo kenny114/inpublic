@@ -1,150 +1,160 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Button, Modal, Toast } from "@/components/ProductUI";
+import { CreatorCheckoutButton } from "@/components/CreatorCheckoutButton";
 import { useAuth } from "@/hooks/useAuth";
+import { planLabel, useEntitlement } from "@/hooks/useEntitlement";
 import { usePreferences } from "@/hooks/usePreferences";
 import { signOut } from "@/lib/auth";
-import { CreatorCheckoutButton } from "@/components/CreatorCheckoutButton";
-import { FREE_RECORDING_LIMIT_MS, FREE_SESSION_LIMIT } from "@/lib/product";
-import { features } from "@/lib/features";
+import { minutesOf, minutesRemaining } from "@/lib/plans";
+import { deleteRecording, listRecordings, type SavedRecording } from "@/lib/recordings";
 
-interface Entitlement { plan: "free" | "creator"; remainingSeconds: number; allowanceSeconds: number; periodEnd: string; }
-
-function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-zinc-200 bg-white p-5">
-      <h2 className="text-sm font-semibold">{title}</h2>
-      {description && <p className="mt-1.5 text-sm leading-6 text-zinc-500">{description}</p>}
-      <div className="mt-4">{children}</div>
+    <section className="settings-section">
+      <h2>{title}</h2>
+      <div className="settings-rows">{children}</div>
     </section>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+/** One control per row: label on the left, the thing you change on the right. */
+function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <label className="grid gap-1.5 text-sm font-medium">
-      {label}
-      {children}
-    </label>
+    <div className="settings-row">
+      <div><span>{label}</span>{hint ? <small>{hint}</small> : null}</div>
+      <div className="settings-control">{children}</div>
+    </div>
   );
 }
 
-const inputClass = "rounded-lg border border-zinc-200 px-3 py-2 text-sm font-normal outline-none focus:border-zinc-400";
-
-function minutesFrom(seconds: number) {
-  return Math.round(seconds / 60);
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (next: boolean) => void; label: string }) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} aria-label={label} className="settings-toggle" onClick={() => onChange(!checked)}>
+      <i />
+    </button>
+  );
 }
 
 export function SettingsForm() {
   const { ready: authReady, user } = useAuth();
   const { preferences, update } = usePreferences();
-  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
+  const { entitlement, loading } = useEntitlement();
+  const [recordings, setRecordings] = useState<SavedRecording[] | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!user) { setEntitlement(null); return; }
-    let cancelled = false;
-    void fetch("/api/entitlement", { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((value) => { if (!cancelled) setEntitlement(value); })
-      .catch(() => { if (!cancelled) setEntitlement(null); });
-    return () => { cancelled = true; };
-  }, [user]);
+  const loadRecordings = useCallback(() => {
+    void listRecordings().then(setRecordings).catch(() => setRecordings([]));
+  }, []);
+  useEffect(loadRecordings, [loadRecordings]);
+
+  const clearRecordings = async () => {
+    for (const recording of recordings ?? []) await deleteRecording(recording.id);
+    setConfirmClear(false);
+    loadRecordings();
+    setToast("Local recordings cleared");
+  };
+
+  const storedBytes = (recordings ?? []).reduce((sum, recording) => sum + (recording.metadata.fileSize ?? 0), 0);
 
   return (
-    <div className="mt-6 grid max-w-3xl gap-4">
-      <Section title="Profile">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Display name">
-            <input
-              value={preferences.displayName}
-              onChange={(event) => update({ displayName: event.target.value })}
-              placeholder="Your name"
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Email">
-            <input
-              value={authReady && user ? user.email : ""}
-              readOnly
-              placeholder="Not signed in"
-              className={`${inputClass} bg-zinc-50 text-zinc-500`}
-            />
-          </Field>
-        </div>
-        <p className="mt-3 text-xs leading-5 text-zinc-500">
-          Your display name is used in the dashboard greeting and stays in this browser. Email comes from the
-          preview sign-in; profile images arrive with real accounts.
-        </p>
-        {authReady && (
-          <div className="mt-4">
+    <div className="settings-page">
+      <Section title="Account">
+        <Row label="Display name">
+          <input
+            className="ui-input"
+            value={preferences.displayName}
+            onChange={(event) => update({ displayName: event.target.value })}
+            placeholder="Your name"
+            maxLength={80}
+          />
+        </Row>
+        <Row label="Email">
+          <input className="ui-input" value={authReady && user ? user.email ?? "" : ""} readOnly placeholder="Not signed in" />
+        </Row>
+        {authReady ? (
+          <Row label="Session">
             {user
-              ? <button type="button" onClick={() => signOut()} className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Log out</button>
-              : <Link href="/login" className="inline-flex rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Log in</Link>}
-          </div>
-        )}
+              ? <Button tone="secondary" onClick={() => void signOut()}>Log out</Button>
+              : <Link href="/login" className="ui-button ui-button-secondary">Log in</Link>}
+          </Row>
+        ) : null}
       </Section>
 
-      {features.storyMode && (
-        <Section title="Preferences" description="Used by the dashboard. The canvas keeps its own controls.">
-          <Field label="Default mode">
-            <select
-              value={preferences.defaultMode}
-              onChange={(event) => update({ defaultMode: event.target.value === "story" ? "story" : "standard" })}
-              className={`${inputClass} max-w-xs`}
-            >
-              <option value="standard">Standard Mode</option>
-              <option value="story">Story Mode</option>
-            </select>
-          </Field>
-          <p className="mt-3 text-xs leading-5 text-zinc-500">
-            The “New session” button opens this mode. The two buttons on the dashboard home still open a specific
-            mode, and you can switch modes on the canvas at any time.
-          </p>
-        </Section>
-      )}
-
-      <Section
-        title="Recording and capture"
-        description="Microphone, camera, transcript visibility, and what gets captured are chosen on the canvas at the moment you record, using your browser's device permissions."
-      >
-        <ul className="grid gap-1.5 text-sm leading-6 text-zinc-500">
-          <li>Canvas capture is always included; microphone and camera are toggled in the control bar.</li>
-          <li>Recordings are saved as WebM in this browser, with their transcript and session state.</li>
-          <li>Free preview limits: {Math.round(FREE_RECORDING_LIMIT_MS / 60000)} minutes per recording, {FREE_SESSION_LIMIT} saved recordings.</li>
-        </ul>
-        <Link href="/create?mode=standard&new=1" className="mt-4 inline-flex rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium hover:bg-zinc-50">Open the canvas</Link>
+      {/* Only defaults that are genuinely stored and genuinely read appear
+          here. Device choice and permissions belong to the browser, so they
+          are not dressed up as InPublic settings. */}
+      <Section title="Recording defaults">
+        <Row label="Camera on by default" hint="Applies when you open the recorder. You can still toggle it per take.">
+          <Toggle
+            label="Camera on by default"
+            checked={preferences.recordCameraByDefault}
+            onChange={(next) => update({ recordCameraByDefault: next })}
+          />
+        </Row>
+        <Row label="Show transcript by default" hint="Shows the transcript strip when a canvas opens.">
+          <Toggle
+            label="Show transcript by default"
+            checked={preferences.showTranscriptByDefault}
+            onChange={(next) => update({ showTranscriptByDefault: next })}
+          />
+        </Row>
       </Section>
 
-      <Section title="Billing">
+      <Section title="Plan and usage">
         {!user ? (
-          <>
-            <p className="text-sm font-medium">Free plan</p>
-            <p className="mt-1.5 text-sm leading-6 text-zinc-500">Sign in to see your plan and upgrade to Creator.</p>
-          </>
-        ) : entitlement === null ? (
-          <p className="text-sm text-zinc-500">Loading billing status…</p>
-        ) : entitlement.plan === "creator" ? (
-          <>
-            <p className="text-sm font-medium">Creator plan</p>
-            <p className="mt-1.5 text-sm leading-6 text-zinc-500">
-              {minutesFrom(entitlement.remainingSeconds)} of {minutesFrom(entitlement.allowanceSeconds)} visual-speech minutes remaining this billing period. Renews {new Date(entitlement.periodEnd).toLocaleDateString()}.
-            </p>
-          </>
+          <Row label="Plan"><Link href="/login" className="ui-button ui-button-secondary">Sign in to see your plan</Link></Row>
+        ) : loading ? (
+          <Row label="Plan"><span className="settings-value">Checking…</span></Row>
+        ) : !entitlement ? (
+          <Row label="Plan"><span className="settings-value">Unavailable right now</span></Row>
         ) : (
           <>
-            <p className="text-sm font-medium">Free plan</p>
-            <p className="mt-1.5 text-sm leading-6 text-zinc-500">
-              {minutesFrom(entitlement.remainingSeconds)} of {minutesFrom(entitlement.allowanceSeconds)} visual-speech minutes remaining this UTC month. Upgrade to Creator for 200 minutes/month.
-            </p>
-            <CreatorCheckoutButton />
+            <Row label="Plan"><span className="settings-value">{planLabel(entitlement)}</span></Row>
+            <Row label="Monthly allowance"><span className="settings-value">{minutesOf(entitlement.allowanceSeconds)} minutes</span></Row>
+            <Row label="Used this period"><span className="settings-value">{minutesOf(entitlement.consumedSeconds)} minutes</span></Row>
+            <Row label="Remaining"><span className="settings-value">{minutesRemaining(entitlement.remainingSeconds)} minutes</span></Row>
+            <Row label="Maximum session length"><span className="settings-value">{minutesOf(entitlement.maxSessionSeconds)} minutes</span></Row>
+            {/* UTC, to match the server's period boundaries. */}
+            <Row label="Resets"><span className="settings-value">{new Date(entitlement.periodEnd).toLocaleDateString(undefined, { timeZone: "UTC" })}</span></Row>
+            {entitlement.plan === "free" ? (
+              <Row label="Upgrade" hint="Creator gives you more live time. Same product, same canvas.">
+                <CreatorCheckoutButton label="Upgrade to Creator" />
+              </Row>
+            ) : (
+              <Row label="Subscription" hint="Your Creator subscription is managed where you bought it, on Whop.">
+                <span className="settings-value">{entitlement.membershipStatus}</span>
+              </Row>
+            )}
           </>
         )}
       </Section>
 
-      <Section title="Self-hosting">
-        <p className="text-sm leading-6 text-zinc-500">Self-hosting is planned for a future version.</p>
+      <Section title="Recordings and data">
+        <Row label="Where recordings are stored" hint="This browser only. Clearing site data removes them.">
+          <span className="settings-value">
+            {recordings === null ? "Checking…" : `${recordings.length} recording${recordings.length === 1 ? "" : "s"} · ${(storedBytes / 1_048_576).toFixed(1)} MB`}
+          </span>
+        </Row>
+        <Row label="Clear local recordings">
+          <Button tone="secondary" disabled={!recordings?.length} onClick={() => setConfirmClear(true)}>Clear</Button>
+        </Row>
+        <Row label="Export your data" hint="Sessions as JSON, recordings as video.">
+          <Link href="/dashboard/exports" className="ui-button ui-button-secondary">Open exports</Link>
+        </Row>
       </Section>
+
+      <Modal
+        open={confirmClear}
+        title="Clear local recordings?"
+        description={`${recordings?.length ?? 0} recording${recordings?.length === 1 ? "" : "s"} will be deleted from this browser. This cannot be undone.`}
+        onClose={() => setConfirmClear(false)}
+        footer={<><Button tone="secondary" onClick={() => setConfirmClear(false)}>Cancel</Button><Button tone="destructive" onClick={() => void clearRecordings()}>Delete recordings</Button></>}
+      />
+      {toast ? <Toast message={toast} onDismiss={() => setToast(null)} /> : null}
     </div>
   );
 }

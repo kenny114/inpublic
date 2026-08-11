@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { PLAN_DEFINITIONS, remainingAllowance, utcCalendarMonth } from "../lib/plans.ts";
+import { FOUNDING_TIERS, PLAN_DEFINITIONS, foundingAllowanceSeconds, minutesOf, minutesRemaining, remainingAllowance, utcCalendarMonth } from "../lib/plans.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const schema = read("supabase/migrations/202608090001_foundation.sql");
 const spend = read("supabase/migrations/202608090002_spend_controls.sql");
 const whop = read("supabase/migrations/202608090003_whop_events.sql");
 const guard = read("lib/server/provider-guard.ts");
+const beatRoute = read("app/api/beat/route.ts");
 const webhook = read("app/api/webhooks/whop/route.ts");
 const projectRoute = read("app/api/projects/route.ts");
 const projectItemRoute = read("app/api/projects/[id]/route.ts");
@@ -18,9 +19,27 @@ const checks = [];
 const check = (name, value) => { assert.equal(Boolean(value), true, name); checks.push(name); };
 
 assert.deepEqual(PLAN_DEFINITIONS.free, { allowanceSeconds: 1800, maxSessionSeconds: 1200 });
-assert.deepEqual(PLAN_DEFINITIONS.creator, { allowanceSeconds: 12000, maxSessionSeconds: 3600 });
+assert.deepEqual(PLAN_DEFINITIONS.creator, { allowanceSeconds: 7200, maxSessionSeconds: 3600 });
 assert.equal(remainingAllowance("free", 1799, 1), 0);
 assert.equal(remainingAllowance("free", -20, -5), 1800);
+
+// The founding ladder, at every boundary. These numbers are also written into
+// public.founding_allowance_seconds — the two must not drift.
+assert.equal(foundingAllowanceSeconds(null), 7200);
+assert.equal(foundingAllowanceSeconds(0), 7200);
+for (const [position, seconds] of [[1, 14400], [10, 14400], [11, 12600], [25, 12600], [26, 10800], [50, 10800], [51, 9000], [100, 9000], [101, 7200], [5000, 7200]]) {
+  assert.equal(foundingAllowanceSeconds(position), seconds, `founding #${position}`);
+}
+const founding = read("supabase/migrations/202608110001_founding_allowances.sql");
+for (const tier of FOUNDING_TIERS) {
+  assert.equal(founding.includes(`<= ${tier.upTo} then ${tier.allowanceSeconds}`), true, `SQL ladder covers #${tier.upTo}`);
+}
+// Minutes never round up: telling someone they have a minute they cannot use
+// is how a session gets refused right after the dashboard promised it.
+assert.equal(minutesRemaining(536), 8);
+assert.equal(minutesRemaining(-5), 0);
+assert.equal(minutesOf(7200), 120);
+checks.push("founding allowance ladder matches the migration and never over-reports remaining minutes");
 const feb = utcCalendarMonth(new Date("2028-02-29T23:00:00Z"));
 assert.equal(feb.start.toISOString(), "2028-02-01T00:00:00.000Z");
 assert.equal(feb.end.toISOString(), "2028-03-01T00:00:00.000Z");
@@ -38,6 +57,17 @@ check("cost reservations are server-only under RLS", spend.includes("alter table
 check("public auth endpoints use atomic IP and email-hash limits", authRoute.includes("consume_rate_limit") && authRoute.includes("auth:${action}:ip") && authRoute.includes("auth:${action}:email"));
 check("reservations precede provider execution in shared guard", guard.indexOf("reserve_provider_cost") < guard.lastIndexOf("return { userId"));
 check("expired leases are rejected", guard.includes("lease_expires_at") && guard.includes("expired_lease"));
+
+// An unreadable beat response is retried once rather than silently becoming a
+// skip — a malformed answer is a lost thought, not a decision. The retry has
+// to be paid for honestly: reserved for two attempts, and both attempts' token
+// usage summed before reconciliation.
+check("an unreadable beat response is retried", /if \(!result\.ok\)[\s\S]*complete\(/.test(beatRoute));
+check("the retry is bounded to one attempt", (beatRoute.match(/await complete\(/g) ?? []).length === 2);
+check("the retry restates the output contract", beatRoute.includes("BEAT_RETRY_INSTRUCTION"));
+check("both attempts are reserved for", beatRoute.includes("maxOutputTokens: 600"));
+check("usage is accumulated across attempts, not overwritten", beatRoute.includes("addUsage") && !/onUsage: \(value\) => \{ usage = value/.test(beatRoute));
+check("a failure after the retry is still a safe skip", beatRoute.includes("parse failure after retry"));
 check("all budget classes are enforced", ["p_user_daily_limit","p_user_period_limit","p_global_hour_limit","p_global_day_limit","p_global_month_limit","p_artist_session_limit","p_session_call_limit"].every((name) => spend.includes(name)));
 check("failed calls reconcile estimated exposure", guard.includes('status: "failed"') || guard.includes('"failed"'));
 check("webhook signature is verified before event access", webhook.indexOf("webhooks.unwrap") < webhook.indexOf("event.api_version"));
