@@ -23,6 +23,8 @@ export interface ClientEntitlement {
   mayStart: boolean;
   blockedReason: string | null;
   foundingNumber: number | null;
+  isAdmin: boolean;
+  unlimitedMinutes: boolean;
 }
 
 export function useEntitlement() {
@@ -47,6 +49,7 @@ export function useEntitlement() {
 
 /** "Creator · Founding #8", or "Free". */
 export function planLabel(entitlement: ClientEntitlement) {
+  if (entitlement.isAdmin) return "Admin";
   if (entitlement.plan !== "creator") return "Free";
   return entitlement.foundingNumber ? `Creator · Founding #${entitlement.foundingNumber}` : "Creator";
 }

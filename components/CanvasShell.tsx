@@ -10,7 +10,7 @@ import { useRouter } from "next/navigation";
 type ExportKind = "png" | "svg" | "excalidraw" | "json";
 const showDeveloperExports = process.env.NODE_ENV === "development";
 
-export function CanvasTopBar({ title, saveState, remainingSeconds, onTitleChange, onExport, onDownloadLog }: { title: string; saveState: SaveState; remainingSeconds: number | null; onTitleChange: (title: string) => void; onExport: (kind: ExportKind) => void; onDownloadLog: () => void }) {
+export function CanvasTopBar({ title, saveState, remainingSeconds, unlimitedMinutes = false, onTitleChange, onExport, onDownloadLog }: { title: string; saveState: SaveState; remainingSeconds: number | null; unlimitedMinutes?: boolean; onTitleChange: (title: string) => void; onExport: (kind: ExportKind) => void; onDownloadLog: () => void }) {
   const router = useRouter();
   const { ready, user } = useAuth();
   const initial = ready && user ? (user.email ?? "").trim().charAt(0).toUpperCase() || "?" : "?";
@@ -22,7 +22,7 @@ export function CanvasTopBar({ title, saveState, remainingSeconds, onTitleChange
         <input value={title} onChange={(event) => onTitleChange(event.target.value)} onBlur={(event) => { if (!event.target.value.trim()) onTitleChange("Untitled visual session"); }} maxLength={120} aria-label="Session title" className="canvas-title-input" />
       </div>
       <div className="canvas-topbar-actions">
-        {remainingSeconds !== null ? <span className="ui-saved-status" aria-label="Visual speech time remaining">{Math.floor(remainingSeconds / 60)}:{String(remainingSeconds % 60).padStart(2, "0")} left</span> : null}
+        {unlimitedMinutes ? <span className="ui-saved-status" aria-label="Unlimited visual speech time">Unlimited</span> : remainingSeconds !== null ? <span className="ui-saved-status" aria-label="Visual speech time remaining">{Math.floor(remainingSeconds / 60)}:{String(remainingSeconds % 60).padStart(2, "0")} left</span> : null}
         <SavedStatus state={saveState} />
         <DropdownMenu label="Export session" trigger={<span className="canvas-export-trigger"><Download size={15} />Export<ChevronDown size={13} /></span>}>
           <button type="button" role="menuitem" onClick={() => onExport("png")}><ImageIcon size={15} />PNG image</button>
