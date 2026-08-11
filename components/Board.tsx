@@ -102,6 +102,7 @@ import {
   type TextReadabilitySample,
 } from "@/lib/composition";
 import { detectGesture, extractConcepts } from "@/lib/sketch";
+import { features } from "@/lib/features";
 import {
   activeStoryScene,
   applyStoryActions,
@@ -203,8 +204,8 @@ const ENGINE = (process.env.NEXT_PUBLIC_ENGINE ?? "deepgram") as
   | "deepgram"
   | "gemini";
 
-/** Off by default. Standard/Story mode and the live pipeline are unaffected either way. */
-const AUDIO_REPLAY_ENABLED = process.env.NEXT_PUBLIC_ENABLE_AUDIO_REPLAY === "true";
+/** Parked — see lib/features.ts. Standard mode and the live pipeline are unaffected either way. */
+const AUDIO_REPLAY_ENABLED: boolean = features.audioReplay;
 
 /**
  * The Scribe is now a second pass, not the thing you wait for — the live line
@@ -3970,7 +3971,17 @@ export default function Board({
       compositionRef.current = session.composition ?? initialCompositionState();
       // An explicit `?mode=` from the dashboard outranks the saved mode. The
       // restore itself is unchanged — only which mode the session resumes in.
-      modeRef.current = initialMode ?? session.mode ?? "standard";
+      const requestedMode = initialMode ?? session.mode ?? "standard";
+      // Story Mode is parked (lib/features.ts): a saved session opened
+      // EXPLICITLY by id (initialSessionId set — the user clicked a
+      // specific old session) still resumes in whatever mode it was
+      // actually saved in, so existing story content stays viewable. The
+      // implicit "continue where I left off" restore (no explicit session
+      // id — just the last local autosave) does not get to silently land
+      // the user back in story mode; it falls back to standard instead.
+      modeRef.current = requestedMode === "story" && !features.storyMode && !initialSessionId
+        ? "standard"
+        : requestedMode;
       setMode(modeRef.current);
       logRef.current = session.log ?? [];
       pageRef.current = session.page ?? 0;
@@ -4013,7 +4024,7 @@ export default function Board({
       framePage(true);
       log({ type: "note", text: `restored ${elementsRef.current.length} elements` });
     },
-    [commit, framePage, initialMode, log],
+    [commit, framePage, initialMode, initialSessionId, log],
   );
 
   useEffect(() => {

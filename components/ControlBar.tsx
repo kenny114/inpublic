@@ -5,6 +5,7 @@ import { useState } from "react";
 import { RecordingStatus } from "@/components/ProductUI";
 import type { MicStatus } from "@/hooks/useDeepgram";
 import type { InPublicMode } from "@/lib/story";
+import { features } from "@/lib/features";
 
 export function ControlBar({ status, busy, onToggleMic, onFinish, mode, onModeChange }: { status: MicStatus; busy: boolean; onToggleMic: () => void; onFinish: () => void; mode: InPublicMode; onModeChange: (mode: InPublicMode) => void }) {
   const [started, setStarted] = useState(false);
@@ -15,10 +16,20 @@ export function ControlBar({ status, busy, onToggleMic, onFinish, mode, onModeCh
     <div className="canvas-speaking-control" onPointerDown={(event) => event.stopPropagation()} aria-label="Speaking controls">
       <RecordingStatus active={live} busy={busy} connecting={connecting} error={status === "error"} />
       <span className="canvas-control-divider" />
-      <div className="canvas-mode-control" role="group" aria-label="Canvas mode">
-        {(["standard", "story"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => onModeChange(value)}>{value === "standard" ? "Standard" : "Story"}</button>)}
-      </div>
-      <span className="canvas-control-divider" />
+      {/* Story Mode is parked (lib/features.ts) — with only one mode
+          available there is nothing to toggle, so the control (and the way
+          it exposed Story Mode as a switchable option) is hidden rather
+          than shown disabled. A session already open in "story" (an old
+          saved session) still renders correctly; this only removes the way
+          to switch INTO it. */}
+      {features.storyMode && (
+        <>
+          <div className="canvas-mode-control" role="group" aria-label="Canvas mode">
+            {(["standard", "story"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => onModeChange(value)}>{value === "standard" ? "Standard" : "Story"}</button>)}
+          </div>
+          <span className="canvas-control-divider" />
+        </>
+      )}
       {!live ? (
         <>
           <button type="button" className="canvas-speak-primary" onClick={toggle} disabled={connecting}>{started ? <Play size={15} /> : <Mic size={15} />}{started ? "Resume" : "Start speaking"}</button>
