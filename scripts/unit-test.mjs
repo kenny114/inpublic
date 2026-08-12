@@ -31,6 +31,7 @@ import { parseDecision } from "../lib/beat.ts";
 import { composeAttentionBudget, withinInitialCompositionWindow } from "../lib/attention.ts";
 import { requestDelayMs, retryAfterMs } from "../lib/requestScheduling.ts";
 import { startListeningSession } from "../lib/listeningSession.ts";
+import { audioReservationSeconds } from "../lib/providerCost.ts";
 import {
   destructiveCorrections,
   firstTwoMinutePages,
@@ -91,6 +92,19 @@ section("listening session lifecycle");
   check("a rejected usage session is reported", started === false);
   check("the provider is not started without a usage lease", engineCalled === false);
 }
+
+check(
+  "an unlimited entitlement reserves only the requested provider window",
+  audioReservationSeconds(45, 2_147_483_617, 30, 2_147_483_647, 0) === 45,
+);
+check(
+  "an audio reservation cannot exceed the remaining session allowance",
+  audioReservationSeconds(45, 12, 0, 3600, 3590) === 10,
+);
+check(
+  "a non-audio request makes no audio reservation",
+  audioReservationSeconds(0, 3600, 30, 3600, 0) === 0,
+);
 
 // ---------------------------------------------------------- request pacing
 

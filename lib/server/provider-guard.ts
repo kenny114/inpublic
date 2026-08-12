@@ -6,6 +6,7 @@ import { getAuthenticatedUser } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveEntitlement } from "./entitlement";
 import { routeLimits, spendLimits } from "./limits";
+import { audioReservationSeconds } from "@/lib/providerCost";
 
 export type CostFeature = "deepgram" | "gemini" | "scribe" | "beat" | "artist" | "story" | "math" | "audio";
 export interface GuardSpec {
@@ -101,9 +102,13 @@ export async function guardProviderRequest(request: Request, spec: GuardSpec): P
   const { data: rate } = await admin.from("provider_rate_cards").select("id,unit,input_rate_usd,output_rate_usd,audio_rate_usd,cache_creation_rate_usd,cache_read_rate_usd").eq("provider", spec.provider).eq("model", spec.model).lte("effective_start", now).or(`effective_end.is.null,effective_end.gt.${now}`).order("effective_start", { ascending: false }).limit(1).maybeSingle();
   if (!rate) return jsonError(503, "rate_card_missing", "AI processing is temporarily unavailable.");
   const inputTokens = Math.ceil((spec.requestBytes ?? 0) / 3);
-  const effectiveAudioSeconds = spec.audioSeconds
-    ? Math.min(entitlement.remainingSeconds + Number(session.reserved_seconds), Math.max(1, entitlement.maxSessionSeconds - Number(session.consumed_seconds)))
-    : 0;
+  const effectiveAudioSeconds = audioReservationSeconds(
+    spec.audioSeconds ?? 0,
+    entitlement.remainingSeconds,
+    Number(session.reserved_seconds),
+    entitlement.maxSessionSeconds,
+    Number(session.consumed_seconds),
+  );
   const raw = effectiveAudioSeconds
     ? effectiveAudioSeconds * Number(rate.audio_rate_usd)
     : inputTokens * Number(rate.input_rate_usd) + (spec.maxOutputTokens ?? 0) * Number(rate.output_rate_usd);
@@ -125,7 +130,12 @@ export async function guardProviderRequest(request: Request, spec: GuardSpec): P
     p_global_month_limit: spendLimits.globalMonthlyUsd, p_artist_session_limit: spendLimits.artistSessionUsd,
     p_session_call_limit: spendLimits.providerCallsPerSession,
   });
-  if (error || !reservation) { await recordBlock(user.id, sessionId, spec.feature, error?.message ?? "reservation_failed"); return mapReservationError(error?.message ?? "reservation_failed"); }
+  if (error || !reservation) {
+    const reason = error?.message ?? "reservation_failed";
+    console.warn("[provider-guard] reservation rejected", { feature: spec.feature, code: error?.code ?? null, reason });
+    await recordBlock(user.id, sessionId, spec.feature, reason);
+    return mapReservationError(reason);
+  }
   const row = Array.isArray(reservation) ? reservation[0] : reservation;
   return { userId: user.id, sessionId, projectId: session.project_id, reservationId: row.id, reservedCostUsd, estimatedCostUsd, rates: { input: Number(rate.input_rate_usd), output: Number(rate.output_rate_usd), audio: Number(rate.audio_rate_usd), cacheCreation: Number(rate.cache_creation_rate_usd), cacheRead: Number(rate.cache_read_rate_usd) }, requestBytes: spec.requestBytes ?? 0, startedAt: Date.now() };
 }
