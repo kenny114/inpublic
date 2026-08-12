@@ -299,7 +299,8 @@ export function useGeminiLive({
   };
 
   const start = useCallback(async () => {
-    if (!enabled || startedRef.current) return;
+    if (!enabled) return false;
+    if (startedRef.current) return true;
     startedRef.current = true;
     setStatus("connecting");
 
@@ -351,11 +352,13 @@ export function useGeminiLive({
       const sink = ctx.createGain();
       sink.gain.value = 0;
       node.connect(sink).connect(ctx.destination);
+      return true;
     } catch (err) {
       console.warn("[gemini-live] start failed", err);
       startedRef.current = false;
       teardownAudio();
       setStatus("error");
+      return false;
     }
   }, [connect, enabled, teardownAudio]);
 

@@ -12,6 +12,7 @@ import { AudioReplayPanel } from "@/components/AudioReplayPanel";
 import { useDeepgram, type DeepgramResultTiming } from "@/hooks/useDeepgram";
 import { useGeminiLive } from "@/hooks/useGeminiLive";
 import { useUsageSession } from "@/hooks/useUsageSession";
+import { startListeningSession } from "@/lib/listeningSession";
 import { providerRequestHeaders } from "@/lib/usage-client";
 import { requestDelayMs, retryAfterMs } from "@/lib/requestScheduling";
 import { buildBeat, truncateLabel, type SceneElement } from "@/lib/scene";
@@ -4030,7 +4031,7 @@ export default function Board({
       return;
     }
     await autosaveRef.current?.flushNow();
-    if (await usage.start()) await startEngine();
+    await startListeningSession(usage.start, startEngine, usage.stop);
   }, [startEngine, status, stopEngine, usage]);
 
   const wasListeningRef = useRef(false);

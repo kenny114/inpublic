@@ -30,6 +30,7 @@ import { liveLatencySample } from "../lib/telemetry.ts";
 import { parseDecision } from "../lib/beat.ts";
 import { composeAttentionBudget, withinInitialCompositionWindow } from "../lib/attention.ts";
 import { requestDelayMs, retryAfterMs } from "../lib/requestScheduling.ts";
+import { startListeningSession } from "../lib/listeningSession.ts";
 import {
   destructiveCorrections,
   firstTwoMinutePages,
@@ -52,6 +53,43 @@ function check(name, condition, detail = "") {
 
 function section(title) {
   console.log(`\n── ${title}`);
+}
+
+// ------------------------------------------------ listening session lifecycle
+
+section("listening session lifecycle");
+
+{
+  const stopped = [];
+  const started = await startListeningSession(
+    async () => true,
+    async () => false,
+    async (reason) => { stopped.push(reason); },
+  );
+  check("a failed provider start is reported", started === false);
+  check("a failed provider start releases its usage lease", stopped[0] === "provider_aborted");
+}
+
+{
+  const stopped = [];
+  const started = await startListeningSession(
+    async () => true,
+    async () => true,
+    async (reason) => { stopped.push(reason); },
+  );
+  check("a successful provider start is reported", started === true);
+  check("a live provider keeps its usage lease", stopped.length === 0);
+}
+
+{
+  let engineCalled = false;
+  const started = await startListeningSession(
+    async () => false,
+    async () => { engineCalled = true; return true; },
+    async () => undefined,
+  );
+  check("a rejected usage session is reported", started === false);
+  check("the provider is not started without a usage lease", engineCalled === false);
 }
 
 // ---------------------------------------------------------- request pacing

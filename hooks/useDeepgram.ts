@@ -529,7 +529,8 @@ export function useDeepgram({
   };
 
   const start = useCallback(async () => {
-    if (!enabled || startedRef.current) return;
+    if (!enabled) return false;
+    if (startedRef.current) return true;
     startedRef.current = true;
     attemptsRef.current = 0;
     setStatus("connecting");
@@ -543,8 +544,9 @@ export function useDeepgram({
       });
       await prepareCapture(streamRef.current);
       await openSocket();
+      return true;
     } catch (err) {
-      if ((err as Error)?.name === "AbortError") return;
+      if ((err as Error)?.name === "AbortError") return false;
       // console.warn, not console.error: Next's dev overlay intercepts errors
       // and throws a full-screen panel over the canvas. A mic that won't start
       // should be a red dot on the control bar, not a takeover mid-recording.
@@ -566,6 +568,7 @@ export function useDeepgram({
           ? "Microphone permission denied. Allow access and press Mic again."
           : `Could not start listening: ${String((err as Error)?.message ?? err)}`,
       );
+      return false;
     }
   }, [enabled, openSocket, prepareCapture]);
 
