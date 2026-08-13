@@ -65,8 +65,16 @@ function LoginForm() {
     clear();
     try {
       if (mode === "reset") {
-        await requestPasswordReset(email.trim());
-        // Deliberately identical whether or not the address exists.
+        const result = await requestPasswordReset(email.trim());
+        if (result.reason === "network") {
+          // The request never went out at all — telling them a link "is on
+          // its way" here would be a lie, not just enumeration-safe cover.
+          setMessage("Couldn't reach the server. Check your connection and try again.");
+          return;
+        }
+        // Otherwise deliberately identical whether or not the address
+        // exists, including on an "unknown" server-side failure — that
+        // cover is the point.
         setMessage("If an account exists for that email, a reset link is on its way.");
         return;
       }
@@ -79,7 +87,15 @@ function LoginForm() {
           setMessage("Your password is right, but this address hasn't been confirmed yet. Check your inbox for the confirmation link, or send a new one.");
           return;
         }
-        setMessage(result.reason === "rate-limited" ? "Too many attempts. Please wait a few minutes and try again." : GENERIC_AUTH_ERROR);
+        setMessage(
+          result.reason === "rate-limited"
+            ? "Too many attempts. Please wait a few minutes and try again."
+            : result.reason === "network"
+              // The request never reached the server — says nothing about
+              // whether the email/password are right, so don't imply it does.
+              ? "Couldn't reach the server. Check your connection and try again."
+              : GENERIC_AUTH_ERROR,
+        );
         return;
       }
       if (mode === "sign-up" && !result.data.session) {

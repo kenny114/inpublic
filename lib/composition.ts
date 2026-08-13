@@ -113,6 +113,14 @@ export interface CameraProposalInput {
   followMovingSubject?: boolean;
   /** Override the per-move zoom limit for an intentional overview reveal. */
   maximumZoomChange?: number;
+  /**
+   * A deliberate user pan/zoom happened recently. Suppresses routine
+   * (non-urgent) recentering so the camera doesn't immediately fight a
+   * manual move, without blocking a correction the frame actually needs —
+   * `urgent` (content that doesn't fit, a readability/webcam violation, or
+   * explicit navigation) is never suppressed by this.
+   */
+  manualPriorityActive?: boolean;
 }
 
 export interface CameraProposal {
@@ -136,9 +144,43 @@ export const CAMERA_RULES = {
   maximumZoom: 1.08,
   /** Natural frequency of the critically damped follow camera. */
   springFrequency: 10,
+  /**
+   * How long a `proposedTarget` is honoured as "a move is genuinely in
+   * flight" before it's treated as stale and stops blocking new proposals.
+   *
+   * Board.tsx's framePage skips calling proposeCamera at all while a move
+   * looks pending (so a non-urgent reframe never fights an in-flight one),
+   * but that check happens before proposeCamera runs, so nothing re-derives
+   * `proposedTarget` in the meantime — only the spring's own completion
+   * callback clears it. A spring that never reports settled (numerical
+   * stall, a target that keeps moving just enough to reset velocity without
+   * ever crossing the settle threshold, or a callback that throws before
+   * clearing state) would otherwise leave every future non-live-narration
+   * reframe silently skipped forever — the camera "stuck", visually
+   * indistinguishable from a real bug in the spring itself. A few seconds is
+   * generously above the spring's own settle time at the configured
+   * frequency and cooldown, so this never cuts short a real in-flight move.
+   */
+  stuckMoveMs: 2500,
 } as const;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+/**
+ * One critically damped axis, advanced by `seconds`. Frame-rate independent
+ * (closed form, not Euler integration) and safe to retarget mid-flight
+ * without resetting velocity — shared by every spring in this module so a
+ * camera move and a concept move settle with the same feel.
+ */
+function springAxis(value: number, destination: number, speed: number, seconds: number, frequency: number) {
+  const error = value - destination;
+  const coefficient = speed + frequency * error;
+  const decay = Math.exp(-frequency * seconds);
+  return {
+    value: destination + (error + coefficient * seconds) * decay,
+    speed: (speed - frequency * coefficient * seconds) * decay,
+  };
+}
 
 /**
  * Advance a critically damped camera spring without resetting its velocity.
@@ -150,24 +192,53 @@ export function stepCameraSpring(
   target: CameraView,
   velocity: CameraVelocity,
   deltaMs: number,
-  frequency = CAMERA_RULES.springFrequency,
+  frequency: number = CAMERA_RULES.springFrequency,
 ): CameraSpringStep {
   const seconds = Math.max(0, Math.min(deltaMs, 64)) / 1000;
-  const step = (value: number, destination: number, speed: number) => {
-    const error = value - destination;
-    const coefficient = speed + frequency * error;
-    const decay = Math.exp(-frequency * seconds);
-    return {
-      value: destination + (error + coefficient * seconds) * decay,
-      speed: (speed - frequency * coefficient * seconds) * decay,
-    };
-  };
-  const x = step(camera.scrollX, target.scrollX, velocity.scrollX);
-  const y = step(camera.scrollY, target.scrollY, velocity.scrollY);
-  const zoom = step(camera.zoom, target.zoom, velocity.zoom);
+  const x = springAxis(camera.scrollX, target.scrollX, velocity.scrollX, seconds, frequency);
+  const y = springAxis(camera.scrollY, target.scrollY, velocity.scrollY, seconds, frequency);
+  const zoom = springAxis(camera.zoom, target.zoom, velocity.zoom, seconds, frequency);
   return {
     camera: { scrollX: x.value, scrollY: y.value, zoom: zoom.value },
     velocity: { scrollX: x.speed, scrollY: y.speed, zoom: zoom.speed },
+  };
+}
+
+export interface Point2D {
+  x: number;
+  y: number;
+}
+
+export interface Point2DVelocity {
+  x: number;
+  y: number;
+}
+
+export interface PositionSpringStep {
+  position: Point2D;
+  velocity: Point2DVelocity;
+}
+
+/**
+ * The same critically damped spring as `stepCameraSpring`, generalized to a
+ * plain 2D point. Used to move existing concept nodes into a new layout
+ * (see components/Board.tsx's `animateConceptsToComparison`) with the same
+ * architectural pattern `animateCamera` already established, rather than a
+ * second unrelated animation system.
+ */
+export function stepPositionSpring(
+  position: Point2D,
+  target: Point2D,
+  velocity: Point2DVelocity,
+  deltaMs: number,
+  frequency: number = CAMERA_RULES.springFrequency,
+): PositionSpringStep {
+  const seconds = Math.max(0, Math.min(deltaMs, 64)) / 1000;
+  const x = springAxis(position.x, target.x, velocity.x, seconds, frequency);
+  const y = springAxis(position.y, target.y, velocity.y, seconds, frequency);
+  return {
+    position: { x: x.value, y: y.value },
+    velocity: { x: x.speed, y: y.speed },
   };
 }
 
@@ -396,7 +467,7 @@ export function proposeCamera(input: CameraProposalInput): CameraProposal {
   // when urgent, so a small-but-necessary correction (e.g. a few percent of
   // zoom) was silently dropped every frame and contentFits stayed false
   // indefinitely.
-  const move = urgent || (meaningful && !coolingDown);
+  const move = urgent || (meaningful && !coolingDown && !input.manualPriorityActive);
   const finalTarget = move ? target : input.currentCamera;
   const finalScreen = worldToScreen(bounds, finalTarget);
   const violations = readabilityViolations(input.text ?? [], finalTarget.zoom);
@@ -413,7 +484,9 @@ export function proposeCamera(input: CameraProposalInput): CameraProposal {
       ? input.reason
       : coolingDown
         ? "camera movement held by cooldown"
-        : "proposed movement was below the meaningful-displacement threshold",
+        : input.manualPriorityActive
+          ? "recent manual pan/zoom holds routine recentering"
+          : "proposed movement was below the meaningful-displacement threshold",
     state: {
       ...input.state,
       focalSubject: input.focalSubject || input.state.focalSubject,

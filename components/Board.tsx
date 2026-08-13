@@ -1,20 +1,42 @@
 "use client";
 
 import { Excalidraw } from "@excalidraw/excalidraw";
+// Was a global import in app/layout.tsx — ~145KB paid by every page (landing,
+// pricing, login, /try's pre-click state) even though only this component
+// renders <Excalidraw>. Board is already loaded via next/dynamic (ssr:false),
+// so co-locating the CSS here means it loads exactly when this chunk does,
+// not before.
+import "@excalidraw/excalidraw/index.css";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { track } from "@vercel/analytics";
 import { CanvasTopBar } from "@/components/CanvasShell";
 import { ControlBar, ErrorBanner } from "@/components/ControlBar";
 import type { SaveState } from "@/components/ProductUI";
 import { TranscriptStrip } from "@/components/TranscriptStrip";
+import { LatencyOverlay } from "@/components/LatencyOverlay";
 import { RecordingPanel } from "@/components/RecordingPanel";
 import { AudioReplayPanel } from "@/components/AudioReplayPanel";
 import { useDeepgram, type DeepgramResultTiming } from "@/hooks/useDeepgram";
 import { useGeminiLive } from "@/hooks/useGeminiLive";
 import { useUsageSession } from "@/hooks/useUsageSession";
 import { startListeningSession } from "@/lib/listeningSession";
+import { latency, latencyNow, formatLatencySummary } from "@/lib/latency";
+import { recordLatencySummary, storedLatencySamples } from "@/lib/latencySink";
 import { providerRequestHeaders } from "@/lib/usage-client";
 import { requestDelayMs, retryAfterMs } from "@/lib/requestScheduling";
+import { normalizeScribeText, shouldWakeScribe } from "@/lib/scribeScheduler";
+import { localBeatDecision, scoreBeatAgreement } from "@/lib/beatPrefilter";
+import {
+  applySpeculativeOutcome,
+  confirmedByFinal,
+  emptySpeculativeState,
+  recognizeSpeculative,
+  supersedes,
+  type SpeculativeEvent,
+  type SpeculativeOutcome,
+  type SpeculativeState,
+} from "@/lib/speculative";
 import { buildBeat, truncateLabel, type SceneElement } from "@/lib/scene";
 import { downloadLog } from "@/lib/sessionLog";
 import { parseActions, type CanvasAction } from "@/lib/actions";
@@ -83,14 +105,18 @@ import {
 import {
   EMPTY_THOUGHT,
   STRUCTURAL_HOLD_MS,
+  earlyVoiceCommand,
   flushStructuralThought,
   localVoiceCommand,
+  type LocalVoiceCommand,
   pushStructuralSegment,
   retirePending,
   type StructuralThoughtState,
 } from "@/lib/liveSpeech";
-import { liveLatencySample, type AudioTiming } from "@/lib/telemetry";
+import { liveLatencySample, chunkToInkSample, MAX_VALID_LIVE_LAG_MS, type AudioTiming } from "@/lib/telemetry";
+import { opacityPulse, runPulse } from "@/lib/pulse";
 import {
+  CAMERA_RULES,
   READABILITY_CONTRACT,
   effectiveTextSize,
   initialCompositionState,
@@ -98,14 +124,26 @@ import {
   recordingViewport,
   rectUnion,
   stepCameraSpring,
+  stepPositionSpring,
   type CameraView,
   type CameraVelocity,
   type CompositionRect,
   type CompositionState,
+  type Point2D,
   type ReadabilityRole,
   type TextReadabilitySample,
 } from "@/lib/composition";
 import { detectGesture, extractConcepts } from "@/lib/sketch";
+import { comparisonPairKey, detectComparison } from "@/lib/director";
+import { computeComparisonLayout, type ComparisonBox } from "@/lib/choreographerComparison";
+import { computeProcessLayout, type ProcessBox } from "@/lib/choreographerProcess";
+import {
+  advanceDirector,
+  createDirectorState,
+  markProcessCommitted,
+  unmarkProcessCommitted,
+  type DirectorState,
+} from "@/lib/directorState";
 import { features } from "@/lib/features";
 import {
   activeStoryScene,
@@ -172,8 +210,22 @@ const STAGGER_MS = 180;
 const POLISH_STAGGER_MS = 70;
 const FADE_MS = 250;
 const FADE_STEPS = 5;
-/** Stay safely below the server's rolling limit of 12 Scribe calls/minute. */
-const SCRIBE_INTERVAL_MS = 5250;
+/**
+ * Scribe cooldown.
+ *
+ * Was 700ms at launch, then 5250ms — chosen purely to stay under a server
+ * limit of 12 calls/minute, and paid for entirely in responsiveness: up to
+ * five seconds of silence from the board after a sentence landed.
+ *
+ * 1200ms is the compromise, and it is only safe because the scheduler is no
+ * longer a bare stopwatch. lib/scribeScheduler.ts refuses wake-ups that carry
+ * no new drawable content — repeated words, punctuation churn, concepts
+ * already on the page — so the *achievable* rate of 50/minute is not the
+ * *actual* rate. The server limit moves to 30/minute to match, which still
+ * caps a runaway client at well under half of what a naive 1200ms loop could
+ * demand.
+ */
+const SCRIBE_INTERVAL_MS = 1200;
 const SCRIBE_RETRY_FALLBACK_MS = 60_000;
 const SCRIBE_FAILURE_MESSAGE = "Scribe is failing — still writing, marks are local only.";
 /**
@@ -184,6 +236,27 @@ const SCRIBE_FAILURE_MESSAGE = "Scribe is failing — still writing, marks are l
 const LIVE_SETTLE_WAIT_MS = 1500;
 /** Hold close on the spoken line, then reveal how it joined the full page. */
 const LIVE_CAMERA_OVERVIEW_MS = 1800;
+/**
+ * Ceiling on how long the live-narration hold can stay engaged, measured
+ * from when the hold was first engaged (not re-armed by later interims).
+ * Continuous speech re-arms the hold on every interim, which is correct
+ * while the speaker's current line is what the camera should show — but
+ * without an independent ceiling, a long uninterrupted monologue could keep
+ * the hold up indefinitely and strand any diagram that landed during it.
+ * Long enough to cover an ordinary sustained thought, short enough that the
+ * board periodically reveals what has actually landed on it.
+ */
+const MAX_LIVE_CAMERA_HOLD_MS = 6000;
+/**
+ * How long a deliberate user pan/zoom keeps the camera from following up
+ * with a routine (non-urgent) reframe. Mirrors the touch-lock pattern
+ * already used to protect drawing from a moving cursor: the user gets
+ * priority briefly, then the system resumes following genuinely new
+ * content. Content that doesn't fit the safe frame at all still moves the
+ * camera regardless of this window (see `urgent` in proposeCamera) — this
+ * only holds back cosmetic recentering.
+ */
+const MANUAL_CAMERA_PRIORITY_MS = 4000;
 /** Keep each sheet readable. Reaching this limit turns the page; it must never
  * stop the live hand. */
 const MAX_MARKS_PER_PAGE = 22;
@@ -193,9 +266,59 @@ const MAX_MARKS_PER_PAGE = 22;
  * between them rather than in the window, or the top of every page sits under
  * the toolbar.
  */
+/**
+ * How a guess looks.
+ *
+ * Faded, and nothing else — no dashes, no tint, no animation. A speculative
+ * mark has to read as "forming" at a glance while the speaker is still
+ * talking, and every more assertive treatment tried on paper reads as the
+ * interface glitching instead.
+ */
+const SPECULATIVE_OPACITY = 40;
+/**
+ * How many unconfirmed guesses may be on screen at once.
+ *
+ * Each one is settled by the next final, so this bounds a burst rather than a
+ * session. Three keeps a wrong guess from ever looking like a mess while
+ * leaving room for the common case of a concept, a trend and a count landing
+ * inside one sentence.
+ */
+const MAX_OUTSTANDING_SPECULATIVE = 3;
 const DIM_OPACITY = 45;
 const CLEAR_OPACITY = 20;
 const TRANSCRIPT_WINDOW_MS = 90_000;
+
+/**
+ * Director/Choreographer v0 (comparison-only) — see lib/director.ts and
+ * lib/choreographerComparison.ts. Kept in one place because they only ever
+ * apply together: one concept's rigid move from its original position to its
+ * comparison-layout target.
+ */
+interface ComparisonMove {
+  conceptId: string;
+  /** The primary node's position before the move — what the layout target was computed relative to. */
+  anchorFrom: Point2D;
+  anchorTo: Point2D;
+  /** Every element belonging to this concept, and where each started, so the group moves rigidly. */
+  elementOrigins: Map<string, Point2D>;
+}
+/**
+ * A relationship arrow re-routed to match the concepts' new positions.
+ *
+ * Patches the EXISTING arrow/label elements in place (same ids, same
+ * `startBinding`/`endBinding`) rather than rebuilding them — routing is
+ * recomputed against the target rects up front, but nothing is added or
+ * removed, so this is exactly as undo-safe as a plain position patch and
+ * never has to touch `boundElements`.
+ */
+interface ComparisonReroute {
+  relationshipId: string;
+  arrowElementId: string;
+  arrowFields: Partial<SceneElement>;
+  extraPatches: { id: string; fields: Partial<SceneElement> }[];
+}
+/** How long a comparison move takes to settle — subtle, not flashy (Part 7 of the brief). */
+const COMPARISON_SPRING_FREQUENCY = 9;
 
 /**
  * Which path the voice takes to the page.
@@ -219,6 +342,10 @@ const AUDIO_REPLAY_ENABLED: boolean = features.audioReplay;
  * NEXT_PUBLIC_SCRIBE=off to see the raw writing with nothing drawn over it.
  */
 const SCRIBE_ENABLED = process.env.NEXT_PUBLIC_SCRIBE !== "off";
+
+const isDev = process.env.NODE_ENV === "development";
+/** Persists the dev latency panel's opt-in across reloads. Dev-only; see its useState below. */
+const LATENCY_OVERLAY_KEY = "inpublic:latency-overlay";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -263,11 +390,22 @@ export default function Board({
   initialMode,
   initialSessionId,
   startFresh,
+  guest,
 }: {
   initialMode?: InPublicMode;
   initialSessionId?: string;
   /** Skip the restore entirely — the dashboard asked for a blank canvas. */
   startFresh?: boolean;
+  /**
+   * Anonymous /try visitor: no auth, no usage_sessions row, no /dashboard to
+   * return to. Everything else about the engine (Deepgram/Gemini pipeline,
+   * Excalidraw, camera, IndexedDB persistence, even the cloud-save attempt —
+   * lib/persist.ts already treats a 401 as "offline" rather than an error) is
+   * identical to the authenticated path; this flag only changes usage-session
+   * accounting (useUsageSession's `anonymous` mode) and where "Finish" sends
+   * the visitor afterward.
+   */
+  guest?: boolean;
 } = {}) {
   const router = useRouter();
   const [recordingTarget, setRecordingTarget] = useState<HTMLDivElement | null>(null);
@@ -279,6 +417,24 @@ export default function Board({
   // Settings offers "show transcript by default"; this is where it lands.
   const [showTranscript, setShowTranscript] = useState(() => readPreferences().showTranscriptByDefault);
   const [showAudioReplay, setShowAudioReplay] = useState(false);
+  /**
+   * The dev latency panel is opt-in rather than always-on.
+   *
+   * It was never shown to real users (the NODE_ENV gate at its render site
+   * still stands), but it sat over the canvas for every development session
+   * whether or not anyone was measuring anything — including while working on
+   * unrelated UI. Toggle it from the console with `inpublic.latencyOverlay()`
+   * / `inpublic.latencyOverlay(false)`; the choice persists across reloads,
+   * which is the point when an investigation spans several of them.
+   *
+   * Safe to read localStorage during the initial render: Board is only ever
+   * mounted through next/dynamic with ssr:false, so there is no server render
+   * for this to disagree with.
+   */
+  const [showLatencyOverlay, setShowLatencyOverlay] = useState(() => {
+    if (!isDev || typeof window === "undefined") return false;
+    try { return window.localStorage.getItem(LATENCY_OVERLAY_KEY) === "1"; } catch { return false; }
+  });
   const [busy, setBusy] = useState(false);
   const [recordingFocus, setRecordingFocus] = useState(false);
   const [sessionTitle, setSessionTitle] = useState("Untitled visual session");
@@ -324,12 +480,24 @@ export default function Board({
   // the first beat a full touch-lock delay.
   const suppressChangeUntilRef = useRef(Date.now() + 2000);
   const lastUserInputRef = useRef(0);
+  // Anonymous-funnel timing: set when a guest's listening session actually
+  // starts (see toggle()'s usage.start() call below), read here so the very
+  // first non-empty commit can report how long that took. Never touched for
+  // an authenticated session.
+  const visualSessionStartedAtRef = useRef<number | null>(null);
+  const firstVisualFiredRef = useRef(false);
 
   const commit = useCallback(() => {
     suppressChangeUntilRef.current = Date.now() + 150;
     apiRef.current?.updateScene({ elements: elementsRef.current as never });
     autosaveRef.current?.schedule();
-  }, []);
+    if (guest && !firstVisualFiredRef.current && visualSessionStartedAtRef.current && elementsRef.current.length > 0) {
+      firstVisualFiredRef.current = true;
+      const ms = Date.now() - visualSessionStartedAtRef.current;
+      track("first_visual_rendered", { ms });
+      track("time_to_first_visual", { ms });
+    }
+  }, [guest]);
 
   // ---- the semantic board --------------------------------------------------
   /**
@@ -355,11 +523,62 @@ export default function Board({
     rafId: number;
   } | null>(null);
   const liveCameraHoldRef = useRef(false);
+  /** When the hold was last (re)asserted — see the staleness check in framePage. */
+  const liveCameraHoldSetAtRef = useRef(0);
+  /** When the hold was first engaged this streak — see MAX_LIVE_CAMERA_HOLD_MS. */
+  const liveCameraHoldStartedAtRef = useRef(0);
   const liveCameraOverviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * The single owner of "a reframe is owed but currently can't run."
+   *
+   * framePage's hold/in-flight guards used to `return` and forget — the
+   * request that triggered the call (a diagram landing, an Artist batch
+   * committing) simply vanished if the guard was up at that instant. That is
+   * the camera's actual failure mode: not wrong math, a dropped request with
+   * no memory that it happened. This ref is that memory. Only ever holds one
+   * entry — the newest request coalesces over any older one, matching "the
+   * latest active visual context wins" for rapid generation — and is
+   * replayed by releasePendingReframe() the moment the guard that blocked it
+   * clears (hold released, spring settled), never left to a fixed timer.
+   */
+  const pendingReframeRef = useRef<{
+    reason: string;
+    mathFocalConceptId: string | null;
+    liveFocalElementId: string | null;
+    allowFullZoomChange: boolean;
+  } | null>(null);
+  /** framePage is defined after animateCamera; tied together the same way turnPage/writeLive is. */
+  const releasePendingReframeRef = useRef<(() => void) | null>(null);
   useEffect(() => () => {
     if (liveCameraOverviewTimerRef.current) clearTimeout(liveCameraOverviewTimerRef.current);
     if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
+    if (conceptMotionRef.current) cancelAnimationFrame(conceptMotionRef.current.rafId);
   }, []);
+  /**
+   * The comparison/process choreography currently in flight, if any. Only
+   * one at a time — starting a new one supersedes whatever was still moving,
+   * regardless of which structure kind it belongs to.
+   */
+  const conceptMotionRef = useRef<{
+    epoch: number;
+    structureKind: "comparison" | "process";
+    conceptIds: string[];
+    runtime: { move: ComparisonMove; current: Point2D; velocity: Point2D }[];
+    rerouted: ComparisonReroute[];
+    lastFrameAt: number;
+    rafId: number;
+  } | null>(null);
+  /**
+   * Bumped whenever an in-flight comparison/process move must stop touching
+   * elements — undo, clear, a page turn, a superseding move, a deleted
+   * concept. Same idiom as `liveSeqRef`/`streamEpoch`: capture, recheck every
+   * frame, treat a mismatch as stale and drop the frame rather than apply it.
+   */
+  const comparisonEpochRef = useRef(0);
+  /** Concept-id pairs already turned into a comparison this session, so the same pair never re-triggers (Part 12: structure settles). */
+  const comparedPairsRef = useRef<Set<string>>(new Set());
+  /** Director V1's persistent, patient evidence-accumulation state. See lib/directorState.ts. */
+  const directorStateRef = useRef<DirectorState>(createDirectorState());
   const autosaveRef = useRef<ReturnType<typeof makeAutosave> | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
 
@@ -643,6 +862,31 @@ export default function Board({
     invalid: 0,
   });
   const settledLiveRef = useRef<{ ids: string[]; base: Pen; after: Pen } | null>(null);
+  /**
+   * Where the most recent transcript ended on Deepgram's audio timeline.
+   *
+   * Every tier's "speech → visual" number is measured against this, so the
+   * live line, the speculative mark, the Scribe mark and the structural
+   * diagram are all quoted on one clock and can be compared to each other
+   * without adjustment. Zero until the first transcript arrives, which is why
+   * every reader below guards on it.
+   */
+  const lastAudioEndMsRef = useRef(0);
+
+  /** speech → visual for a tier, or nothing if there is no anchor yet. */
+  const noteTierLatency = useCallback(
+    (key: "speech_to_speculative" | "speech_to_scribe" | "speech_to_structure") => {
+      const anchor = lastAudioEndMsRef.current;
+      if (!anchor) return;
+      const elapsed = now() - anchor;
+      // Guard against an anchor from a previous socket epoch, which would
+      // report a wildly inflated number for the same reason the live-line
+      // meter used to (see useDeepgram's audioEpochRef).
+      if (elapsed < 0 || elapsed > MAX_VALID_LIVE_LAG_MS) return;
+      latency.observe(key, Math.round(elapsed));
+    },
+    [now],
+  );
 
   /** Drop the half-written sentence. Returns the ids it removed. */
   const dropLiveLine = useCallback(() => {
@@ -714,6 +958,7 @@ export default function Board({
       && Math.abs(from.zoom - target.zoom) < 0.001;
     if (isAtTarget && !existing) {
       compositionRef.current = { ...compositionRef.current, camera: target, proposedTarget: undefined, movementReason: undefined };
+      releasePendingReframeRef.current?.();
       return;
     }
     if (reduced) {
@@ -723,6 +968,7 @@ export default function Board({
       apiRef.current?.updateScene({ appState: { scrollX: target.scrollX, scrollY: target.scrollY, zoom: { value: target.zoom } } });
       compositionRef.current = { ...compositionRef.current, camera: target, proposedTarget: undefined, movementReason: undefined };
       log({ type: "camera", event: "completed", target, reason });
+      releasePendingReframeRef.current?.();
       return;
     }
 
@@ -759,6 +1005,11 @@ export default function Board({
       cameraMotionRef.current = null;
       compositionRef.current = { ...compositionRef.current, camera: completedTarget, proposedTarget: undefined, movementReason: undefined };
       log({ type: "camera", event: "completed", target: completedTarget, reason: completedReason });
+      // Now that this move has actually finished (not merely superseded —
+      // see the `existing` retarget branch above, which never reaches here),
+      // replay whatever reframe request the in-flight-move guard deferred
+      // rather than dropped while this spring was running.
+      releasePendingReframeRef.current?.();
     };
     const startedAt = performance.now();
     cameraMotionRef.current = {
@@ -770,6 +1021,487 @@ export default function Board({
       rafId: requestAnimationFrame(frame),
     };
   }, [log]);
+
+  /** Stop whatever comparison/process move is in flight, if any (Part 17: races/cancellation). */
+  const cancelConceptMotion = useCallback((reason: string) => {
+    const motion = conceptMotionRef.current;
+    if (!motion) return;
+    cancelAnimationFrame(motion.rafId);
+    conceptMotionRef.current = null;
+    comparisonEpochRef.current += 1;
+    if (motion.structureKind === "comparison") {
+      log({
+        type: "comparison",
+        event: "movement_cancelled",
+        leftConceptId: motion.conceptIds[0],
+        rightConceptId: motion.conceptIds[1],
+        reason,
+      });
+    } else {
+      log({ type: "process", event: "movement_cancelled", conceptIds: motion.conceptIds, reason });
+    }
+  }, [log]);
+
+  /**
+   * Patch a re-routed arrow's geometry into place once a comparison move has
+   * settled. Same ids throughout, so this is a plain in-place patch, applied
+   * once (not every frame — Part 9 of the brief).
+   */
+  const applyComparisonReroutes = useCallback((rerouted: ComparisonReroute[]) => {
+    if (!rerouted.length) return;
+    elementsRef.current = elementsRef.current.map((el) => {
+      for (const r of rerouted) {
+        if (el.id === r.arrowElementId) return patch(el, r.arrowFields);
+        const extra = r.extraPatches.find((e) => e.id === el.id);
+        if (extra) return patch(el, extra.fields);
+      }
+      return el;
+    });
+  }, []);
+
+  /**
+   * Move a set of already-drawn concepts into a comparison or process
+   * layout. Generic over structure kind so Comparison and Process share one
+   * animation architecture rather than each inventing their own (Part 7/8/17
+   * of the Director V1 brief) — comparison passes exactly 2 ids, process 3-6.
+   *
+   * Mirrors `animateCamera`'s rAF/spring structure (same settle-threshold
+   * pattern, same `prefers-reduced-motion` escape hatch, same
+   * cancel-and-retarget shape) but drives element positions instead of the
+   * camera.
+   */
+  const animateConceptMotion = useCallback(
+    (
+      structureKind: "comparison" | "process",
+      conceptIds: string[],
+      moves: ComparisonMove[],
+      rerouted: ComparisonReroute[],
+    ) => {
+      if (conceptMotionRef.current) cancelConceptMotion(`superseded by new ${structureKind}`);
+
+      const epoch = ++comparisonEpochRef.current;
+      const reduced =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      const finalPositions = new Map<string, Point2D>();
+      for (const move of moves) {
+        const dx = move.anchorTo.x - move.anchorFrom.x;
+        const dy = move.anchorTo.y - move.anchorFrom.y;
+        for (const [id, origin] of move.elementOrigins) {
+          finalPositions.set(id, { x: origin.x + dx, y: origin.y + dy });
+        }
+      }
+      const applyPositions = (positions: Map<string, Point2D>) => {
+        elementsRef.current = elementsRef.current.map((el) => {
+          const target = positions.get(el.id);
+          return target ? patch(el, { x: target.x, y: target.y }) : el;
+        });
+      };
+
+      const logMovement = (event: "movement_started" | "movement_completed") => {
+        if (structureKind === "comparison") {
+          log({ type: "comparison", event, leftConceptId: conceptIds[0], rightConceptId: conceptIds[1] });
+        } else {
+          log({ type: "process", event, conceptIds });
+        }
+      };
+
+      const finish = () => {
+        applyPositions(finalPositions);
+        applyComparisonReroutes(rerouted);
+        commit();
+        conceptMotionRef.current = null;
+        logMovement("movement_completed");
+      };
+
+      if (reduced) {
+        finish();
+        return;
+      }
+
+      logMovement("movement_started");
+      const runtime = moves.map((move) => ({
+        move,
+        current: { ...move.anchorFrom },
+        velocity: { x: 0, y: 0 },
+      }));
+
+      const frame = (time: number) => {
+        // Stale-epoch or deleted-concept guard: stop touching elements the
+        // instant this is no longer the live move (Part 17).
+        if (comparisonEpochRef.current !== epoch) return;
+        const motion = conceptMotionRef.current;
+        if (!motion) return;
+        const board = boardRef.current;
+        if (conceptIds.some((id) => !board.concepts.has(id))) {
+          conceptMotionRef.current = null;
+          return;
+        }
+        const dt = time - motion.lastFrameAt;
+        motion.lastFrameAt = time;
+        const positions = new Map<string, Point2D>();
+        let settled = true;
+        for (const entry of motion.runtime) {
+          const next = stepPositionSpring(
+            entry.current,
+            entry.move.anchorTo,
+            entry.velocity,
+            dt,
+            COMPARISON_SPRING_FREQUENCY,
+          );
+          entry.current = next.position;
+          entry.velocity = next.velocity;
+          const dx = entry.current.x - entry.move.anchorFrom.x;
+          const dy = entry.current.y - entry.move.anchorFrom.y;
+          for (const [id, origin] of entry.move.elementOrigins) {
+            positions.set(id, { x: origin.x + dx, y: origin.y + dy });
+          }
+          const posSettled =
+            Math.abs(entry.current.x - entry.move.anchorTo.x) < 0.4 &&
+            Math.abs(entry.current.y - entry.move.anchorTo.y) < 0.4 &&
+            Math.abs(entry.velocity.x) < 2 &&
+            Math.abs(entry.velocity.y) < 2;
+          if (!posSettled) settled = false;
+        }
+        applyPositions(positions);
+        commit();
+        if (!settled) {
+          motion.rafId = requestAnimationFrame(frame);
+          return;
+        }
+        finish();
+      };
+
+      conceptMotionRef.current = {
+        epoch,
+        structureKind,
+        conceptIds,
+        runtime,
+        rerouted,
+        lastFrameAt: performance.now(),
+        rafId: requestAnimationFrame(frame),
+      };
+    },
+    [applyComparisonReroutes, cancelConceptMotion, commit, log],
+  );
+
+  /**
+   * Build one concept's rigid move: every element belonging to it (plus
+   * bound text), and where each started, so the whole group can move
+   * together. Shared between `performComparison` and `performProcess` — no
+   * logic here is comparison-specific.
+   */
+  const buildConceptMove = useCallback(
+    (
+      concept: Concept,
+      anchorNode: SceneElement,
+      dx: number,
+      dy: number,
+      patches: { id: string; before: Record<string, unknown> }[],
+    ): ComparisonMove => {
+      const elementOrigins = new Map<string, Point2D>();
+      const ids = new Set(concept.elementIds);
+      for (const el of elementsRef.current) {
+        if (!ids.has(el.id) && !ids.has((el.containerId as string) ?? "")) continue;
+        elementOrigins.set(el.id, { x: el.x, y: el.y });
+        patches.push({ id: el.id, before: { x: el.x, y: el.y } });
+      }
+      return {
+        conceptId: concept.conceptId,
+        anchorFrom: { x: anchorNode.x, y: anchorNode.y },
+        anchorTo: { x: anchorNode.x + dx, y: anchorNode.y + dy },
+        elementOrigins,
+      };
+    },
+    [],
+  );
+
+  /**
+   * Resolve a Director comparison decision against the board, compute where
+   * the two concepts should end up, and record it as one undoable operation
+   * before handing the actual movement to `animateConceptMotion`.
+   *
+   * Reuse, never duplicate (Part 5): both concepts must already exist on the
+   * board, or nothing happens — this never creates a concept.
+   */
+  const performComparison = useCallback(
+    async (
+      action: Extract<CanvasAction, { type: "form_comparison" }>,
+      sourceText: string,
+    ): Promise<string> => {
+      const board = boardRef.current;
+      const left = board.match(action.leftConceptId);
+      const right = board.match(action.rightConceptId);
+      if (!left || !right || left.conceptId === right.conceptId) {
+        return `comparison skipped: unresolved concepts`;
+      }
+      if (comparedPairsRef.current.has(comparisonPairKey(left.conceptId, right.conceptId))) {
+        return `comparison skipped: ${left.conceptId} <-> ${right.conceptId} already formed`;
+      }
+      // Never fight the user (Part 13): dropped rather than deferred forever —
+      // the pair is still unpaired, so a later beat gets another chance.
+      if (Date.now() - lastPointerInputRef.current < SKETCH_TOUCH_LOCK_MS || sketchBusyRef.current) {
+        return `comparison deferred: user interacting`;
+      }
+
+      const leftNode = nodeForConcept(left.conceptId);
+      const rightNode = nodeForConcept(right.conceptId);
+      if (!leftNode || !rightNode) return `comparison skipped: no drawn node`;
+
+      const leftBox: ComparisonBox = { x: leftNode.x, y: leftNode.y, width: leftNode.width, height: leftNode.height };
+      const rightBox: ComparisonBox = { x: rightNode.x, y: rightNode.y, width: rightNode.width, height: rightNode.height };
+      const targets = computeComparisonLayout(leftBox, rightBox, pageRef.current, penRef.current.y);
+
+      const dxLeft = targets.left.x - leftBox.x;
+      const dyLeft = targets.left.y - leftBox.y;
+      const dxRight = targets.right.x - rightBox.x;
+      const dyRight = targets.right.y - rightBox.y;
+
+      if (Math.hypot(dxLeft, dyLeft) < 1 && Math.hypot(dxRight, dyRight) < 1) {
+        comparedPairsRef.current.add(comparisonPairKey(left.conceptId, right.conceptId));
+        return `comparison already settled ${left.conceptId} <-> ${right.conceptId}`;
+      }
+
+      const patches: { id: string; before: Record<string, unknown> }[] = [];
+      const leftMove = buildConceptMove(left, leftNode, dxLeft, dyLeft, patches);
+      const rightMove = buildConceptMove(right, rightNode, dxRight, dyRight, patches);
+
+      // Relationships touching either concept get their arrow re-routed to
+      // match the new positions (Part 9) — patched in place, same ids, so
+      // this needs no boundElements changes.
+      const seenRelIds = new Set<string>();
+      const relationships = [
+        ...board.relationshipsFor(left.conceptId),
+        ...board.relationshipsFor(right.conceptId),
+      ].filter((r) => {
+        if (seenRelIds.has(r.relationshipId)) return false;
+        seenRelIds.add(r.relationshipId);
+        return true;
+      });
+
+      const origin = pageOrigin(pageRef.current);
+      const obstacles = elementsRef.current
+        .filter((el) => el.x >= origin.x - 40 && el.x < origin.x + PAGE_W + 40 && !el.containerId)
+        .map((el) => (liveLineIdsRef.current.has(el.id) ? ({ ...el, softObstacle: true } as SceneElement) : el));
+
+      const shiftFor = (conceptId: string) =>
+        conceptId === left.conceptId
+          ? { dx: dxLeft, dy: dyLeft }
+          : conceptId === right.conceptId
+            ? { dx: dxRight, dy: dyRight }
+            : { dx: 0, dy: 0 };
+
+      const rerouted: ComparisonReroute[] = [];
+      for (const rel of relationships) {
+        if (rel.elementIds.length === 0) continue;
+        const fromEl = nodeForConcept(rel.fromConceptId);
+        const toEl = nodeForConcept(rel.toConceptId);
+        const oldArrowEl = elementsRef.current.find((e) => e.id === rel.elementIds[0]);
+        if (!fromEl || !toEl || !oldArrowEl || oldArrowEl.type !== "arrow") continue;
+        const fromShift = shiftFor(rel.fromConceptId);
+        const toShift = shiftFor(rel.toConceptId);
+        const fromTarget = { ...fromEl, x: fromEl.x + fromShift.dx, y: fromEl.y + fromShift.dy } as SceneElement;
+        const toTarget = { ...toEl, x: toEl.x + toShift.dx, y: toEl.y + toShift.dy } as SceneElement;
+        const built = await buildBoundArrow(`${rel.relationshipId}_reroute`, fromTarget, toTarget, rel.label, obstacles);
+        if (!built) continue;
+
+        patches.push({
+          id: oldArrowEl.id,
+          before: {
+            x: oldArrowEl.x,
+            y: oldArrowEl.y,
+            points: oldArrowEl.points,
+            width: oldArrowEl.width,
+            height: oldArrowEl.height,
+          },
+        });
+        const extraPatches: { id: string; fields: Partial<SceneElement> }[] = [];
+        rel.elementIds.slice(1).forEach((id, i) => {
+          const extra = built.extras[i];
+          const oldEl = elementsRef.current.find((e) => e.id === id);
+          if (!extra || !oldEl) return;
+          patches.push({ id, before: { x: oldEl.x, y: oldEl.y } });
+          extraPatches.push({ id, fields: { x: extra.x, y: extra.y } });
+        });
+        rerouted.push({
+          relationshipId: rel.relationshipId,
+          arrowElementId: oldArrowEl.id,
+          arrowFields: {
+            x: built.arrow.x,
+            y: built.arrow.y,
+            points: built.arrow.points,
+            width: built.arrow.width,
+            height: built.arrow.height,
+          },
+          extraPatches,
+        });
+      }
+
+      const undo = emptyUndo();
+      undo.elementPatches = patches;
+      recordOperation("form_comparison", undo, {
+        sourceText,
+        confidence: action.confidence,
+        conceptIds: [left.conceptId, right.conceptId],
+      });
+      comparedPairsRef.current.add(comparisonPairKey(left.conceptId, right.conceptId));
+      log({
+        type: "comparison",
+        event: "detected",
+        leftConceptId: left.conceptId,
+        rightConceptId: right.conceptId,
+        confidence: action.confidence,
+        reason: action.evidence,
+      });
+
+      animateConceptMotion("comparison", [left.conceptId, right.conceptId], [leftMove, rightMove], rerouted);
+
+      return `comparison ${left.conceptId} <-> ${right.conceptId} (${action.relationshipLabel})`;
+    },
+    [animateConceptMotion, buildConceptMove, log, nodeForConcept, recordOperation],
+  );
+
+  /**
+   * Resolve a Director process decision against the board, compute where
+   * every stage should end up, and record it as one undoable operation
+   * before handing the actual movement to `animateConceptMotion`.
+   *
+   * Same reuse-never-duplicate contract as `performComparison`: every stage
+   * must already exist and already be drawn, or nothing happens. Whether
+   * this is a brand-new process or an extension of an already-committed one,
+   * the full current stage list is always relaid out — there is no separate
+   * "extend" code path here; lib/directorState.ts is what decides whether
+   * firing again is even warranted (the "already formed" check below is what
+   * keeps an already-settled process from being relaid out every beat).
+   */
+  const performProcess = useCallback(
+    async (
+      action: Extract<CanvasAction, { type: "form_process" }>,
+      sourceText: string,
+    ): Promise<string> => {
+      const board = boardRef.current;
+      const resolved = action.stages.map((id) => board.match(id));
+      if (resolved.some((c) => !c)) return "process skipped: unresolved concepts";
+      const concepts = resolved as Concept[];
+      const ids = concepts.map((c) => c.conceptId);
+      if (new Set(ids).size !== ids.length) return "process skipped: duplicate concept in stages";
+      if (ids.length < 3 || ids.length > 6) return "process skipped: stage count out of range";
+      if (directorStateRef.current.committedProcessConceptIds.some((chain) => ids.every((id) => chain.includes(id)))) {
+        return `process skipped: ${ids.join(" -> ")} already formed`;
+      }
+      // Never fight the user (Part 13): dropped rather than deferred forever —
+      // the stages stay uncommitted, so a later beat gets another chance.
+      if (Date.now() - lastPointerInputRef.current < SKETCH_TOUCH_LOCK_MS || sketchBusyRef.current) {
+        return "process deferred: user interacting";
+      }
+
+      const nodes = ids.map((id) => nodeForConcept(id));
+      if (nodes.some((n) => !n)) return "process skipped: no drawn node";
+      const drawnNodes = nodes as SceneElement[];
+
+      const boxes: ProcessBox[] = drawnNodes.map((n) => ({ x: n.x, y: n.y, width: n.width, height: n.height }));
+      const { positions, orientation } = computeProcessLayout(boxes, pageRef.current, penRef.current.y);
+      const shifts = boxes.map((box, i) => ({ dx: positions[i].x - box.x, dy: positions[i].y - box.y }));
+
+      if (shifts.every((s) => Math.hypot(s.dx, s.dy) < 1)) {
+        directorStateRef.current = markProcessCommitted(directorStateRef.current, ids);
+        return `process already settled ${ids.join(" -> ")}`;
+      }
+
+      const patches: { id: string; before: Record<string, unknown> }[] = [];
+      const moves = concepts.map((concept, i) =>
+        buildConceptMove(concept, drawnNodes[i], shifts[i].dx, shifts[i].dy, patches),
+      );
+
+      const shiftFor = (conceptId: string) => {
+        const i = ids.indexOf(conceptId);
+        return i === -1 ? { dx: 0, dy: 0 } : shifts[i];
+      };
+
+      const seenRelIds = new Set<string>();
+      const relationships = ids
+        .flatMap((id) => board.relationshipsFor(id))
+        .filter((r) => {
+          if (seenRelIds.has(r.relationshipId)) return false;
+          seenRelIds.add(r.relationshipId);
+          return true;
+        });
+
+      const origin = pageOrigin(pageRef.current);
+      const obstacles = elementsRef.current
+        .filter((el) => el.x >= origin.x - 40 && el.x < origin.x + PAGE_W + 40 && !el.containerId)
+        .map((el) => (liveLineIdsRef.current.has(el.id) ? ({ ...el, softObstacle: true } as SceneElement) : el));
+
+      const rerouted: ComparisonReroute[] = [];
+      for (const rel of relationships) {
+        if (rel.elementIds.length === 0) continue;
+        const fromEl = nodeForConcept(rel.fromConceptId);
+        const toEl = nodeForConcept(rel.toConceptId);
+        const oldArrowEl = elementsRef.current.find((e) => e.id === rel.elementIds[0]);
+        if (!fromEl || !toEl || !oldArrowEl || oldArrowEl.type !== "arrow") continue;
+        const fromShift = shiftFor(rel.fromConceptId);
+        const toShift = shiftFor(rel.toConceptId);
+        const fromTarget = { ...fromEl, x: fromEl.x + fromShift.dx, y: fromEl.y + fromShift.dy } as SceneElement;
+        const toTarget = { ...toEl, x: toEl.x + toShift.dx, y: toEl.y + toShift.dy } as SceneElement;
+        const built = await buildBoundArrow(`${rel.relationshipId}_reroute`, fromTarget, toTarget, rel.label, obstacles);
+        if (!built) continue;
+
+        patches.push({
+          id: oldArrowEl.id,
+          before: {
+            x: oldArrowEl.x,
+            y: oldArrowEl.y,
+            points: oldArrowEl.points,
+            width: oldArrowEl.width,
+            height: oldArrowEl.height,
+          },
+        });
+        const extraPatches: { id: string; fields: Partial<SceneElement> }[] = [];
+        rel.elementIds.slice(1).forEach((id, i) => {
+          const extra = built.extras[i];
+          const oldEl = elementsRef.current.find((e) => e.id === id);
+          if (!extra || !oldEl) return;
+          patches.push({ id, before: { x: oldEl.x, y: oldEl.y } });
+          extraPatches.push({ id, fields: { x: extra.x, y: extra.y } });
+        });
+        rerouted.push({
+          relationshipId: rel.relationshipId,
+          arrowElementId: oldArrowEl.id,
+          arrowFields: {
+            x: built.arrow.x,
+            y: built.arrow.y,
+            points: built.arrow.points,
+            width: built.arrow.width,
+            height: built.arrow.height,
+          },
+          extraPatches,
+        });
+      }
+
+      const undo = emptyUndo();
+      undo.elementPatches = patches;
+      recordOperation("form_process", undo, {
+        sourceText,
+        confidence: action.confidence,
+        conceptIds: ids,
+      });
+      directorStateRef.current = markProcessCommitted(directorStateRef.current, ids);
+      log({
+        type: "process",
+        event: "detected",
+        conceptIds: ids,
+        confidence: action.confidence,
+        reason: action.evidence,
+        orientation,
+      });
+
+      animateConceptMotion("process", ids, moves, rerouted);
+
+      return `process ${ids.join(" -> ")} (${orientation})`;
+    },
+    [animateConceptMotion, buildConceptMove, log, nodeForConcept, recordOperation],
+  );
 
   /**
    * Frame meaningful content inside the exported rectangle, never the
@@ -797,8 +1529,68 @@ export default function Board({
   ) => {
     // Delayed Scribe/Beat commits may continue while the speaker is talking.
     // They may draw, but the live line owns the shot until its overview timer.
-    if (liveCameraHoldRef.current && !liveFocalElementId && !force) return;
-    if (compositionRef.current.proposedTarget && !force && !liveFocalElementId) return;
+    //
+    // Both guards below have a staleness escape hatch. Each is normally
+    // cleared by a specific later event (the overview timer firing, the
+    // camera spring settling) — but if that event is ever missed (a
+    // background-tab-throttled timer, a spring that stalls just short of its
+    // settle threshold, a callback that throws before clearing state), the
+    // flag would otherwise stay set forever and every future non-live
+    // reframe request would silently no-op: the camera visibly "stuck",
+    // indistinguishable from a real spring bug. A stale flag is treated as
+    // cleared rather than trusted indefinitely.
+    //
+    // A *held* flag is not the same failure as a *stuck* one, though: while
+    // speech is genuinely continuous, `liveCameraHoldSetAtRef` keeps getting
+    // refreshed by every interim, so the re-arm-based staleness check above
+    // never fires even though nothing is actually stuck — the hold is doing
+    // its job. That was the actual bug: any reframe blocked by a legitimately
+    // active hold (or a legitimately in-flight move) was simply discarded,
+    // with nothing to revisit it once the hold or the move eventually
+    // cleared. `holdExceedsCeiling` bounds how long a single held streak can
+    // run regardless of how often it's refreshed, and every request the two
+    // guards below block is now remembered in `pendingReframeRef` and
+    // replayed the moment the block lifts, rather than lost.
+    const holdExceedsCeiling =
+      liveCameraHoldRef.current && Date.now() - liveCameraHoldStartedAtRef.current > MAX_LIVE_CAMERA_HOLD_MS;
+    const holdIsStale =
+      liveCameraHoldRef.current && Date.now() - liveCameraHoldSetAtRef.current > LIVE_CAMERA_OVERVIEW_MS * 2;
+    if (holdIsStale || holdExceedsCeiling) {
+      // The overview timer that was supposed to release this never fired —
+      // release it here instead of leaving every future call to rediscover
+      // the same staleness.
+      liveCameraHoldRef.current = false;
+      if (liveCameraOverviewTimerRef.current) {
+        clearTimeout(liveCameraOverviewTimerRef.current);
+        liveCameraOverviewTimerRef.current = null;
+      }
+      // A ceiling breach can be discovered by a live-narration call, which
+      // never drains pendingReframeRef itself (see below) — without this, a
+      // diagram queued during a monologue that never pauses long enough to
+      // settle would stay queued past every ceiling breach, re-armed by the
+      // next interim before anything ever surfaced it.
+      if (pendingReframeRef.current) releasePendingReframeRef.current?.();
+    }
+    if (liveCameraHoldRef.current && !liveFocalElementId && !force) {
+      pendingReframeRef.current = { reason, mathFocalConceptId, liveFocalElementId: null, allowFullZoomChange };
+      log({ type: "camera-metric", event: "suppressed", suppressReason: "live-camera-hold", reason });
+      return;
+    }
+    const proposedIsStale =
+      Boolean(compositionRef.current.proposedTarget) &&
+      Date.now() - compositionRef.current.lastMovementAt > CAMERA_RULES.stuckMoveMs;
+    if (compositionRef.current.proposedTarget && !proposedIsStale && !force && !liveFocalElementId) {
+      pendingReframeRef.current = { reason, mathFocalConceptId, liveFocalElementId: null, allowFullZoomChange };
+      log({ type: "camera-metric", event: "suppressed", suppressReason: "move-in-flight", reason });
+      return;
+    }
+    // This call is about to run for real. Only clear a deferred request if
+    // this call is itself the kind of system/structural reframe a deferred
+    // request represents — a live-narration interim bypasses the hold guard
+    // on every call by design (liveFocalElementId always set) and must not
+    // silently swallow a diagram's pending reframe just by passing through;
+    // that pending request stays queued for its own release point instead.
+    if (!liveFocalElementId) pendingReframeRef.current = null;
     const app = apiRef.current?.getAppState?.();
     if (!app?.width || !app?.height) return;
     const origin = pageOrigin(pageRef.current);
@@ -879,6 +1671,17 @@ export default function Board({
       : liveFocalElement
         ? `live:${pageRef.current}:${liveFocalElement.id}`
         : `page:${pageRef.current}`;
+    // A deliberate user pan/zoom gets a brief priority window before routine
+    // (non-urgent) reframes resume — mirrors the touch-lock already used to
+    // protect drawing from a moving cursor. Content that genuinely doesn't
+    // fit the safe frame still moves the camera regardless (see `urgent` in
+    // proposeCamera): this only holds back cosmetic recentering, so the
+    // system can't get permanently stuck deferring to an old user pan.
+    const manualPriorityActive =
+      !force && Date.now() - lastPointerInputRef.current < MANUAL_CAMERA_PRIORITY_MS;
+    if (!liveFocalElementId) {
+      log({ type: "camera-metric", event: "requested", reason, force, manualPriorityActive });
+    }
     const proposal = proposeCamera({
       state: compositionRef.current,
       viewport: recordingViewport(Number(app.width), Number(app.height)),
@@ -894,6 +1697,7 @@ export default function Board({
       explicitNavigation: force,
       followMovingSubject: Boolean(liveFocalElement),
       maximumZoomChange: allowFullZoomChange ? 1 : undefined,
+      manualPriorityActive,
     });
     compositionRef.current = proposal.state;
     sketchPannedRef.current = true;
@@ -921,9 +1725,31 @@ export default function Board({
     if (proposal.move) {
       compositionHistoryRef.current.push({ ...compositionRef.current, camera: currentCamera, proposedTarget: undefined });
       if (compositionHistoryRef.current.length > 200) compositionHistoryRef.current.shift();
+      if (!liveFocalElementId) log({ type: "camera-metric", event: "executed", reason: proposal.reason, target: proposal.target });
       animateCamera(proposal.target, proposal.reason);
+    } else if (!liveFocalElementId && !proposal.contentFits) {
+      // The camera decided not to move, but its own math says the content
+      // still doesn't fit the safe frame afterward — a real visibility
+      // failure, not a suppressed cosmetic tweak. Verified from proposeCamera's
+      // own post-decision fit check, not inferred separately.
+      log({ type: "camera-metric", event: "failed_visibility_check", reason: proposal.reason, occupiedCanvasRatio: proposal.occupiedCanvasRatio });
     }
   }, [animateCamera, log]);
+
+  /**
+   * Replay whatever reframe request the hold/in-flight guards in framePage
+   * deferred, the moment the guard that blocked it clears. Called from
+   * animateCamera's three completion paths via releasePendingReframeRef
+   * (assigned below `framePage` is created, same tie-the-knot pattern as
+   * writeLiveRef) and from the live-hold release points in writeLive.
+   */
+  const releasePendingReframe = useCallback(() => {
+    const pending = pendingReframeRef.current;
+    if (!pending) return;
+    pendingReframeRef.current = null;
+    framePage(false, pending.reason, pending.mathFocalConceptId, pending.liveFocalElementId, pending.allowFullZoomChange);
+  }, [framePage]);
+  releasePendingReframeRef.current = releasePendingReframe;
 
   const restoreCompositionCamera = useCallback((snapshot?: CompositionState) => {
     const previous = snapshot ?? compositionHistoryRef.current.pop();
@@ -1509,6 +2335,13 @@ export default function Board({
     });
   }, [log, renderStoryState, restoreCompositionCamera]);
 
+  /**
+   * Set by the speculative layer, which is defined below applyOp because it
+   * depends on `commit`. applyOp has to reach it to retire a guess before
+   * placing the real mark that replaces it, so the ref ties the knot.
+   */
+  const reconcileSpeculativeRef = useRef<((realText: string) => void) | null>(null);
+
   const applyOp = useCallback(
     async (op: Op, sourceText = ""): Promise<boolean> => {
       // Excalidraw measures text with whatever font is resolved at creation
@@ -1523,6 +2356,10 @@ export default function Board({
         if (op.op !== "underline" && renderedMarkKeysRef.current.has(key)) {
           return false;
         }
+        // Retire the guess this mark supersedes BEFORE placing, so the two are
+        // never on the canvas together. Done here rather than in a later pass
+        // precisely because a later pass would be visible as a duplicate.
+        reconcileSpeculativeRef.current?.(op.text);
       }
 
       const decorationKey =
@@ -1623,6 +2460,12 @@ export default function Board({
    * `settled` marks the difference between a phrase still being revised and
    * one Deepgram has committed to. A settled line also reserves its space, so
    * everything drawn afterwards lands underneath it rather than on top.
+   *
+   * INVARIANT: this is Tier 1, the highest-priority visual operation in the
+   * app. Speculative/semantic/expressive work (Reflex, lib/speculative.ts)
+   * must be scheduled strictly AFTER this has dispatched ink for the current
+   * tick — never awaited by it, never in front of it. If you are tempted to
+   * add a model call, a semantic lookup, or layout planning here: don't.
    */
   const writeLive = useCallback(
     async (text: string, settled: boolean, timing?: AudioTiming) => {
@@ -1654,7 +2497,9 @@ export default function Board({
       let base: Pen = ours ? prior!.base : { ...penRef.current };
       let probe: Pen = { ...base };
       let spot = lineStart(probe);
+      const buildStartedAt = now();
       let built = await buildLiveLine(spoken, spot.x, spot.y, settled, elementId);
+      latency.observe("build_live_line", now() - buildStartedAt);
 
       // A newer interim landed while we were building. Drop this one rather
       // than rewinding the line to older words.
@@ -1676,7 +2521,9 @@ export default function Board({
           probe = { ...base };
           spot = lineStart(probe);
           elementId = "";
+          const retryStartedAt = now();
           built = await buildLiveLine(spoken, spot.x, spot.y, settled);
+          latency.observe("build_live_line", now() - retryStartedAt);
           if (seq !== liveSeqRef.current) return;
         }
       }
@@ -1740,8 +2587,17 @@ export default function Board({
         };
       }
 
+      const commitStartedAt = now();
       commit();
+      latency.observe("commit", now() - commitStartedAt);
+      // Only stamp the streak's start on the false->true edge — every
+      // interim after that re-arms liveCameraHoldSetAtRef (so the hold keeps
+      // covering genuinely continuous speech) but must not push out
+      // liveCameraHoldStartedAtRef, or MAX_LIVE_CAMERA_HOLD_MS could never
+      // fire during a long uninterrupted monologue.
+      if (!liveCameraHoldRef.current) liveCameraHoldStartedAtRef.current = Date.now();
       liveCameraHoldRef.current = true;
+      liveCameraHoldSetAtRef.current = Date.now();
       if (liveCameraOverviewTimerRef.current) {
         clearTimeout(liveCameraOverviewTimerRef.current);
         liveCameraOverviewTimerRef.current = null;
@@ -1754,14 +2610,22 @@ export default function Board({
         liveCameraOverviewTimerRef.current = setTimeout(() => {
           liveCameraOverviewTimerRef.current = null;
           liveCameraHoldRef.current = false;
-          framePage(true, "overview after live narration", null, null, true);
+          // Something concrete (a diagram, an Artist batch) queued a reframe
+          // while the hold was up — that is more useful than a generic
+          // overview and wins. Otherwise fall back to the overview reveal.
+          if (pendingReframeRef.current) releasePendingReframeRef.current?.();
+          else framePage(true, "overview after live narration", null, null, true);
         }, LIVE_CAMERA_OVERVIEW_MS);
       }
 
       // Ink is on the sheet as of here. Everything below is measurement.
       const inkedAt = now();
+      latency.mark("first_ink", latencyNow());
       const timings = liveLagRef.current;
-      if (timing?.kind !== "final") timings.render.push(inkedAt - startedAt);
+      if (timing?.kind !== "final") {
+        timings.render.push(inkedAt - startedAt);
+        latency.observe("render", inkedAt - startedAt);
+      }
       if (timing) {
         if (!timings.streamEpoch) timings.streamEpoch = timing.streamEpoch;
         if (timings.streamEpoch !== timing.streamEpoch) {
@@ -1780,8 +2644,26 @@ export default function Board({
         const sample = liveLatencySample(inkedAt, timing, timings.streamEpoch);
         if (sample.valid) {
           if (timing.kind === "final") timings.finalLag = sample.lagMs ?? 0;
-          else timings.lag.push(sample.lagMs ?? 0);
-        } else {
+          else {
+            timings.lag.push(sample.lagMs ?? 0);
+            // Speech-to-ink, on the same audio timeline as every other tier's
+            // measurement, so the tiers are directly comparable. NOTE: this is
+            // an audio-timeline diagnostic, not a wall-clock latency figure —
+            // see the "lag" SampleKey doc in lib/latency.ts.
+            latency.observe("lag", sample.lagMs ?? 0);
+          }
+        }
+        // True wall-clock speech-to-ink, independent of the sample above and
+        // never derived from Deepgram start/duration. Observed unconditionally
+        // of the audio-timeline sample's validity — a stream-epoch mismatch
+        // invalidates both the same way, but this one doesn't share the other
+        // failure modes (future-audio/stale-audio) since it isn't anchored to
+        // Deepgram's clock at all.
+        const chunkSample = chunkToInkSample(inkedAt, timing, timings.streamEpoch);
+        if (chunkSample.valid && timing.kind !== "final") {
+          latency.observe("chunk_to_ink", chunkSample.lagMs ?? 0);
+        }
+        if (!sample.valid) {
           timings.invalid += 1;
           log({
             type: "invalid-timing",
@@ -1912,6 +2794,266 @@ export default function Board({
     [applyOp, log],
   );
 
+  // ---- tier 2: speculative visuals ----------------------------------------
+  /**
+   * The board's guesses, drawn from settled interim speech.
+   *
+   * These are deliberately placed through the SAME pen as the Scribe's marks
+   * rather than into a separate gutter. Two reasons, and the second is the
+   * important one:
+   *
+   * - A guess and the real mark that replaces it must occupy the same
+   *   coordinate space, or reconciliation turns into a layout problem instead
+   *   of an identity one.
+   * - It means a speculative mark behaves exactly like a Scribe mark that
+   *   arrived early — including the live line's existing re-anchor, which is
+   *   already the tested answer to "something landed while I was writing".
+   *   No new interaction between tiers is invented.
+   *
+   * The cost of that choice is that placing one nudges an in-progress
+   * sentence down once, the same way a Scribe mark does today. The frequency
+   * gate in handleInterim is what keeps that from becoming jitter: at most one
+   * batch per settled chunk, and only for content the deterministic
+   * recognisers are confident about.
+   */
+  const speculativeStateRef = useRef<SpeculativeState>(emptySpeculativeState());
+  const speculativeMarksRef = useRef<
+    Map<string, { elementIds: string[]; text: string; source: string; kind: string }>
+  >(new Map());
+  /** Settled text for the utterance in flight, for phrase-level recognisers. */
+  const speculativeUtteranceRef = useRef("");
+
+  /**
+   * Drop provisional elements by key. Free, by construction — nothing else
+   * references them and they hold no semantic-board state.
+   *
+   * `animate` defaults to true: a guess the speaker's words didn't confirm
+   * should read as the board resolving a thought, not as a mistake being
+   * erased (Part 8 of the brief). It's forced off for a hard reset (undo,
+   * explicit clear, stale epoch) where a fade would just be a stale visual
+   * lingering on a board that has already moved on.
+   */
+  const retireSpeculative = useCallback(
+    (keys: string[], why: string, animate = true) => {
+      if (!keys.length) return;
+      const doomed = new Set<string>();
+      for (const key of keys) {
+        const entry = speculativeMarksRef.current.get(key);
+        if (!entry) continue;
+        for (const id of entry.elementIds) doomed.add(id);
+        speculativeMarksRef.current.delete(key);
+        log({ type: "speculative", event: "retired", kind: entry.kind, text: entry.text, why });
+      }
+      if (!doomed.size) return;
+      if (!animate) {
+        elementsRef.current = elementsRef.current.filter((el) => !doomed.has(el.id));
+        commit();
+        return;
+      }
+      const epoch = liveSeqRef.current;
+      const steps = opacityPulse(SPECULATIVE_OPACITY, 0, 3, 180);
+      runPulse(
+        steps,
+        (opacity) => {
+          elementsRef.current = elementsRef.current.map((el) =>
+            doomed.has(el.id) ? patch(el, { opacity }) : el,
+          );
+          commit();
+        },
+        () => liveSeqRef.current !== epoch,
+      );
+      // Remove for good once the fade finishes. Unconditional on the epoch —
+      // if the board moved on, filtering these ids out is a harmless no-op
+      // either way (they're either already gone or belong to a page nobody
+      // is looking at anymore).
+      setTimeout(() => {
+        elementsRef.current = elementsRef.current.filter((el) => !doomed.has(el.id));
+        commit();
+      }, steps[steps.length - 1]?.delayMs ?? 0);
+    },
+    [commit, log],
+  );
+
+  /**
+   * Retire any guess a real mark supersedes.
+   *
+   * Called from applyOp (Scribe) and applyActions (Artist) BEFORE the real
+   * element is placed, so the two never coexist. This is the whole duplicate
+   * story: there is no reconciliation pass that runs later and tidies up,
+   * because a pass that runs later is a pass that is visible.
+   */
+  const reconcileSpeculative = useCallback(
+    (realText: string) => {
+      if (!realText || !speculativeMarksRef.current.size) return;
+      const superseded: string[] = [];
+      for (const [key, entry] of speculativeMarksRef.current) {
+        if (supersedes(realText, entry.text)) superseded.push(key);
+      }
+      retireSpeculative(superseded, "superseded by a real mark");
+    },
+    [retireSpeculative],
+  );
+  reconcileSpeculativeRef.current = reconcileSpeculative;
+
+  /**
+   * Draw one batch of guesses.
+   *
+   * Provisional styling is opacity alone — no animation, no colour change, no
+   * dashed borders. The brief is "something is forming", and anything more
+   * assertive than a faded mark reads as the interface flickering.
+   */
+  const renderSpeculative = useCallback(
+    async (
+      events: SpeculativeEvent[],
+      isStale?: () => boolean,
+    ): Promise<Map<string, SpeculativeOutcome>> => {
+      const outcomes = new Map<string, SpeculativeOutcome>();
+      if (!events.length) return outcomes;
+      // Never fight the cursor, and never draw a guess over a diagram that is
+      // mid-render. Both are cheap to skip: the words are still being lettered
+      // by tier 1 regardless. These are TEMPORARY blocks — the caller keeps
+      // the events deferred and retries them, rather than losing them, which
+      // is why every event gets "blocked" rather than being dropped silently.
+      if (Date.now() - lastPointerInputRef.current < SKETCH_TOUCH_LOCK_MS) {
+        for (const event of events) outcomes.set(event.key, "blocked");
+        log({ type: "speculative", event: "blocked", why: "recent pointer input", text: `${events.length} guess(es) deferred` });
+        return outcomes;
+      }
+      if (sketchBusyRef.current) {
+        for (const event of events) outcomes.set(event.key, "blocked");
+        log({ type: "speculative", event: "blocked", why: "sketch busy", text: `${events.length} guess(es) deferred` });
+        return outcomes;
+      }
+      // The cap that matters for tier 2 is how many UNCONFIRMED guesses are on
+      // screen at once, not how many marks the page has accumulated overall.
+      // Counting the latter would stop the board guessing forever once eight
+      // real marks existed, which is the opposite of the intent.
+      if (speculativeMarksRef.current.size >= MAX_OUTSTANDING_SPECULATIVE) {
+        for (const event of events) outcomes.set(event.key, "blocked");
+        log({ type: "speculative", event: "blocked", why: "outstanding-guess cap reached", text: `${events.length} guess(es) deferred` });
+        return outcomes;
+      }
+
+      let staleMidBatch = false;
+      for (const event of events) {
+        // A clear/undo/new-page/reconnect landed while a previous event in
+        // this same batch was awaiting buildOp — stop drawing immediately.
+        // Whatever hasn't been drawn yet is "blocked" (retryable against the
+        // board as it now is), not "dropped".
+        if (isStale?.()) {
+          staleMidBatch = true;
+          outcomes.set(event.key, "blocked");
+          continue;
+        }
+        const op: Op =
+          event.kind === "title"
+            ? { op: "title", text: event.text }
+            : event.kind === "concept"
+              ? { op: "box", text: event.text }
+              : { op: "heading", text: event.text };
+
+        // The Scribe's own dedupe registry is authoritative for real marks;
+        // a guess must never claim a key out from under it. This is a
+        // permanent condition (a real mark already exists), not a temporary
+        // one, so it is "dropped" rather than retried.
+        if (renderedMarkKeysRef.current.has(markKey(event.text))) {
+          outcomes.set(event.key, "dropped");
+          log({ type: "speculative", event: "dropped", kind: event.kind, text: event.text, why: "a real mark already claimed this text" });
+          continue;
+        }
+
+        let built;
+        try {
+          built = await buildOp(op, penRef.current, marksRef.current);
+        } catch {
+          // A guess that will not build is simply not drawn. There is no
+          // fallback and no error surface — tier 1 is unaffected. Retrying a
+          // build failure would just fail again, so this is permanent too.
+          outcomes.set(event.key, "dropped");
+          log({ type: "speculative", event: "dropped", kind: event.kind, text: event.text, why: "buildOp threw" });
+          continue;
+        }
+        if (!built) {
+          outcomes.set(event.key, "dropped");
+          log({ type: "speculative", event: "dropped", kind: event.kind, text: event.text, why: "buildOp returned nothing" });
+          continue;
+        }
+
+        // An emphasis-flagged concept is still a guess, not a certainty, but
+        // the speaker just stressed it — a shade less faint communicates
+        // "more likely to matter" without pretending it's confirmed.
+        const opacity = event.emphasis
+          ? Math.min(70, SPECULATIVE_OPACITY + 20)
+          : SPECULATIVE_OPACITY;
+        const faded = built.elements.map((el) => patch(el, { opacity }));
+        elementsRef.current = [...elementsRef.current, ...faded];
+        speculativeMarksRef.current.set(event.key, {
+          elementIds: faded.map((el) => el.id),
+          text: event.text,
+          source: event.source,
+          kind: event.kind,
+        });
+        outcomes.set(event.key, "rendered");
+        log({ type: "speculative", event: "drawn", kind: event.kind, text: event.text, why: "settled interim speech" });
+      }
+
+      commit();
+      latency.mark("first_speculative", latencyNow());
+      noteTierLatency("speech_to_speculative");
+      return outcomes;
+    },
+    [commit, log, noteTierLatency],
+  );
+
+  /**
+   * Settle the guesses for an utterance against what was actually said.
+   *
+   * A guess whose words survived into the final transcript is promoted to full
+   * opacity and left for the Scribe or Artist to supersede later. One whose
+   * words were revised away was a mishearing, and disappears. This is the
+   * moment the "cheap to be wrong" promise is actually kept.
+   */
+  const settleSpeculative = useCallback(
+    (finalText: string) => {
+      speculativeUtteranceRef.current = "";
+      if (!speculativeMarksRef.current.size) return;
+      const wrong: string[] = [];
+      const promoted: string[] = [];
+      for (const [key, entry] of speculativeMarksRef.current) {
+        if (confirmedByFinal(entry.source, finalText)) promoted.push(...entry.elementIds);
+        else wrong.push(key);
+      }
+      retireSpeculative(wrong, "not present in the final transcript");
+      if (promoted.length) {
+        // Faint -> solid over a beat, not an instant jump: this is the
+        // "resolving a thought" feel from Part 8, not "a value flipped".
+        const ids = new Set(promoted);
+        const epoch = liveSeqRef.current;
+        const steps = opacityPulse(SPECULATIVE_OPACITY, 100, 4, 220);
+        runPulse(
+          steps,
+          (opacity) => {
+            elementsRef.current = elementsRef.current.map((el) =>
+              ids.has(el.id) ? patch(el, { opacity }) : el,
+            );
+            commit();
+          },
+          () => liveSeqRef.current !== epoch,
+        );
+        log({ type: "speculative", event: "promoted", why: "confirmed by the final transcript" });
+      }
+    },
+    [commit, log, retireSpeculative],
+  );
+
+  /** Everything provisional, gone. Used by undo and by explicit clears. */
+  const dropAllSpeculative = useCallback(() => {
+    // Instant, not faded: a hard reset should not leave a fading ghost behind.
+    retireSpeculative([...speculativeMarksRef.current.keys()], "session reset", false);
+    speculativeStateRef.current = emptySpeculativeState();
+    speculativeUtteranceRef.current = "";
+  }, [retireSpeculative]);
+
   // ---- the Scribe ----------------------------------------------------------
   // A tight loop of short streaming calls. Each renders operations line by
   // line, so marks appear in rhythm with speech rather than in a batch.
@@ -1928,6 +3070,10 @@ export default function Board({
   const scribeLastRunRef = useRef(0);
   const scribeRetryAtRef = useRef(0);
   const scribeFailuresRef = useRef(0);
+  /** Exactly what was last handed to the model, to detect a no-op re-send. */
+  const scribeLastSentRef = useRef("");
+  /** When words first became eligible, so queue wait can be told from model time. */
+  const scribeQueuedAtRef = useRef(0);
 
   const runScribe = useCallback(async () => {
     if (modeRef.current !== "standard") return;
@@ -1935,6 +3081,36 @@ export default function Board({
       scribeQueuedRef.current = true;
       return;
     }
+
+    // Is there anything worth spending a call on? Asked BEFORE the cooldown,
+    // so a wake-up carrying nothing new does not schedule a timer that will
+    // wake us again to discover the same nothing.
+    const decision = shouldWakeScribe({
+      fresh: scribePendingRef.current,
+      lastSent: scribeLastSentRef.current,
+      onPage: sketchRef.current.labels.slice(-24),
+      inFlight: scribeInFlightRef.current,
+      // Matched to applyOp's rule deliberately. That suppression only applies
+      // within the opening composition window; applying it for the whole
+      // session here would silence the Scribe permanently after eight marks,
+      // which is a behaviour change nobody asked for and the kind of thing
+      // that reads as the product breaking.
+      attentionBudgetFull:
+        withinInitialCompositionWindow(now()) &&
+        temporaryMarkBudgetReached(sketchRef.current.count),
+    });
+    if (!decision.wake) {
+      if (decision.reason !== "no-fresh-text" && decision.reason !== "in-flight") {
+        log({ type: "scribe-skipped", reason: decision.reason, fresh: normalizeScribeText(scribePendingRef.current).slice(0, 90) });
+        // Retire text that will never be drawn, so it cannot keep re-triggering
+        // this same refusal on every subsequent final. A full attention budget
+        // is the exception: it frees up on the next page turn, so those words
+        // are still worth keeping.
+        if (decision.reason !== "attention-budget-full") scribePendingRef.current = "";
+      }
+      return;
+    }
+
     const waitMs = requestDelayMs({
       nowMs: Date.now(),
       lastRunAtMs: scribeLastRunRef.current,
@@ -1955,11 +3131,14 @@ export default function Board({
 
     // Deepgram finalises short chunks quickly. Drawing only stable words avoids
     // permanently lettering guesses from a changing interim transcript.
-    const fresh = scribePendingRef.current.replace(/\s+/g, " ").trim();
+    const fresh = decision.payload;
     if (!fresh) return;
+    scribeLastSentRef.current = fresh;
+    latency.observe("scribe_request_wait", Date.now() - scribeQueuedAtRef.current);
 
     scribeInFlightRef.current = true;
     const startedAt = Date.now();
+    scribeQueuedAtRef.current = 0;
     scribeLastRunRef.current = startedAt;
     scribePendingRef.current = "";
     const context = scribeContextRef.current;
@@ -2031,6 +3210,11 @@ export default function Board({
             continue;
           }
           if (!(await applyOp(op, source))) continue;
+          if (!drawn.length) {
+            latency.mark("first_scribe_mark", latencyNow());
+            latency.observe("scribe_first_op", Date.now() - startedAt);
+            noteTierLatency("speech_to_scribe");
+          }
           drawn.push(
             op.op === "link"
               ? `link "${op.from}" -> "${op.to}"`
@@ -2100,6 +3284,7 @@ export default function Board({
   /** Called on every transcript update; runScribe owns all scheduling. */
   const nudgeScribe = useCallback(() => {
     if (!SCRIBE_ENABLED) return;
+    if (!scribeQueuedAtRef.current) scribeQueuedAtRef.current = Date.now();
     void runScribe();
   }, [runScribe]);
 
@@ -2130,7 +3315,7 @@ export default function Board({
       try {
         built = await buildBeat(mermaid, focus || "untitled", 0);
       } catch (err) {
-        console.warn("[artist] mermaid parse failed", err);
+        if (isDev) console.warn("[artist] mermaid parse failed", err);
         log({ type: "note", text: `mermaid parse failed: ${String(err)}` });
         return;
       }
@@ -2237,6 +3422,11 @@ export default function Board({
       log({ type: "undo" });
       return;
     }
+    // A comparison/process move mid-flight must stop touching elements before
+    // the revert below patches them back to their pre-move state — undoing
+    // out from under a running rAF loop would otherwise let a stale frame
+    // resurrect the very positions this undo is trying to remove (Part 17).
+    if (conceptMotionRef.current) cancelConceptMotion("undo");
     // Remove it and everything after it that we skipped (camera-only ops).
     const index = board.history.indexOf(op);
     const trailing = board.history.slice(index);
@@ -2245,8 +3435,21 @@ export default function Board({
 
     lastDrawnAtRef.current = Date.now();
     restoreCompositionCamera(op.compositionBefore);
+    if (op.type === "form_comparison" && op.conceptIds.length === 2) {
+      comparedPairsRef.current.delete(comparisonPairKey(op.conceptIds[0], op.conceptIds[1]));
+      log({
+        type: "comparison",
+        event: "undo",
+        leftConceptId: op.conceptIds[0],
+        rightConceptId: op.conceptIds[1],
+      });
+    }
+    if (op.type === "form_process" && op.conceptIds.length >= 3) {
+      directorStateRef.current = unmarkProcessCommitted(directorStateRef.current, op.conceptIds);
+      log({ type: "process", event: "undo", conceptIds: op.conceptIds });
+    }
     log({ type: "undo", operationType: op.type, operationId: op.operationId });
-  }, [log, restoreCompositionCamera, revertOperation]);
+  }, [cancelConceptMotion, log, restoreCompositionCamera, revertOperation]);
 
   /** "Moving on to the next part" — turn to a clean sheet. */
   const doClear = useCallback(() => {
@@ -2287,6 +3490,10 @@ export default function Board({
             existing.lastUpdatedAt = Date.now();
             return `reused ${existing.conceptId}`;
           }
+          // The Artist's version of this concept replaces any guess of it —
+          // same rule as the Scribe path in applyOp, applied before the real
+          // node is built so the two never overlap.
+          reconcileSpeculativeRef.current?.(action.label);
           const concept = board.addConcept({
             conceptId: action.conceptId,
             label: action.label,
@@ -2565,13 +3772,38 @@ export default function Board({
           const el = nodeForConcept(concept.conceptId);
           if (el) {
             try {
+              // A second, independent camera writer alongside animateCamera's
+              // spring — Excalidraw's own scrollToContent gives the tightest
+              // single-concept fit-to-content math, which is worth keeping
+              // rather than reimplementing. Coordinated with the controller
+              // instead of left to fight it: cancel any move already in
+              // flight first (so its rAF loop doesn't immediately overwrite
+              // this), drop any deferred reframe this explicit zoom
+              // supersedes, and resync compositionRef's bookkeeping once the
+              // animation finishes so the next framePage call — and any undo
+              // snapshot taken before it — sees where the camera actually is
+              // rather than the stale pre-zoom value.
+              if (cameraMotionRef.current) {
+                cancelAnimationFrame(cameraMotionRef.current.rafId);
+                cameraMotionRef.current = null;
+              }
+              pendingReframeRef.current = null;
               apiRef.current?.scrollToContent(el as never, {
                 fitToViewport: true,
                 viewportZoomFactor: 0.6,
                 animate: true,
                 duration: 400,
               });
-              sketchPannedRef.current = false; // let the next mark re-frame
+              setTimeout(() => {
+                const app = apiRef.current?.getAppState?.();
+                if (!app) return;
+                const camera: CameraView = {
+                  scrollX: Number(app.scrollX ?? 0),
+                  scrollY: Number(app.scrollY ?? 0),
+                  zoom: Number(app.zoom?.value ?? app.zoom ?? 1),
+                };
+                compositionRef.current = { ...compositionRef.current, camera, proposedTarget: undefined, movementReason: undefined };
+              }, 420);
             } catch {
               /* cosmetic */
             }
@@ -2646,6 +3878,12 @@ export default function Board({
           doUndo();
           return "undid last operation";
         }
+
+        case "form_comparison":
+          return await performComparison(action, sourceText);
+
+        case "form_process":
+          return await performProcess(action, sourceText);
 
         // --- math domain --------------------------------------------------
         // Each step becomes its own concept (kind "equation"/"math_step"),
@@ -2925,7 +4163,7 @@ export default function Board({
         }
       }
     },
-    [doClear, doUndo, log, nodeForConcept, now, recordOperation, requestPageTurn],
+    [doClear, doUndo, log, nodeForConcept, now, performComparison, performProcess, recordOperation, requestPageTurn],
   );
 
   /**
@@ -3181,11 +4419,25 @@ export default function Board({
       const pendingText = pendingTextRef.current.trim();
       if (!pendingText) return;
 
+      // SHADOW MODE. The local verdict is computed and logged, and then the
+      // model is called anyway — always, regardless of what the local
+      // classifier said. Nothing below branches on `local`. It exists only to
+      // accumulate the agreement evidence that would justify letting obvious
+      // skips bypass the model later. See lib/beatPrefilter.ts.
+      const scene = semanticScene();
+      const local = localBeatDecision({
+        pendingText,
+        existingConcepts: scene.concepts.map((c) => c.label),
+        looseWords: sketchRef.current.labels.slice(-20),
+        skipStreak: beatSkipStreakRef.current,
+      });
+
       // One controller for the whole beat->artist chain, so "scratch that" or
       // stopping the mic cancels work that is about to be irrelevant.
       aiAbortRef.current?.abort();
       aiAbortRef.current = new AbortController();
 
+      latency.mark("first_beat_request", latencyNow());
       const beatRes = await fetch("/api/beat", {
         method: "POST",
         headers: providerRequestHeaders({ "content-type": "application/json" }),
@@ -3198,7 +4450,7 @@ export default function Board({
           // something already lettered, which is what drove the over-skipping.
           liveConcepts: sketchRef.current.labels.slice(-20),
           skipStreak: beatSkipStreakRef.current,
-          scene: semanticScene(),
+          scene,
         }),
       });
       const decision = (await beatRes.json()) as BeatDecision;
@@ -3211,6 +4463,7 @@ export default function Board({
         reason: decision.reason,
         focus: decision.focus,
       });
+      log({ type: "beat-shadow", ...scoreBeatAgreement(local, decision.action), beatMs: Math.round(beatMs) });
 
       if (decision.action === "skip") {
         beatSkipStreakRef.current += 1;
@@ -3297,6 +4550,7 @@ export default function Board({
       const visit = enterReference(pendingText);
 
       const artistStarted = now();
+      latency.mark("first_artist_request", latencyNow());
       let parsed: CanvasAction[] = [];
       try {
         const artistRes = await fetch("/api/artist", {
@@ -3356,6 +4610,77 @@ export default function Board({
       const applyStarted = now();
       const applied = await applyActions(parsed, pendingText);
       applyMs = now() - applyStarted;
+      latency.mark("first_artist_action", latencyNow());
+      noteTierLatency("speech_to_structure");
+
+      // Director: recognize structure in what this beat just consumed.
+      // Deterministic, no extra model call — reuses the Artist output this
+      // beat already produced, so every candidate concept (if any) already
+      // exists on the board by the time this runs. See lib/director.ts.
+      if (features.directorV1) {
+        // Director V1: persistent, patient evidence accumulation across
+        // beats, with Comparison and Process arbitrated in one place. See
+        // lib/directorState.ts.
+        const { state, intent, events } = advanceDirector(
+          directorStateRef.current,
+          boardRef.current,
+          pendingText,
+          now(),
+          comparedPairsRef.current,
+          { comparisonEnabled: features.choreographerComparison },
+        );
+        directorStateRef.current = state;
+        for (const ev of events) log(ev);
+
+        switch (intent.kind) {
+          case "wait":
+            log({ type: "directorWait", reason: intent.reason });
+            break;
+          case "commit_comparison":
+            void performComparison(
+              {
+                type: "form_comparison",
+                leftConceptId: intent.evidence.leftConceptId,
+                rightConceptId: intent.evidence.rightConceptId,
+                relationshipLabel: intent.evidence.relationshipLabel,
+                evidence: intent.evidence.evidence,
+                confidence: intent.evidence.confidence,
+              },
+              pendingText,
+            ).then((result) => log({ type: "note", text: `director: ${result}` }));
+            break;
+          case "commit_process":
+          case "extend_process":
+            void performProcess(
+              {
+                type: "form_process",
+                stages: intent.stages,
+                evidence: intent.evidence,
+                confidence: intent.confidence,
+              },
+              pendingText,
+            ).then((result) => log({ type: "note", text: `director: ${result}` }));
+            break;
+        }
+      } else if (features.choreographerComparison) {
+        // Comparison-only, unchanged from before Director V1 existed —
+        // exactly what runs when directorV1 is off. Zero behavior change.
+        const evidence = detectComparison(pendingText, boardRef.current, comparedPairsRef.current);
+        if (evidence) {
+          void performComparison(
+            {
+              type: "form_comparison",
+              leftConceptId: evidence.leftConceptId,
+              rightConceptId: evidence.rightConceptId,
+              relationshipLabel: evidence.relationshipLabel,
+              evidence: evidence.evidence,
+              confidence: evidence.confidence,
+            },
+            pendingText,
+          ).then((result) => log({ type: "note", text: `director: ${result}` }));
+        }
+      }
+
       if (visit) gotoPage(visit.returnTo);
 
       appliedCount = applied.filter(
@@ -3378,7 +4703,7 @@ export default function Board({
       });
     } catch (err) {
       if ((err as Error)?.name === "AbortError") return;
-      console.warn("[beat] failed", err);
+      if (isDev) console.warn("[beat] failed", err);
       log({ type: "note", text: `beat pipeline error: ${String(err)}` });
       // A failed model request must never stop the live canvas. The banner
       // says so; the live line keeps writing regardless.
@@ -3414,6 +4739,8 @@ export default function Board({
     gotoPage,
     log,
     now,
+    performComparison,
+    performProcess,
     recentTranscript,
     sceneSummary,
     semanticScene,
@@ -3771,31 +5098,62 @@ export default function Board({
     [activeTerms, log],
   );
 
+  /**
+   * A command, whether it arrived on a final or on stable settled interims.
+   *
+   * One implementation for both entry points on purpose: the early path must
+   * do exactly what the late path does, or "scratch that" would mean two
+   * different things depending on how fast Deepgram happened to finalise.
+   */
+  const runVoiceCommand = useCallback(
+    (command: LocalVoiceCommand, raw: string, when: "final" | "early") => {
+      liveSeqRef.current += 1;
+      dropLiveLine();
+      dropAllSpeculative();
+      clearStoryCaption();
+      liveLagRef.current = { lag: [], render: [], paint: [], streamEpoch: 0, invalid: 0 };
+      pendingTextRef.current = "";
+      scribePendingRef.current = "";
+      settledCountRef.current = 0;
+      prevInterimRef.current = [];
+      aiAbortRef.current?.abort();
+      scribeAbortRef.current?.abort();
+      setInterim("");
+      commit();
+      log({ type: "command", command, rawTranscript: raw, when });
+      if (command === "undo") {
+        if (modeRef.current === "story") void doStoryUndo();
+        else doUndo();
+      } else {
+        turnPage("explicit-clear", "speaker explicitly requested a new page");
+      }
+    },
+    [clearStoryCaption, commit, doStoryUndo, doUndo, dropAllSpeculative, dropLiveLine, log, turnPage],
+  );
+
+  /**
+   * Guards against a command running twice.
+   *
+   * An early command is followed a few hundred milliseconds later by the final
+   * carrying the same words. Without this, "scratch that" would undo two
+   * operations — the second of which the speaker never asked to lose.
+   */
+  const firedCommandRef = useRef("");
+
   const handleFinal = useCallback(
     (raw: string, tStart: number, tEnd: number, audioEndMs: number, streamEpoch: number, timing?: DeepgramResultTiming) => {
       const command = localVoiceCommand(raw);
       if (command) {
-        liveSeqRef.current += 1;
-        dropLiveLine();
-        clearStoryCaption();
-        liveLagRef.current = { lag: [], render: [], paint: [], streamEpoch: 0, invalid: 0 };
-        pendingTextRef.current = "";
-        scribePendingRef.current = "";
-        settledCountRef.current = 0;
-        prevInterimRef.current = [];
-        aiAbortRef.current?.abort();
-        scribeAbortRef.current?.abort();
-        setInterim("");
-        commit();
-        log({ type: "command", command, rawTranscript: raw });
-        if (command === "undo") {
-          if (modeRef.current === "story") void doStoryUndo();
-          else doUndo();
-        } else {
-          turnPage("explicit-clear", "speaker explicitly requested a new page");
-        }
+        const already = firedCommandRef.current;
+        firedCommandRef.current = "";
+        // Already handled from settled interims. Swallow the final so the
+        // command does not run a second time.
+        if (already && already === raw.trim().toLowerCase()) return;
+        runVoiceCommand(command, raw, "final");
         return;
       }
+      firedCommandRef.current = "";
+      lastAudioEndMsRef.current = audioEndMs;
       const text = correct(raw);
       finalsRef.current.push({ text, tStart, tEnd });
       if (modeRef.current === "story") {
@@ -3828,12 +5186,42 @@ export default function Board({
       log({ type: "transcript", text, rawTranscript: raw, normalizedTranscript: text, displayTranscript: text });
       setInterim("");
       // Lock the line Deepgram just committed to. Everything below this runs
-      // behind the writing, not in front of it.
-      void writeLive(text, true, { audioEndMs, streamEpoch, ...timing, kind: "final" });
+      // behind the writing, not in front of it — writeLive's own promise
+      // resolves only after `commit()` has already dispatched the ink, so the
+      // pulse below strictly follows it, never fronts it.
+      const epochAtSettle = liveSeqRef.current;
+      const writeLiveDone = writeLive(text, true, { audioEndMs, streamEpoch, ...timing, kind: "final" });
+      void writeLiveDone.then(() => {
+        if (liveSeqRef.current !== epochAtSettle) return;
+        const ids = settledLiveRef.current?.ids;
+        if (!ids?.length) return;
+        // A brief, subtle settle flash on the line that just locked in —
+        // Part 5's "give existing truthful information temporal life", not a
+        // new mark and not new content. Never fires ahead of the ink itself:
+        // it only starts once writeLive's own commit() already ran.
+        const idSet = new Set(ids);
+        const steps = [
+          ...opacityPulse(100, 65, 1, 90),
+          ...opacityPulse(65, 100, 1, 90).map((s) => ({ ...s, delayMs: s.delayMs + 90 })),
+        ];
+        runPulse(
+          steps,
+          (opacity) => {
+            elementsRef.current = elementsRef.current.map((el) =>
+              idSet.has(el.id) ? patch(el, { opacity }) : el,
+            );
+            commit();
+          },
+          () => liveSeqRef.current !== epochAtSettle,
+        );
+      });
+      // Settle tier 2 against what was actually said: guesses the final
+      // confirms are promoted, guesses it contradicts disappear.
+      settleSpeculative(text);
       nudgeScribe();
       resetSilenceTimer();
     },
-    [clearStoryCaption, commit, correct, doStoryUndo, doUndo, dropLiveLine, handleStoryFinal, log, nudgeScribe, resetSilenceTimer, turnPage, writeLive, writeStoryCaption],
+    [correct, handleStoryFinal, log, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleSpeculative, writeLive, writeStoryCaption],
   );
 
   const handleInterim = useCallback(
@@ -3851,12 +5239,22 @@ export default function Board({
       // No log here: interims are revised several times a second and every
       // one of them would emit a correction event for the same rewrite. The
       // final is where a correction gets recorded.
+      lastAudioEndMsRef.current = audioEndMs;
       const shown = correctTranscript(text, activeTermsRef.current).text || text;
       const paintStarted = performance.now();
       const timingBucket = liveLagRef.current;
       setInterim(shown);
+      // Double rAF: the browser guarantees the *first* callback runs before
+      // the next paint, which only proves a frame was scheduled. The frame
+      // actually reaches the screen sometime between that callback returning
+      // and the *second* callback running, so the second timestamp is the
+      // closest thing the DOM API gives us to "the user could have seen it".
       requestAnimationFrame(() => {
-        timingBucket.paint.push(Math.round(performance.now() - paintStarted));
+        requestAnimationFrame(() => {
+          const paint = Math.round(performance.now() - paintStarted);
+          timingBucket.paint.push(paint);
+          latency.observe("paint", paint);
+        });
       });
       if (modeRef.current === "story") {
         void writeStoryCaption(shown);
@@ -3879,6 +5277,24 @@ export default function Board({
       }
       prevInterimRef.current = words;
 
+      // A closed-set command, fired without waiting for the final.
+      //
+      // The bar is deliberately high: the whole utterance must be settled
+      // (every word agreed by two consecutive interims, and no new words since)
+      // AND must match a command phrase exactly. "scratch that idea" fails
+      // because it is not equal to any command; "scratch" fails for the same
+      // reason. See lib/liveSpeech.ts earlyVoiceCommand for the argument.
+      const fullySettled = common === words.length && common === prev.length && common > 0;
+      if (fullySettled) {
+        const early = earlyVoiceCommand(text);
+        const key = text.trim().toLowerCase();
+        if (early && firedCommandRef.current !== key) {
+          firedCommandRef.current = key;
+          runVoiceCommand(early, text, "early");
+          return;
+        }
+      }
+
       // Hand settled words to the Scribe, but do NOT wake it here. It used to
       // fire mid-utterance because it was the only thing writing; now the live
       // line is, and a mark placed while the line is still growing lands
@@ -3889,11 +5305,66 @@ export default function Board({
         if (fresh) {
           scribePendingRef.current = `${scribePendingRef.current} ${fresh}`.trim();
         }
+        // Reflex (Tier 2) entirely, behind a flag — see lib/features.ts.
+        // When off, nothing is scheduled at all: no setTimeout, no
+        // recognition, no render. This is what makes a clean Reflex-off vs
+        // Reflex-on comparison possible (Part 12).
+        if (fresh && features.reflex) {
+          speculativeUtteranceRef.current =
+            `${speculativeUtteranceRef.current} ${fresh}`.trim();
+
+          // TIER 2, deferred to a macrotask on purpose.
+          //
+          // writeLive was dispatched above and is suspended on its first
+          // await, so its remaining work sits in the microtask queue.
+          // Recognition is cheap but it is not free — regexes, phrase
+          // extraction, and a walk of the concept map — and running it
+          // synchronously here would insert all of that BETWEEN the ink being
+          // requested and the ink being committed. setTimeout puts it behind
+          // the entire microtask chain, so tier 1 finishes first, always.
+          //
+          // The snapshot is taken now rather than inside the callback so the
+          // guess is made from the words as they were when they settled.
+          //
+          // `epochAtSchedule` guards against the stale-callback hazard: a
+          // clear/undo/new-page/reconnect between scheduling and firing bumps
+          // liveSeqRef (see runVoiceCommand and the stream-restart sites), and
+          // a callback that fires after that must not render a guess about a
+          // board state that no longer exists. Same pattern writeLive itself
+          // uses (the `seq !== liveSeqRef.current` checks above).
+          const utterance = speculativeUtteranceRef.current;
+          const epochAtSchedule = liveSeqRef.current;
+          setTimeout(() => {
+            if (liveSeqRef.current !== epochAtSchedule) {
+              log({ type: "speculative", event: "stale", why: "board changed before recognition ran" });
+              return;
+            }
+            const recognized = recognizeSpeculative(speculativeStateRef.current, {
+              settledText: fresh,
+              utteranceText: utterance,
+              confidence,
+              onBoard: [
+                ...sketchRef.current.labels,
+                ...[...boardRef.current.concepts.values()].map((c) => c.label),
+              ],
+            });
+            speculativeStateRef.current = recognized.state;
+            if (!recognized.events.length) return;
+            const isStale = () => liveSeqRef.current !== epochAtSchedule;
+            void renderSpeculative(recognized.events, isStale).then((outcomes) => {
+              if (liveSeqRef.current !== epochAtSchedule) {
+                log({ type: "speculative", event: "stale", why: "board changed before render resolved" });
+                return;
+              }
+              speculativeStateRef.current = applySpeculativeOutcome(speculativeStateRef.current, outcomes);
+            });
+          }, 0);
+        }
       }
 
       if (silenceTimerRef.current) resetSilenceTimer();
     },
-    [handleStoryPartial, resetSilenceTimer, writeLive, writeStoryCaption],
+    [handleStoryPartial, renderSpeculative, resetSilenceTimer, runVoiceCommand, writeLive, writeStoryCaption],
   );
 
   /** Gemini engine: marks the model asked for, straight off the socket. */
@@ -4012,27 +5483,61 @@ export default function Board({
 
   const engine =
     ENGINE === "gemini"
-      ? { status: gemini.status, start: gemini.start, stop: gemini.stop }
-      : { status: deepgram.status, start: deepgram.start, stop: deepgram.stop };
+      ? { status: gemini.status, start: gemini.start, stop: gemini.stop, prewarm: undefined }
+      : { status: deepgram.status, start: deepgram.start, stop: deepgram.stop, prewarm: deepgram.prewarm };
   const status = engine.status;
   const stopEngine = engine.stop;
   const startEngine = engine.start;
+  const prewarmEngine = engine.prewarm;
   const usage = useUsageSession({
     projectId: useCallback(() => sessionIdRef.current, []),
     mode: useCallback(() => modeRef.current, []),
     onForcedStop: useCallback(() => stopEngine(), [stopEngine]),
     onWarning: useCallback((message: string) => setErrorText(message), []),
+    anonymous: guest,
   });
   const toggle = useCallback(async () => {
     const listening = status === "live" || status === "connecting" || status === "reconnecting";
     if (listening) {
       stopEngine();
-      await usage.stop("paused");
+      // usage.stop() clears the active-session id as its first action, so it
+      // hands the id back here rather than leaving it to be re-read from the
+      // (by-then-null) global — see hooks/useUsageSession.ts.
+      const stoppedUsageSessionId = await usage.stop("paused");
+      // One summary per listening session, written after the socket is gone
+      // so it can never contend with the live path.
+      const summary = latency.summary();
+      summary.mode = modeRef.current;
+      summary.sessionId = sessionIdRef.current;
+      log({ type: "latency", ...summary });
+      // Root-cause traces: only useDeepgram (not the dormant Gemini engine)
+      // collects these — see hooks/useDeepgram.ts's getDiagnosticTraces.
+      const traces = deepgram.getDiagnosticTraces?.() ?? null;
+      recordLatencySummary(summary, stoppedUsageSessionId, traces);
+      latency.reset();
       return;
     }
-    await autosaveRef.current?.flushNow();
-    await startListeningSession(usage.start, startEngine, usage.stop);
-  }, [startEngine, status, stopEngine, usage]);
+    latency.reset();
+    latency.mark("start_pressed", latencyNow());
+    // Not awaited: the autosave flush is a write of work already on the
+    // canvas and has nothing to do with opening a microphone. Awaiting it put
+    // a persistence round trip in front of every press.
+    void autosaveRef.current?.flushNow();
+    await startListeningSession(
+      async () => {
+        const ok = await usage.start();
+        if (ok) {
+          latency.mark("lease_ready", latencyNow());
+          if (guest) { visualSessionStartedAtRef.current = Date.now(); firstVisualFiredRef.current = false; }
+        }
+        return ok;
+      },
+      startEngine,
+      usage.stop,
+      prewarmEngine,
+      usage.renew,
+    );
+  }, [deepgram, guest, log, prewarmEngine, startEngine, status, stopEngine, usage]);
 
   const wasListeningRef = useRef(false);
   useEffect(() => {
@@ -4169,6 +5674,11 @@ export default function Board({
     return () => window.removeEventListener("resize", recompose);
   }, [framePage]);
 
+  /** For correlating a felt stall against the recorded trace. Dev-only. */
+  const markPerceivedStall = useCallback(() => {
+    log({ type: "perceived-stall", perfNow: Math.round(performance.now()) });
+  }, [log]);
+
   useEffect(() => {
     // Prime the correction vocabulary. Without this the seed terms — the
     // speaker's product and company names, the ones a general recogniser has
@@ -4193,6 +5703,11 @@ export default function Board({
       }
     })();
 
+    // Console debug API — draw/say/live/undo/latency/reflex/etc. Development
+    // only: unlike every other debug surface in this file, this used to be
+    // assigned unconditionally, which meant it was reachable from any signed
+    // in user's browser console in production.
+    if (!isDev) return;
     (window as unknown as Record<string, unknown>).inpublic = {
       draw: (mermaid: string, focus = "manual test") => {
         renderQueueRef.current.push({ mermaid, focus });
@@ -4221,6 +5736,53 @@ export default function Board({
       undo: doUndo,
       clear: doClear,
       clearSketch,
+      /**
+       * The developer-readable latency summary for the session in progress.
+       *   inpublic.latency()          → printable summary of this session
+       *   inpublic.latencyHistory()   → every stored session, newest last
+       * Rows that were never measured are absent rather than zero.
+       */
+      latency: () => {
+        const summary = latency.summary();
+        summary.mode = modeRef.current;
+        console.log(formatLatencySummary(summary));
+        return summary;
+      },
+      latencyHistory: () => storedLatencySamples(),
+      /**
+       * Show/hide the on-canvas latency panel, persisted across reloads.
+       *   inpublic.latencyOverlay()       → show
+       *   inpublic.latencyOverlay(false)  → hide
+       * Off by default; the numbers are also available via inpublic.latency()
+       * without putting anything over the canvas.
+       */
+      latencyOverlay: (on = true) => {
+        setShowLatencyOverlay(on);
+        try { window.localStorage.setItem(LATENCY_OVERLAY_KEY, on ? "1" : "0"); } catch { /* private mode — this session only */ }
+        return on;
+      },
+      /** Mark "that one felt slow" right now, for correlation against the log. */
+      markStall: markPerceivedStall,
+      /**
+       * Reflex (tier 2) debug view — development only, per Part 13 of the
+       * Reflex brief. Every `{type:"speculative"}` event this session:
+       * drawn, blocked (pointer-lock/busy/cap, retried later), dropped
+       * (permanent — a real mark already claimed it, or it failed to build),
+       * retired, promoted, superseded, or stale (epoch changed before a
+       * scheduled recognition/render ran). Not exposed in any production UI.
+       *   inpublic.reflex()             → most recent 50, printed as a table
+       *   inpublic.reflex({ full: true }) → every one recorded this session
+       */
+      reflex: (opts: { full?: boolean } = {}) => {
+        const events = logRef.current.filter(
+          (e): e is Extract<LogEvent, { type: "speculative" }> => e.type === "speculative",
+        );
+        const shown = opts.full ? events : events.slice(-50);
+        console.table(
+          shown.map((e) => ({ t: e.t, event: e.event, kind: e.kind ?? "", text: e.text ?? "", why: e.why })),
+        );
+        return shown;
+      },
       log: () => logRef.current,
       elements: () => elementsRef.current,
       sketchCount: () => sketchRef.current.count,
@@ -4267,6 +5829,7 @@ export default function Board({
     growSketch,
     handleStoryFinal,
     handleStoryPartial,
+    markPerceivedStall,
     runScribe,
     writeLive,
   ]);
@@ -4318,6 +5881,41 @@ export default function Board({
     [clearStoryCaption, log, turnPage],
   );
 
+  // ---- main-thread contention -----------------------------------------------
+  // A "longtask" entry means the main thread was unavailable for >= 50ms —
+  // the clearest possible evidence that something other than the ink path
+  // (a render, a GC pause, another feature's work) blocked an interim from
+  // reaching the screen on time. `attribution` names the culprit frame/script
+  // when the browser can identify it; it usually can't for same-frame work,
+  // which is most of ours.
+  useEffect(() => {
+    if (typeof PerformanceObserver === "undefined") return;
+    if (!PerformanceObserver.supportedEntryTypes?.includes("longtask")) return;
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        latency.observe("long_task", entry.duration);
+        const attribution = (
+          entry as PerformanceEntry & {
+            attribution?: Array<{ name?: string; containerType?: string }>;
+          }
+        ).attribution?.[0];
+        log({
+          type: "long-task",
+          durationMs: Math.round(entry.duration),
+          perfNow: Math.round(entry.startTime),
+          perfEnd: Math.round(entry.startTime + entry.duration),
+          attribution: attribution?.name || attribution?.containerType,
+        });
+      }
+    });
+    try {
+      observer.observe({ type: "longtask", buffered: true });
+    } catch {
+      return;
+    }
+    return () => observer.disconnect();
+  }, [log]);
+
   // ---- keyboard ------------------------------------------------------------
   useEffect(() => {
     const isTextTarget = (el: EventTarget | null) => {
@@ -4340,12 +5938,14 @@ export default function Board({
         toggle();
       } else if (e.key === "t" || e.key === "T") {
         setShowTranscript((v) => !v);
+      } else if (e.key === "`" && isDev) {
+        markPerceivedStall();
       }
     };
 
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [toggle]);
+  }, [toggle, markPerceivedStall]);
 
   const handleTitleChange = useCallback((title: string) => {
     sessionTitleRef.current = title;
@@ -4368,20 +5968,25 @@ export default function Board({
 
   const finishSession = useCallback(() => {
     if (status === "live" || status === "reconnecting" || status === "connecting") toggle();
-    void autosaveRef.current?.flushNow().then(() => router.push("/dashboard"));
-  }, [router, status, toggle]);
+    // A guest has no /dashboard to return to (it's an authenticated route) —
+    // send them to the claim screen instead, carrying the just-saved local
+    // session id so /try can offer "keep this session" against the right
+    // IndexedDB record.
+    const destination = guest ? `/try?done=1&session=${encodeURIComponent(sessionIdRef.current)}` : "/dashboard";
+    void autosaveRef.current?.flushNow().then(() => router.push(destination));
+  }, [guest, router, status, toggle]);
 
   // ---- render --------------------------------------------------------------
   return (
     <div
       ref={setRecordingTarget}
-      className={`canvas-shell relative h-screen w-screen bg-white ${recordingFocus ? "recording-focus" : ""}`}
+      className={`canvas-shell relative h-dvh w-dvw bg-white ${recordingFocus ? "recording-focus" : ""}`}
       data-recording-focus={recordingFocus ? "true" : "false"}
       onPointerDown={markPointerInput}
       onWheel={markPointerInput}
       onKeyDownCapture={markUserInput}
     >
-      <CanvasTopBar title={sessionTitle} saveState={saveStatus} remainingSeconds={usage.remainingSeconds} unlimitedMinutes={usage.entitlement?.unlimitedMinutes} onTitleChange={handleTitleChange} onExport={handleExport} onDownloadLog={handleDownloadLog} />
+      <CanvasTopBar title={sessionTitle} saveState={saveStatus} remainingSeconds={usage.remainingSeconds} unlimitedMinutes={usage.entitlement?.unlimitedMinutes} onTitleChange={handleTitleChange} onExport={handleExport} onDownloadLog={handleDownloadLog} guest={guest} />
 
       <Excalidraw
         excalidrawAPI={(instance: unknown) => setApi(instance)}
@@ -4425,6 +6030,10 @@ export default function Board({
         <TranscriptStrip text={interim} />
       ) : (
         <span data-recording-transcript={interim} className="hidden" />
+      )}
+
+      {isDev && showLatencyOverlay && (
+        <LatencyOverlay onMarkStall={markPerceivedStall} />
       )}
 
       <ErrorBanner text={errorText} onDismiss={() => setErrorText(null)} onRetry={toggle} />

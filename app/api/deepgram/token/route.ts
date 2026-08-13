@@ -14,9 +14,20 @@ const TTL_SECONDS = 60;
  * bearer access token. createProjectKey is the fallback — it needs a key with
  * `keys:write` (admin/owner), which most project keys don't have.
  */
+const isDev = process.env.NODE_ENV === "development";
+
 export async function GET(request: Request) {
+  // Startup-latency investigation: split "our own guard (auth + Supabase
+  // round trips)" from "Deepgram's own grantToken API call" so a slow mint
+  // doesn't get attributed to the wrong side by guesswork. Dev-only console
+  // output — never sent anywhere, never on the speech-in-progress path.
+  const t0 = Date.now();
   const guard = await guardProviderRequest(request, { feature: "deepgram", provider: "deepgram", model: "nova-3", audioSeconds: 45 });
-  if (guard instanceof Response) return guard;
+  const guardMs = Date.now() - t0;
+  if (guard instanceof Response) {
+    if (isDev) console.log(`[deepgram/token] guard rejected after ${guardMs}ms`);
+    return guard;
+  }
   const rootKey = process.env.DEEPGRAM_API_KEY;
   if (!rootKey) {
     await reconcileProviderCost(guard, "failed", { actualCostUsd: 0 });
@@ -29,9 +40,16 @@ export async function GET(request: Request) {
   const deepgram = createClient(rootKey);
 
   try {
+    const t1 = Date.now();
     const { result, error } = await deepgram.auth.grantToken({
       ttl_seconds: TTL_SECONDS,
     });
+    const grantMs = Date.now() - t1;
+    if (isDev) {
+      console.log(
+        `[deepgram/token] guard=${guardMs}ms grantToken=${grantMs}ms total=${Date.now() - t0}ms`,
+      );
+    }
     if (!error && result?.access_token) {
       return NextResponse.json({
         accessToken: result.access_token,

@@ -3,8 +3,10 @@
   inset: 0 0 auto;
   z-index: 90;
   display: flex;
-  height: 58px;
-  padding: 0 12px;
+  height: calc(58px + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) 12px 0;
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
   align-items: center;
   justify-content: space-between;
   gap: 14px;
@@ -82,7 +84,7 @@
   position: fixed;
   z-index: 80;
   left: 50%;
-  bottom: 18px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   display: flex;
   min-height: 52px;
   max-width: calc(100vw - 28px);
@@ -164,8 +166,8 @@
 .canvas-recording-dock {
   position: fixed;
   z-index: 82;
-  right: 16px;
-  bottom: 18px;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   display: flex;
   min-height: 42px;
   padding: 4px;
@@ -279,8 +281,8 @@
 .canvas-camera-preview {
   position: fixed;
   z-index: 70;
-  right: 16px;
-  bottom: 78px;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(78px + env(safe-area-inset-bottom, 0px));
   overflow: hidden;
   width: min(300px, 26vw);
   min-width: 220px;
@@ -337,7 +339,7 @@
 .canvas-recorder-error button { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 5px; background: transparent; color: inherit; }
 
 .canvas-shell .excalidraw {
-  padding-top: 58px;
+  padding-top: calc(58px + env(safe-area-inset-top, 0px));
   --color-selection: #6965db;
   --color-primary: #6965db;
   --color-primary-darker: #5b57d1;
@@ -348,6 +350,19 @@
   --color-brand-hover: #5753d0;
   --color-on-primary-container: #030064;
   --color-surface-primary-container: #e0dfff;
+}
+
+/* Excalidraw's own shape-tool strip (.App-top-bar) is absolutely positioned
+ * at a fixed `top: 16px` inside .excalidraw, which the `padding-top` above
+ * does NOT affect — padding never shifts the containing-block origin that an
+ * absolutely positioned descendant's `top` is measured from. Left alone, the
+ * toolbar renders at y:16-56 on every viewport size, entirely underneath
+ * .canvas-topbar (z-index 90 vs. the toolbar's 4), which is why its buttons
+ * were unreachable rather than just visually crowded. Repositioning it
+ * directly, matching the topbar's real (safe-area-aware) height.
+ */
+.canvas-shell .excalidraw .App-top-bar {
+  top: calc(58px + env(safe-area-inset-top, 0px) + 12px) !important;
 }
 
 /* ---------------------------------------------------------------- see-through chrome
@@ -435,20 +450,82 @@
   .canvas-interface-preview { transition: none; }
 }
 
+/* Below this width, controls stack vertically instead of hugging the
+   topbar's right edge, so the mobile block gives every fixed panel a
+   position relative to the topbar's actual (safe-area-aware) height
+   rather than a hardcoded pixel guess. */
 @media (max-width: 760px) {
-  .canvas-topbar { padding-inline: 8px; }
+  :root { --canvas-topbar-h: calc(58px + env(safe-area-inset-top, 0px)); }
+  .canvas-topbar {
+    padding-left: max(8px, env(safe-area-inset-left, 0px));
+    padding-right: max(8px, env(safe-area-inset-right, 0px));
+  }
   .canvas-title-input { width: min(42vw, 230px); }
   .canvas-topbar-actions .ui-saved-status { display: none; }
-  .canvas-export-trigger { width: 36px; padding: 0; justify-content: center; font-size: 0; }
+  .canvas-export-trigger { width: 44px; height: 44px; padding: 0; justify-content: center; font-size: 0; }
   .canvas-export-trigger svg:last-child { display: none; }
+  .canvas-back,
+  .canvas-account-trigger { width: 44px; height: 44px; }
+
   .canvas-speaking-control { width: calc(100vw - 20px); flex-wrap: wrap; justify-content: center; }
   .canvas-speaking-control .ui-recording-status { order: -2; min-width: 0; flex: 1; }
   .canvas-mode-control { order: -1; }
   .canvas-control-divider { display: none; }
-  .canvas-transcript { bottom: 128px; }
+  .canvas-transcript { bottom: calc(128px + env(safe-area-inset-bottom, 0px)); }
   .canvas-speaking-control .canvas-speak-primary,
-  .canvas-speaking-control .canvas-speak-secondary { flex: 1; justify-content: center; }
-  .canvas-recording-dock { right: 12px; top: 190px; bottom: auto; }
+  .canvas-speaking-control .canvas-speak-secondary { flex: 1; justify-content: center; min-height: 44px; }
+  .canvas-mode-control button { min-height: 40px; }
+
+  /* Dock and camera preview stack below the topbar, each sized off the
+     previous element's real footprint instead of a fixed guess, so they
+     never collide with the topbar or each other on tall/short viewports. */
+  .canvas-recording-dock {
+    right: max(12px, env(safe-area-inset-right, 0px));
+    top: calc(var(--canvas-topbar-h) + 12px);
+    bottom: auto;
+  }
+  .canvas-drag-handle,
+  .canvas-recorder-icon-action,
+  .canvas-record-button { min-height: 44px; min-width: 44px; }
   .canvas-recorder-settings { top: calc(100% + 10px); bottom: auto; width: min(310px, calc(100vw - 24px)); }
-  .canvas-camera-preview { right: 12px; top: 250px; bottom: auto; width: min(300px, calc(100vw - 24px)); }
+  .canvas-camera-preview {
+    right: max(12px, env(safe-area-inset-right, 0px));
+    top: calc(var(--canvas-topbar-h) + 12px + 50px + 12px);
+    bottom: auto;
+    width: min(300px, calc(100vw - 24px));
+  }
+  .canvas-camera-handle button { width: 40px; height: 40px; }
+}
+
+/* Small phones (iPhone SE / 320-375px class): trim gaps further and make
+   sure nothing depends on horizontal space we don't have. */
+@media (max-width: 400px) {
+  .canvas-title-input { width: min(38vw, 160px); }
+  .canvas-topbar-left,
+  .canvas-topbar-actions { gap: 6px; }
+  .canvas-speaking-control { padding: 5px; gap: 6px; }
+  .canvas-speaking-control .ui-recording-status { min-width: 0; }
+  .canvas-camera-preview { width: calc(100vw - 24px); min-width: 0; }
+}
+
+/* Phones in landscape (short viewport height, but often >760px wide, so the
+   width-keyed mobile block above doesn't fire): the bottom-anchored speaking
+   control and the default bottom-right recording dock/camera preview both
+   claim the same shallow strip and visibly overlap. Move the dock/camera up
+   under the topbar here too, keyed on height rather than width. */
+@media (max-height: 480px) and (orientation: landscape) {
+  :root { --canvas-topbar-h: calc(58px + env(safe-area-inset-top, 0px)); }
+  .canvas-speaking-control { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); min-height: 44px; }
+  .canvas-recording-dock {
+    right: max(12px, env(safe-area-inset-right, 0px));
+    top: calc(var(--canvas-topbar-h) + 8px);
+    bottom: auto;
+  }
+  .canvas-recorder-settings { top: calc(100% + 10px); bottom: auto; }
+  .canvas-camera-preview {
+    right: max(12px, env(safe-area-inset-right, 0px));
+    top: calc(var(--canvas-topbar-h) + 8px + 46px + 8px);
+    bottom: auto;
+    width: min(220px, 30vw);
+  }
 }

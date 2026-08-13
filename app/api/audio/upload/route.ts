@@ -75,6 +75,10 @@ export async function POST(req: Request) {
       ),
     });
     if (guard instanceof Response) return guard;
+    // Lecture upload is not part of the anonymous /try pipeline (guardProviderRequest
+    // accepts anon callers now, but this route's own storage-ownership check below
+    // is meaningless without a real user id) — require a real account explicitly.
+    if (!guard.userId) return NextResponse.json({ error: { code: "unauthenticated", message: "Sign in to continue." } }, { status: 401 });
 
     // The RLS policy already scopes uploads to "{ownUserId}/...", but that
     // only constrains what the client COULD have written — verify the

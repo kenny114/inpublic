@@ -2,6 +2,7 @@ import type { PageTurnReason } from "./pagination";
 import type { SemanticScene } from "./semantic";
 import type { InPublicMode, StoryAction, StoryOperation } from "./story";
 import type { CameraView, CompositionRect, ReadabilityRole } from "./composition";
+import type { LatencySummary } from "./latency";
 
 type StoryLoggedAction = StoryAction["type"] | "story_event";
 
@@ -114,7 +115,49 @@ export type LogEvent =
       carriedLiveLine?: boolean;
     }
   | { t: number; type: "sketch-blocked"; why: string }
+  /**
+   * A Scribe wake-up the scheduler refused, and why.
+   *
+   * Logged because a board that stays quiet is otherwise indistinguishable
+   * from a board that is broken. This is what makes "the Scribe chose not to
+   * draw" a readable outcome rather than a suspicion.
+   */
+  | { t: number; type: "scribe-skipped"; reason: string; fresh: string }
+  /**
+   * One provisional mark drawn, promoted or retracted — tier 2.
+   *
+   * The retraction events are the ones to read: they are the running cost of
+   * guessing, and a session where they dominate means the recognisers in
+   * lib/speculative.ts are too eager.
+   */
+  | {
+      t: number;
+      type: "speculative";
+      event: "drawn" | "retired" | "promoted" | "blocked" | "dropped" | "stale" | "superseded";
+      /** Absent for events with no single subject, e.g. "stale". */
+      kind?: string;
+      text?: string;
+      why: string;
+    }
   | { t: number; type: "beat"; action: BeatAction; reason: string; focus: string }
+  /**
+   * One shadow-mode comparison between the local prefilter and the real Beat.
+   *
+   * `falseSkip` is the field that matters: a local skip the model would have
+   * drawn is a user's idea that would have been silently lost had the
+   * prefilter been live. See lib/beatPrefilter.ts.
+   */
+  | {
+      t: number;
+      type: "beat-shadow";
+      local: "draw" | "skip" | "uncertain";
+      model: string;
+      agreement: boolean;
+      falseSkip: boolean;
+      falseDraw: boolean;
+      reason: string;
+      beatMs: number;
+    }
   | { t: number; type: "draw"; frameId: string; frameLabel: string; mermaid: string }
   /** One artist response, after validation. */
   | {
@@ -176,8 +219,18 @@ export type LogEvent =
       followed: boolean;
     }
   | { t: number; type: "undo"; operationType?: string; operationId?: string }
-  | { t: number; type: "command"; command: "undo" | "new-page"; rawTranscript: string }
+  /** `when` distinguishes a command fired from settled interims from one that
+   *  waited for the final — the difference is 150–600ms of endpointing. */
+  | { t: number; type: "command"; command: "undo" | "new-page"; rawTranscript: string; when?: "final" | "early" }
   | { t: number; type: "invalid-timing"; streamEpoch: number; activeStreamEpoch: number; audioEndMs: number; inkedAtMs: number; reason: string }
+  /**
+   * One latency summary per listening session, written when the mic stops.
+   *
+   * Every field is `number | null`: null means the session never produced that
+   * measurement, which is a real answer and must not be flattened to zero.
+   * See lib/latency.ts.
+   */
+  | ({ t: number; type: "latency" } & LatencySummary)
   | { t: number; type: "attention"; action: "suppression" | "adoption" | "merge" | "compression" | "de-emphasis" | "removal"; target: string; reason: string }
   | { t: number; type: "thought"; rawSegments: string[]; merged: string; heldMs: number }
   | { t: number; type: "mode"; from: InPublicMode; to: InPublicMode }
@@ -202,6 +255,61 @@ export type LogEvent =
       type: "camera";
       event: "started" | "completed" | "cancelled";
       target: CameraView;
+      reason: string;
+    }
+  /**
+   * Camera-follow diagnostics: whether a reframe request from newly-landed
+   * content (a diagram, an Artist batch, a story scene) was requested,
+   * suppressed (and why), actually executed, or — after a non-move decision
+   * — still fails proposeCamera's own visibility check. Development-only;
+   * never rendered in production UI. See docs on framePage/proposeCamera.
+   */
+  | {
+      t: number;
+      type: "camera-metric";
+      event: "requested" | "suppressed" | "executed" | "failed_visibility_check";
+      reason: string;
+      force?: boolean;
+      manualPriorityActive?: boolean;
+      suppressReason?: "live-camera-hold" | "move-in-flight";
+      target?: CameraView;
+      occupiedCanvasRatio?: number;
+    }
+  | {
+      t: number;
+      type: "comparison";
+      event: "detected" | "movement_started" | "movement_completed" | "movement_cancelled" | "undo";
+      leftConceptId: string;
+      rightConceptId: string;
+      confidence?: number;
+      reason?: string;
+    }
+  | {
+      t: number;
+      type: "process";
+      event: "detected" | "movement_started" | "movement_completed" | "movement_cancelled" | "undo";
+      conceptIds: string[];
+      confidence?: number;
+      reason?: string;
+      orientation?: "horizontal" | "vertical";
+    }
+  /** One hypothesis's lifecycle, so Director's patience is observable in the log. */
+  | {
+      t: number;
+      type: "hypothesis";
+      event: "created" | "strengthened" | "weakened" | "abandoned" | "committed";
+      structureKind: "process";
+      hypothesisId: string;
+      conceptIds: string[];
+      evidenceLevel: "none" | "weak" | "developing" | "strong" | "sufficient";
+      observedMs?: number;
+    }
+  | { t: number; type: "directorWait"; reason: string }
+  | {
+      t: number;
+      type: "arbitration";
+      chose: "comparison" | "process" | "wait";
+      competingKinds: ("comparison" | "process")[];
       reason: string;
     }
   | {
@@ -268,7 +376,20 @@ export type LogEvent =
   | { t: number; type: "story-ambiguity"; rawTranscript: string; ambiguity: string; resolution: "pending" | "dismissed" | "confirmed" }
   | { t: number; type: "clear" }
   | { t: number; type: "error"; where: string; text: string }
-  | { t: number; type: "note"; text: string };
+  | { t: number; type: "note"; text: string }
+  /**
+   * A PerformanceObserver "longtask" entry — the main thread was unavailable
+   * for >= 50ms. `perfNow`/`perfEnd` are on the performance.now() timeline, the
+   * same clock as `latencyNow()` and Deepgram's own `audioEndMs`-anchored
+   * samples, so a long task can be overlapped against an interim's timestamp
+   * even though `t` itself is the session's Date.now()-based clock.
+   */
+  | { t: number; type: "long-task"; durationMs: number; perfNow: number; perfEnd: number; attribution?: string }
+  /**
+   * A human pressing "this felt slow" in the moment, for comparing subjective
+   * stalls against the recorded trace. Development-only affordance.
+   */
+  | { t: number; type: "perceived-stall"; perfNow: number };
 
 /** Omit that distributes across a union, so `log()` accepts any event shape. */
 export type LogEventInput = LogEvent extends infer U

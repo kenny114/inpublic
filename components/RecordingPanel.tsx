@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { type CSSProperties, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from "react";
+import { track } from "@vercel/analytics";
 import { useCanvasRecorder, type RecordingSnapshot } from "@/hooks/useCanvasRecorder";
 import { FREE_RECORDING_LIMIT_MS } from "@/lib/product";
 import type { InPublicMode } from "@/lib/story";
@@ -155,14 +156,14 @@ export function RecordingPanel({
         <span className={`canvas-recorder-state ${recorder.status}`} role="status"><i />{active ? formatDuration(recorder.durationMs) : recorder.status === "ready" ? "Saved" : "Video"}</span>
 
         {!active ? (
-          <button type="button" onClick={() => void recorder.start()} className="canvas-record-button"><Circle size={11} />Record</button>
+          <button type="button" onClick={() => { track("recording_started"); void recorder.start(); }} className="canvas-record-button"><Circle size={11} />Record</button>
         ) : recorder.status === "paused" ? (
           <button type="button" onClick={recorder.resume} className="canvas-record-button"><Circle size={11} />Resume</button>
         ) : (
           <button type="button" onClick={pauseRecording} className="canvas-recorder-icon-action" aria-label="Pause recording" title="Pause"><Pause size={14} /></button>
         )}
 
-        {active ? <button type="button" onClick={recorder.stop} className="canvas-recorder-icon-action danger" aria-label="Stop recording" title="Stop"><Square size={12} /></button> : null}
+        {active ? <button type="button" onClick={() => { track("recording_completed", { durationMs: recorder.durationMs }); recorder.stop(); }} className="canvas-recorder-icon-action danger" aria-label="Stop recording" title="Stop"><Square size={12} /></button> : null}
         {recorder.options.microphone && active ? <button type="button" aria-pressed={muted} onClick={() => setMuted(recorder.toggleMute())} className={`canvas-recorder-icon-action ${muted ? "selected" : ""}`} aria-label={muted ? "Unmute recording" : "Mute recording"} title={muted ? "Unmute" : "Mute"}><MicOff size={14} /></button> : null}
         {recorder.lastRecording ? <button type="button" onClick={recorder.exportLast} className="canvas-recorder-icon-action" aria-label="Download recording" title="Download"><Download size={14} /></button> : null}
 

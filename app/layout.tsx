@@ -1,7 +1,6 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
-import "@excalidraw/excalidraw/index.css";
 import "./globals.css";
 import "./product.css";
 import "./landing.css";
@@ -24,6 +23,12 @@ export const metadata: Metadata = {
     title: "InPublic — Speak. Watch your ideas take shape.",
     description: "Speaking becomes a live, editable visual experience.",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

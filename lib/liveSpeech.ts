@@ -12,6 +12,38 @@ export function localVoiceCommand(text: string): LocalVoiceCommand | null {
   return null;
 }
 
+/**
+ * The same command lane, fired from settled interim words instead of a final.
+ *
+ * Waiting for the final costs 150–600ms of endpointing on every command, which
+ * is the difference between the board reacting with you and reacting after
+ * you. Because the matcher is a closed set of exact phrases, running it early
+ * is safe in a way that no open-ended interpretation would be.
+ *
+ * Two guards make it safe, and both are load-bearing:
+ *
+ * 1. **The whole settled utterance must be the command, exactly.** Not a
+ *    prefix, not a substring. "scratch" is not "scratch that"; "scratch that
+ *    idea" is a sentence about an idea and must not erase anything. This is
+ *    why the check delegates to `localVoiceCommand` on the full string rather
+ *    than testing for a leading match.
+ * 2. **The words must be settled** — agreed by two consecutive interims —
+ *    which is the caller's job and is what stops a half-heard "under…" from
+ *    ever reaching this function as "undo".
+ *
+ * The asymmetry of the risk is the whole argument. Firing a command 300ms
+ * early is a small win; firing one that was never spoken destroys work the
+ * speaker cannot see was destroyed. So the bar is exact equality, and anything
+ * ambiguous simply waits for the final, which is the behaviour we had anyway.
+ */
+export function earlyVoiceCommand(settledText: string): LocalVoiceCommand | null {
+  const clean = settledText.trim();
+  if (!clean) return null;
+  // A trailing comma means the speaker is still going — "undo, and then…".
+  if (/[,;:]$/.test(clean)) return null;
+  return localVoiceCommand(clean);
+}
+
 const INCOMPLETE_ENDINGS = new Set([
   "toward", "towards", "from", "to", "because", "with", "and", "but",
   "if", "when", "that", "need", "needs",

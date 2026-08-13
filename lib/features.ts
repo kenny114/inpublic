@@ -23,6 +23,37 @@ export const features = {
   standardMode: true,
   storyMode: false,
   audioReplay: false,
+  /**
+   * Tier 2 (lib/speculative.ts / components/Board.tsx's Reflex wiring).
+   * Flipping this off entirely skips recognition and rendering — no
+   * setTimeout is even scheduled — while leaving Tier 1 (writeLive) and Tier
+   * 3 (Scribe/Beat/Artist) untouched. Exists so Reflex-off-vs-on can be
+   * measured (see scripts/latency-benchmark.mjs) and so it can be pulled
+   * instantly without a code change if it ever measurably costs Tier 1
+   * anything (see the invariant comment at the top of writeLive).
+   */
+  reflex: true,
+  /**
+   * Director/Choreographer v0: recognize a spoken comparison between two
+   * concepts already on the board and reorganize their existing nodes into a
+   * side-by-side layout instead of drawing more content next to them. See
+   * lib/director.ts and lib/choreographerComparison.ts. Off means the
+   * detection call after applyActions never runs — zero behavior change,
+   * same pattern as `reflex`.
+   */
+  choreographerComparison: true,
+  /**
+   * Director V1: a persistent, patient structural-recognition layer that adds
+   * PROCESS (an ordered chain of concepts already on the board) alongside
+   * Comparison, and arbitrates between the two when a beat's evidence
+   * supports both. See lib/directorState.ts and lib/choreographerProcess.ts.
+   * Off means runBeat falls through to the exact `choreographerComparison`
+   * branch that existed before this flag — zero behavior change. On subsumes
+   * comparison's *decision* (still the same detectComparison/
+   * performComparison functions) so both capabilities can be arbitrated in
+   * one place instead of firing independently.
+   */
+  directorV1: true,
 } as const;
 
 export type FeatureFlags = typeof features;

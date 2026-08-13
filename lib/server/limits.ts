@@ -30,10 +30,25 @@ export const backgroundPauseSeconds = positiveInteger(
   30,
 );
 
+/** Anonymous /try trial allowance, once per anon_id, ever (no monthly recurrence). */
+export const anonymousTrialSeconds = positiveInteger("ANON_TRIAL_SECONDS", 300);
+/** Distinct anon_ids allowed from the same hashed IP in a rolling 24h window. */
+export const anonymousIpDailyLimit = positiveInteger("ANON_TRIAL_IP_DAILY_LIMIT", 3);
+
 export const routeLimits: Record<string, { limit: number; windowSeconds: number }> = {
-  deepgram: { limit: positiveInteger("RATE_LIMIT_DEEPGRAM_TOKENS", 3), windowSeconds: 600 },
+  // 3 per 10 minutes was incompatible with the reconnect ladder, which can
+  // try up to 12 times and used to mint a credential per attempt — a session
+  // that dropped four times could not come back. The client now reuses an
+  // unexpired credential (hooks/useDeepgram.ts tokenRef), so mints are rare;
+  // this ceiling covers legitimate stop/start cycles and genuine token
+  // invalidation without being the thing that ends a session.
+  deepgram: { limit: positiveInteger("RATE_LIMIT_DEEPGRAM_TOKENS", 10), windowSeconds: 600 },
   gemini: { limit: positiveInteger("RATE_LIMIT_GEMINI_TOKENS", 3), windowSeconds: 600 },
-  scribe: { limit: positiveInteger("RATE_LIMIT_SCRIBE_PER_MINUTE", 12), windowSeconds: 60 },
+  // Raised from 12 alongside the client cooldown drop (5250ms → 1200ms). The
+  // client's scheduler refuses wake-ups with no new content, so observed rates
+  // stay well below this; the ceiling exists to bound a misbehaving client,
+  // not to pace a healthy one.
+  scribe: { limit: positiveInteger("RATE_LIMIT_SCRIBE_PER_MINUTE", 30), windowSeconds: 60 },
   beat: { limit: positiveInteger("RATE_LIMIT_BEAT_PER_MINUTE", 10), windowSeconds: 60 },
   artist: { limit: positiveInteger("RATE_LIMIT_ARTIST_PER_MINUTE", 6), windowSeconds: 60 },
   story: { limit: positiveInteger("RATE_LIMIT_STORY_PER_MINUTE", 8), windowSeconds: 60 },

@@ -46,7 +46,34 @@ export type CanvasAction =
   | { type: "resize_concept"; conceptId: string; scale: number }
   | { type: "zoom_to_concept"; conceptId: string }
   | { type: "highlight_concept"; conceptId: string }
-  | { type: "undo_last" };
+  | { type: "undo_last" }
+  /**
+   * Two concepts already on the board have become a comparison. Deterministic
+   * only — the Director (lib/director.ts) constructs this directly from
+   * evidence in the transcript; it is never emitted by parseAction/the Artist
+   * prompt, so no coordinates and no model round trip are involved.
+   */
+  | {
+      type: "form_comparison";
+      leftConceptId: string;
+      rightConceptId: string;
+      relationshipLabel: string;
+      evidence: string;
+      confidence: number;
+    }
+  /**
+   * 3-6 concepts already on the board have become an ordered process. Same
+   * deterministic-only contract as `form_comparison`: constructed directly by
+   * the Director (lib/directorState.ts) from accumulated evidence, never
+   * emitted by parseAction/the Artist prompt, no coordinates, no model round
+   * trip.
+   */
+  | {
+      type: "form_process";
+      stages: string[];
+      evidence: string;
+      confidence: number;
+    };
 
 export type MoveDirection = "left" | "right" | "up" | "down";
 

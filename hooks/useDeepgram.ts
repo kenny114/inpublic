@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { noteFinalTranscript, providerRequestHeaders } from "@/lib/usage-client";
+import { latency, latencyNow, type DiagnosticTraceEvent } from "@/lib/latency";
+
+const isDev = process.env.NODE_ENV === "development";
 
 export type MicStatus = "idle" | "connecting" | "live" | "reconnecting" | "error";
 
@@ -9,6 +12,13 @@ export interface DeepgramResultTiming {
   receivedAtMs: number;
   firstWordEndMs?: number;
   kind: "interim" | "final";
+  /**
+   * Wall-clock ms from the last audio chunk sent to this message arriving —
+   * the same measurement as the "chunk_to_message" latency sample, carried
+   * through so the caller can anchor an ink-side wall-clock metric (see
+   * lib/telemetry.ts) instead of Deepgram's self-reported audio timeline.
+   */
+  sinceChunkSentMs?: number;
 }
 
 export interface SpeechStreamMetrics {
@@ -175,6 +185,75 @@ export function useDeepgram({
   const streamEpochRef = useRef(0);
   const streamMetricsRef = useRef<StreamMetricAccumulator>(emptyMetrics());
 
+  /**
+   * Diagnostic-only instrumentation for the "is Deepgram slow, or is our own
+   * bookkeeping wrong" question, temporary and additive — it changes no
+   * transcription behaviour.
+   *
+   * `lastChunkSentAtRef` is a second, independent way to measure how long a
+   * result took to come back: wall-clock time since we last handed audio to
+   * the WebSocket, with no dependence on Deepgram's self-reported `start`/
+   * `duration` fields at all. `audioEndMs` (used everywhere else in this file)
+   * is *inferred* from those fields; if that inference were ever wrong, every
+   * measurement built on it would be wrong the same way and agree with itself.
+   * This one can't share that blind spot.
+   */
+  const lastChunkSentAtRef = useRef(0);
+  /** Set on Deepgram's own SpeechStarted VAD event; cleared once consumed by
+   * the first raw interim that follows, so it is measured once per utterance
+   * rather than accumulating. */
+  const speechStartedAtRef = useRef<number | null>(null);
+
+  const currentTraceRef = useRef<DiagnosticTraceEvent[]>([]);
+  const currentTraceStartRef = useRef(0);
+  const firstTraceRef = useRef<DiagnosticTraceEvent[] | null>(null);
+  const worstTraceRef = useRef<{ maxGap: number; events: DiagnosticTraceEvent[] } | null>(null);
+  const MAX_TRACE_EVENTS = 60;
+
+  const pushTrace = useCallback((event: Omit<DiagnosticTraceEvent, "tMs">, atMs: number) => {
+    if (!currentTraceStartRef.current) currentTraceStartRef.current = atMs;
+    const trace = currentTraceRef.current;
+    if (trace.length < MAX_TRACE_EVENTS) {
+      trace.push({ ...event, tMs: Math.round(atMs - currentTraceStartRef.current) });
+    }
+  }, []);
+
+  const closeTrace = useCallback(() => {
+    const events = currentTraceRef.current;
+    const maxGap = Math.max(0, ...events.map((e) => e.sinceChunkSentMs ?? 0));
+    if (!firstTraceRef.current && events.length) firstTraceRef.current = events;
+    if (events.length && (!worstTraceRef.current || maxGap > worstTraceRef.current.maxGap)) {
+      worstTraceRef.current = { maxGap, events };
+    }
+    currentTraceRef.current = [];
+    currentTraceStartRef.current = 0;
+  }, []);
+
+  /**
+   * The Deepgram SDK module, once imported.
+   *
+   * The import is a network fetch of a lazy chunk on a cold load, and it used
+   * to sit in the middle of the startup chain between the token and the
+   * socket. Hoisting it into prewarm takes it off the critical path entirely.
+   */
+  const sdkRef = useRef<typeof import("@deepgram/sdk") | null>(null);
+  /**
+   * The last minted credential, kept until shortly before it expires.
+   *
+   * This is the fix for a real mismatch: /api/deepgram/token is rate limited
+   * to 3 mints per 10 minutes (lib/server/limits.ts), while the reconnect
+   * ladder below will try up to 12 times and used to mint a fresh credential
+   * on every single attempt. A session that dropped four times in ten minutes
+   * could not come back — the 4th mint returned 429 and the remaining
+   * attempts burned against a wall.
+   *
+   * Reusing an unexpired credential also makes the common case (a brief
+   * network blip) reconnect without a server round trip at all.
+   */
+  const tokenRef = useRef<{ accessToken?: string; key?: string; expiresAtMs: number } | null>(null);
+  /** In-flight prewarm, so concurrent callers share one microphone request. */
+  const prewarmRef = useRef<Promise<void> | null>(null);
+
   const cbs = useRef({
     onFinal,
     onInterim,
@@ -224,9 +303,14 @@ export function useDeepgram({
   const noteAudioChunk = useCallback(() => {
     const at = performance.now();
     const metrics = streamMetricsRef.current;
-    if (metrics.lastChunkAt) metrics.chunkGaps.push(at - metrics.lastChunkAt);
+    if (metrics.lastChunkAt) {
+      const gap = at - metrics.lastChunkAt;
+      metrics.chunkGaps.push(gap);
+      latency.observe("chunk_gap", gap);
+    }
     metrics.lastChunkAt = at;
     metrics.audioChunks += 1;
+    latency.mark("first_audio_chunk", at);
   }, []);
 
   const prepareCapture = useCallback(async (stream: MediaStream) => {
@@ -245,6 +329,7 @@ export function useDeepgram({
           noteAudioChunk();
           try {
             connectionRef.current.send(event.data);
+            lastChunkSentAtRef.current = cbs.current.now();
           } catch {
             /* socket closed between the open check and send */
           }
@@ -261,6 +346,7 @@ export function useDeepgram({
           sink,
           sampleRate: context.sampleRate,
         };
+        latency.mark("worklet_ready", latencyNow());
         return;
       } catch (error) {
         await context?.close().catch(() => {});
@@ -268,7 +354,55 @@ export function useDeepgram({
       }
     }
     captureRef.current = { kind: "media-recorder" };
+    latency.mark("worklet_ready", latencyNow());
   }, [noteAudioChunk]);
+
+  /** Import the SDK once and hold it. Safe to call repeatedly. */
+  const loadSdk = useCallback(async () => {
+    if (!sdkRef.current) sdkRef.current = await import("@deepgram/sdk");
+    latency.mark("sdk_ready", latencyNow());
+    return sdkRef.current;
+  }, []);
+
+  /**
+   * Everything that can happen before we are allowed to send audio anywhere.
+   *
+   * Acquiring the microphone, building the worklet graph and fetching the SDK
+   * chunk are all local to the browser: none of them contacts Deepgram, none
+   * of them costs money, and none of them depends on the usage lease. They
+   * used to run *after* the entitlement check and the lease POST had both
+   * completed, which made the whole startup a single serial chain.
+   *
+   * Running this concurrently with the lease is safe precisely because no
+   * audio can leave the machine until `socketOpenRef` is true, and the socket
+   * is not opened until the lease has been granted and a token minted with it.
+   * The microphone light may come on a few hundred milliseconds before the
+   * lease resolves; nothing is transmitted in that window.
+   */
+  const prewarm = useCallback(async () => {
+    if (prewarmRef.current) return prewarmRef.current;
+    const task = (async () => {
+      // Kick the SDK fetch off first — it is pure network and overlaps the
+      // permission prompt, which is usually the longest part of this.
+      const sdk = loadSdk();
+      if (!streamRef.current) {
+        streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+        latency.mark("mic_permission", latencyNow());
+      }
+      await prepareCapture(streamRef.current);
+      await sdk;
+    })();
+    prewarmRef.current = task;
+    try {
+      await task;
+    } catch (err) {
+      // A failed prewarm must not be cached as a success; the next attempt
+      // gets a clean run at it.
+      prewarmRef.current = null;
+      throw err;
+    }
+    return task;
+  }, [loadSdk, prepareCapture]);
 
   const stop = useCallback(() => {
     startedRef.current = false;
@@ -280,6 +414,11 @@ export function useDeepgram({
     }
     abortRef.current?.abort();
     abortRef.current = null;
+    prewarmRef.current = null;
+    // The credential is scoped to the listening session that is ending. Even
+    // though it may still be valid for a few seconds, holding it across a stop
+    // would outlive the lease it was minted under.
+    tokenRef.current = null;
 
     teardownSocket();
     const capture = captureRef.current;
@@ -306,8 +445,15 @@ export function useDeepgram({
     const ac = new AbortController();
     abortRef.current = ac;
 
-    const res = await fetch("/api/deepgram/token", { signal: ac.signal, headers: providerRequestHeaders() });
-    if (!res.ok) {
+    // Reuse a credential that is still comfortably valid rather than minting
+    // a new one. See tokenRef for why this is load-bearing and not just an
+    // optimisation.
+    const cached = tokenRef.current;
+    let credential = cached && cached.expiresAtMs > Date.now() ? cached : null;
+
+    if (!credential) {
+      const res = await fetch("/api/deepgram/token", { signal: ac.signal, headers: providerRequestHeaders() });
+      if (!res.ok) {
       const body = await res.text();
       // The Owner/Admin hint is only ever relevant to a 500 here — that's
       // the one path (app/api/deepgram/token/route.ts's catch block) where
@@ -319,29 +465,41 @@ export function useDeepgram({
       // the hint unconditionally previously told a correctly-configured key
       // it needed permissions it already had, whenever the real cause was
       // just "too many requests, wait and retry."
-      const hint =
-        res.status === 500
-          ? " The Deepgram key needs a role that can mint credentials (Owner or Admin); a usage-only key cannot."
-          : "";
-      throw new Error(`token ${res.status}: ${body}.${hint}`);
-    }
-    const { accessToken, key } = (await res.json()) as {
-      accessToken?: string;
-      key?: string;
-    };
-    if (!accessToken && !key) throw new Error("no credential returned");
+        const hint =
+          res.status === 500
+            ? " The Deepgram key needs a role that can mint credentials (Owner or Admin); a usage-only key cannot."
+            : "";
+        throw new Error(`token ${res.status}: ${body}.${hint}`);
+      }
+      const { accessToken, key, expiresIn } = (await res.json()) as {
+        accessToken?: string;
+        key?: string;
+        expiresIn?: number;
+      };
+      if (!accessToken && !key) throw new Error("no credential returned");
 
-    const { createClient, LiveTranscriptionEvents } = await import(
-      "@deepgram/sdk"
-    );
+      // Retire the cached copy well before the real expiry. A credential that
+      // dies during the WebSocket handshake fails the connection outright, and
+      // the margin costs nothing.
+      const ttlSeconds = Number.isFinite(expiresIn) ? Number(expiresIn) : 60;
+      credential = {
+        accessToken,
+        key,
+        expiresAtMs: Date.now() + Math.max(0, ttlSeconds - 10) * 1000,
+      };
+      tokenRef.current = credential;
+    }
+    latency.mark("token_ready", latencyNow());
+
+    const { createClient, LiveTranscriptionEvents } = await loadSdk();
 
     const stream = streamRef.current;
     if (!stream) throw new Error("microphone stream is gone");
 
     // /auth/grant returns a bearer token; createProjectKey returns an API key.
-    const deepgram = accessToken
-      ? createClient({ accessToken })
-      : createClient(key as string);
+    const deepgram = credential.accessToken
+      ? createClient({ accessToken: credential.accessToken })
+      : createClient(credential.key as string);
 
     // Bias recognition toward what the speaker actually says. nova-3 takes
     // `keyterm`, repeated once per term; the SDK accepts an array. This is the
@@ -360,6 +518,13 @@ export function useDeepgram({
       endpointing: 150,
       utterance_end_ms: 1000,
       punctuate: true,
+      // Diagnostic only: adds SpeechStarted/UtteranceEnd events to the socket.
+      // Deepgram documents this as informational — it does not change
+      // endpointing, interim behaviour, or transcription accuracy, so this is
+      // additive instrumentation, not a behavioural change. It gives a
+      // ground-truth "the user started talking" timestamp from Deepgram's own
+      // VAD, independent of anything InPublic infers from text.
+      vad_events: true,
       ...(capture?.kind === "audio-worklet-pcm16"
         ? { encoding: "linear16" as const, sample_rate: capture.sampleRate, channels: 1 }
         : {}),
@@ -373,7 +538,11 @@ export function useDeepgram({
       audioEpochRef.current = cbs.current.now();
       streamEpochRef.current += 1;
       streamMetricsRef.current = emptyMetrics();
+      currentTraceRef.current = [];
+      currentTraceStartRef.current = 0;
+      speechStartedAtRef.current = null;
       socketOpenRef.current = true;
+      latency.mark("socket_open", latencyNow());
       if (terms.length) cbs.current.onKeyterms?.(terms);
       attemptsRef.current = 0;
       reconnectingRef.current = false;
@@ -390,6 +559,7 @@ export function useDeepgram({
             noteAudioChunk();
             try {
               connection.send(event.data);
+              lastChunkSentAtRef.current = cbs.current.now();
             } catch {
               /* socket closed mid-chunk */
             }
@@ -423,18 +593,40 @@ export function useDeepgram({
         : undefined;
       const metrics = streamMetricsRef.current;
 
+      // Diagnostic only, see lastChunkSentAtRef above: a second, independent
+      // read on "how long did that take" that doesn't go through audioEndMs.
+      const sinceChunkSentMs = lastChunkSentAtRef.current
+        ? Math.max(0, Math.round(receivedAtMs - lastChunkSentAtRef.current))
+        : undefined;
+      if (sinceChunkSentMs !== undefined) latency.observe("chunk_to_message", sinceChunkSentMs);
+      if (speechStartedAtRef.current !== null) {
+        // Only the first raw text after a SpeechStarted event consumes it —
+        // this is meant to measure "VAD said you started talking" to "the
+        // first text about it", once per utterance, not every revision.
+        latency.observe(
+          "speech_onset_to_raw_interim",
+          Math.max(0, Math.round(receivedAtMs - speechStartedAtRef.current)),
+        );
+        speechStartedAtRef.current = null;
+      }
+      pushTrace(
+        { kind: data.is_final ? "final" : "interim", text: text.slice(0, 80), sinceChunkSentMs },
+        receivedAtMs,
+      );
+
       if (data.is_final) {
         noteFinalTranscript();
         const tEnd = receivedAtMs;
         const durationMs = (data.duration ?? 0) * 1000;
         const finalLagMs = Math.max(0, Math.round(receivedAtMs - audioEndMs));
+        latency.observe("final_lag", finalLagMs);
         cbs.current.onFinal(
           text,
           Math.max(0, tEnd - durationMs),
           tEnd,
           audioEndMs,
           streamEpochRef.current,
-          { receivedAtMs, firstWordEndMs, kind: "final" },
+          { receivedAtMs, firstWordEndMs, kind: "final", sinceChunkSentMs },
         );
         cbs.current.onInterim("", audioEndMs, streamEpochRef.current, Number(alt?.confidence ?? 0));
         const captureNow = captureRef.current;
@@ -457,26 +649,51 @@ export function useDeepgram({
           finalLagMs,
         });
         streamMetricsRef.current = emptyMetrics();
+        closeTrace();
       } else {
-        if (metrics.lastInterimAt) metrics.interimGaps.push(receivedAtMs - metrics.lastInterimAt);
+        latency.mark("first_interim", latencyNow());
+        latency.countInterim();
+        if (metrics.lastInterimAt) {
+          const gap = receivedAtMs - metrics.lastInterimAt;
+          metrics.interimGaps.push(gap);
+          latency.observe("interim_gap", gap);
+        }
         metrics.lastInterimAt = receivedAtMs;
-        metrics.interimLags.push(Math.max(0, receivedAtMs - audioEndMs));
+        const interimLag = Math.max(0, receivedAtMs - audioEndMs);
+        metrics.interimLags.push(interimLag);
+        latency.observe("interim_lag", interimLag);
         if (metrics.firstVisibleWordMs === undefined && firstWordEndMs !== undefined) {
           metrics.firstVisibleWordMs = Math.max(0, Math.round(receivedAtMs - firstWordEndMs));
+          latency.observe("first_visible_word", metrics.firstVisibleWordMs);
         }
         cbs.current.onInterim(
           text,
           audioEndMs,
           streamEpochRef.current,
           Number(alt?.confidence ?? 0),
-          { receivedAtMs, firstWordEndMs, kind: "interim" },
+          { receivedAtMs, firstWordEndMs, kind: "interim", sinceChunkSentMs },
         );
       }
     });
 
+    // Diagnostic only — see the `vad_events: true` comment above. Neither
+    // handler changes what gets transcribed or when it finalises.
+    connection.on(LiveTranscriptionEvents.SpeechStarted, () => {
+      speechStartedAtRef.current = cbs.current.now();
+      pushTrace({ kind: "speech-started" }, speechStartedAtRef.current);
+    });
+    connection.on(LiveTranscriptionEvents.UtteranceEnd, () => {
+      pushTrace({ kind: "utterance-end" }, cbs.current.now());
+    });
+
     connection.on(LiveTranscriptionEvents.Error, (err: unknown) => {
-      console.warn("[deepgram]", err);
+      if (isDev) console.warn("[deepgram]", err);
       cbs.current.onNote?.(`deepgram error: ${String(err)}`);
+      // A socket error is the one signal that the cached credential might be
+      // the problem (revoked, or expiring sooner than advertised). Drop it so
+      // the reconnect mints a fresh one rather than retrying a bad token
+      // twelve times.
+      tokenRef.current = null;
       // Don't declare failure here — Close follows, and that path reconnects.
     });
 
@@ -517,7 +734,7 @@ export function useDeepgram({
           await openSocket();
         } catch (err) {
           if ((err as Error)?.name === "AbortError") return;
-          console.warn("[deepgram] reconnect failed", err);
+          if (isDev) console.warn("[deepgram] reconnect failed", err);
           cbs.current.onNote?.(`deepgram reconnect failed: ${String(err)}`);
           reconnectingRef.current = false;
           reconnectRef.current();
@@ -538,11 +755,10 @@ export function useDeepgram({
 
     try {
       // The stream is acquired once and reused across reconnects, so a dropped
-      // socket never re-prompts for the microphone.
-      streamRef.current = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
-      await prepareCapture(streamRef.current);
+      // socket never re-prompts for the microphone. When the caller has
+      // already prewarmed, this resolves immediately and the socket opens on
+      // the next tick.
+      await prewarm();
       await openSocket();
       return true;
     } catch (err) {
@@ -550,8 +766,13 @@ export function useDeepgram({
       // console.warn, not console.error: Next's dev overlay intercepts errors
       // and throws a full-screen panel over the canvas. A mic that won't start
       // should be a red dot on the control bar, not a takeover mid-recording.
-      console.warn("[deepgram] start failed", err);
+      // Dev-only now too — a real user's console shouldn't see raw internals.
+      if (isDev) console.warn("[deepgram] start failed", err);
       startedRef.current = false;
+      // The prewarmed graph is being torn down here, so the memo of it has to
+      // go too — otherwise the next attempt would await a resolved promise and
+      // then find no microphone.
+      prewarmRef.current = null;
       const capture = captureRef.current;
       captureRef.current = null;
       if (capture?.kind === "audio-worklet-pcm16") {
@@ -579,5 +800,20 @@ export function useDeepgram({
 
   useEffect(() => stop, [stop]);
 
-  return { status, start, stop, toggle };
+  /**
+   * Diagnostic traces for the two most informative utterances of the session:
+   * the first one (a representative example) and whichever had the largest
+   * chunk-to-message gap (a worst case worth looking at directly). Read once,
+   * at session stop — see the comment on lastChunkSentAtRef above for why
+   * these exist.
+   */
+  const getDiagnosticTraces = useCallback(() => {
+    closeTrace(); // in case a session stops mid-utterance
+    return {
+      first: firstTraceRef.current,
+      worst: worstTraceRef.current?.events ?? null,
+    };
+  }, [closeTrace]);
+
+  return { status, start, stop, toggle, prewarm, getDiagnosticTraces };
 }

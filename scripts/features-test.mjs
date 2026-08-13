@@ -30,6 +30,8 @@ section("feature flags");
 check("standardMode is enabled", features.standardMode === true);
 check("storyMode is parked", features.storyMode === false);
 check("audioReplay is parked", features.audioReplay === false);
+check("choreographerComparison is enabled", features.choreographerComparison === true);
+check("directorV1 defaults off", features.directorV1 === false);
 
 section("preferences.readPreferences() clamps a stale story preference to standard");
 

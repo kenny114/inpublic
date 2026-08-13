@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { noteFinalTranscript, providerRequestHeaders } from "@/lib/usage-client";
 import type { Op } from "@/lib/ops";
 
+const isDev = process.env.NODE_ENV === "development";
+
 export type LiveStatus = "idle" | "connecting" | "live" | "error";
 
 interface Options {
@@ -263,7 +265,7 @@ export function useGeminiLive({
           if (msg?.goAway) reconnectRef.current();
         },
         onerror: (e: any) => {
-          console.warn("[gemini-live]", e?.message ?? e);
+          if (isDev) console.warn("[gemini-live]", e?.message ?? e);
           setStatus("error");
         },
         onclose: () => {
@@ -289,7 +291,7 @@ export function useGeminiLive({
         await connect(resumeHandleRef.current ?? undefined);
         cbs.current.onNote?.("gemini live reconnected");
       } catch (err) {
-        console.warn("[gemini-live] reconnect failed", err);
+        if (isDev) console.warn("[gemini-live] reconnect failed", err);
         cbs.current.onNote?.(`gemini live reconnect failed: ${String(err)}`);
         setStatus("error");
       } finally {
@@ -354,7 +356,7 @@ export function useGeminiLive({
       node.connect(sink).connect(ctx.destination);
       return true;
     } catch (err) {
-      console.warn("[gemini-live] start failed", err);
+      if (isDev) console.warn("[gemini-live] start failed", err);
       startedRef.current = false;
       teardownAudio();
       setStatus("error");

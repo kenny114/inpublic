@@ -86,7 +86,11 @@ export type OperationType =
   | "highlight_concept"
   | "scribe_mark"
   /** A spoken sentence written by the live line. Undoable like anything else. */
-  | "live_line";
+  | "live_line"
+  /** Two existing concepts reorganized into a side-by-side comparison. See lib/director.ts. */
+  | "form_comparison"
+  /** 3-6 existing concepts reorganized into an ordered chain. See lib/directorState.ts. */
+  | "form_process";
 
 /**
  * Everything needed to reverse one operation. Elements are captured whole

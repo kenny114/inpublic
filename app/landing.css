@@ -68,3 +68,16 @@
   .pricing-founding { padding: 72px 0 84px; }.founding-card { padding: 28px; grid-template-columns: 1fr; gap: 28px; }
 }
 @media (prefers-reduced-motion: reduce) { .faq-list details[open] summary span { transform: none; } }
+
+/* /try — the entire point is minimizing time-to-first-value, so this is
+ * deliberately one screen with one decision: a single large, thumb-reachable
+ * button, no explanatory copy beyond the one-line pitch. */
+.try-landing { display: flex; align-items: center; justify-content: center; min-height: 100dvh; padding: 24px; background: white; }
+.try-landing-copy { display: flex; max-width: 420px; flex-direction: column; align-items: center; text-align: center; gap: 6px; }
+.try-landing-copy h1 { margin: 0; font-size: clamp(30px, 7vw, 40px); font-weight: 620; letter-spacing: -.03em; line-height: 1.08; color: var(--ui-text); }
+.try-landing-copy > p { margin: 0 0 22px; color: var(--ui-muted); font-size: 16px; }
+.try-landing-cta { display: inline-flex; width: 100%; min-height: 56px; align-items: center; justify-content: center; gap: 10px; border: 1px solid var(--ui-text); border-radius: var(--ui-radius); background: var(--ui-text); color: white; font-size: 16px; font-weight: 650; text-decoration: none; }
+.try-landing-cta:hover { background: #34363a; }
+.try-landing-cta:disabled { cursor: not-allowed; opacity: .6; }
+.try-landing-error { margin: 14px 0 0; color: #963d36; font-size: 13px; line-height: 1.5; }
+.try-landing-signin { margin-top: 18px; color: var(--ui-muted); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
