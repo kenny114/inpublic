@@ -8,7 +8,7 @@ import { Excalidraw } from "@excalidraw/excalidraw";
 // not before.
 import "@excalidraw/excalidraw/index.css";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { track } from "@vercel/analytics";
 import { CanvasTopBar } from "@/components/CanvasShell";
 import { ControlBar, ErrorBanner } from "@/components/ControlBar";
@@ -95,6 +95,7 @@ import {
   type ReferenceTarget,
 } from "@/lib/reference";
 import { correctTranscript, groundedInSource, keyterms } from "@/lib/vocab";
+import { sttDebug } from "@/lib/sttDebug";
 import {
   MAX_TEMPORARY_SCRIBE_MARKS,
   temporaryMarkBudgetReached,
@@ -120,6 +121,7 @@ import {
   READABILITY_CONTRACT,
   effectiveTextSize,
   initialCompositionState,
+  liveLineFitsViewport,
   proposeCamera,
   recordingViewport,
   rectUnion,
@@ -144,7 +146,7 @@ import {
   unmarkProcessCommitted,
   type DirectorState,
 } from "@/lib/directorState";
-import { features } from "@/lib/features";
+import { features, isLivePresentationV2Enabled } from "@/lib/features";
 import {
   activeStoryScene,
   applyStoryActions,
@@ -862,6 +864,21 @@ export default function Board({
     invalid: 0,
   });
   const settledLiveRef = useRef<{ ids: string[]; base: Pen; after: Pen } | null>(null);
+  /**
+   * Live Speech Presentation V2 (features.livePresentationV2). Resolved once
+   * per mount — the dev-only `?v2=1` override is a URL, not live state, so
+   * there is nothing to react to after the page has loaded.
+   */
+  const v2Enabled = useMemo(() => isLivePresentationV2Enabled(), []);
+  /**
+   * The thought currently being held open across Deepgram finals, under V2
+   * only. `pushStructuralSegment`/`flushStructuralThought` (lib/liveSpeech.ts)
+   * are the exact same deterministic, model-free merge Story Mode already
+   * uses to decide "is this one thought or two" — reused here, unchanged, to
+   * decide whether the next final continues the current visual block or
+   * starts a new one. Empty text means no thought is currently held open.
+   */
+  const v2ThoughtRef = useRef<StructuralThoughtState>(EMPTY_THOUGHT);
   /**
    * Where the most recent transcript ended on Deepgram's audio timeline.
    *
@@ -2474,7 +2491,12 @@ export default function Board({
       const seq = ++liveSeqRef.current;
       const startedAt = now();
       await fontsReadyRef.current;
-      if (!liveRef.current && settledLiveRef.current) dropSettledLiveLine();
+      // V2 INVARIANT (docs/LIVE-SPEECH-PRESENTATION-V2.md, "Settled
+      // Thought"): a settled line is left on the page instead of being
+      // deleted the instant the next utterance starts. Load-bearing, not
+      // cosmetic — with the Scribe suppressed, this is the ONLY thing that
+      // makes settled speech a permanent page record under V2.
+      if (!v2Enabled && !liveRef.current && settledLiveRef.current) dropSettledLiveLine();
 
       // The line grows word by word, so its row has to be re-reserved on every
       // interim, which means rewinding the pen to where the sentence started —
@@ -2491,6 +2513,14 @@ export default function Board({
       // whatever landed — which is the right trade against overlapping it.
       const prior = liveRef.current;
       const ours = prior !== null && samePen(penRef.current, prior.after);
+      // V2 INVARIANT: an active thought should not repeatedly re-anchor
+      // (docs/LIVE-SPEECH-PRESENTATION-V2.md, "Protected Invariants" #4).
+      // With secondary producers suppressed, the pen should never move out
+      // from under it — diagnostic only; if it did anyway, that's worth
+      // knowing about rather than silently re-anchoring.
+      if (v2Enabled && prior !== null && !ours) {
+        log({ type: "v2", event: "anchor-reset", detail: settled ? "final" : "interim" });
+      }
       // The utterance's element id, adopted from the first build and then held
       // for the rest of the sentence. Empty until that first build lands.
       let elementId = prior?.elementId ?? "";
@@ -2605,7 +2635,36 @@ export default function Board({
       // While speech is arriving, the live line owns the shot. It keeps one
       // stable element id across interims, so following it does not confuse a
       // changing transcript with a changing subject.
-      framePage(false, "following live narration", null, elementId);
+      //
+      // V2 INVARIANT (docs/LIVE-SPEECH-PRESENTATION-V2.md, "Camera
+      // Contract"): do not chase every interim. Ask the camera to follow the
+      // live line only when it is genuinely about to leave the visible
+      // viewport — never as a matter of routine. proposeCamera still owns
+      // the actual move decision/hysteresis (cooldown, displacement, zoom
+      // clamp); liveLineFitsViewport only decides whether to ask it at all.
+      // Do not make this call unconditional again — that reintroduces the
+      // "camera follows every word" distraction V2 exists to remove.
+      if (!v2Enabled) {
+        framePage(false, "following live narration", null, elementId);
+      } else {
+        const app = apiRef.current?.getAppState?.();
+        const fits = liveLineFitsViewport(
+          { x: spot.x, y: spot.y, width: built.w, height: built.h },
+          {
+            scrollX: Number(app?.scrollX ?? 0),
+            scrollY: Number(app?.scrollY ?? 0),
+            zoom: Number(app?.zoom?.value ?? app?.zoom ?? 1) || 1,
+            width: Number(app?.width ?? 0),
+            height: Number(app?.height ?? 0),
+          },
+        );
+        if (fits) {
+          log({ type: "v2", event: "camera-follow-skipped", detail: settled ? "final" : "interim" });
+        } else {
+          log({ type: "v2", event: "camera-follow-allowed", detail: settled ? "final" : "interim" });
+          framePage(false, "following live narration", null, elementId);
+        }
+      }
       if (settled) {
         liveCameraOverviewTimerRef.current = setTimeout(() => {
           liveCameraOverviewTimerRef.current = null;
@@ -2703,7 +2762,7 @@ export default function Board({
       // A settled line ends the thought a deferred page turn was waiting on.
       if (settled && pageTurnRequestedAtRef.current) requestPageTurn("capacity");
     },
-    [commit, dropSettledLiveLine, framePage, log, now, requestPageTurn, turnPage],
+    [commit, dropSettledLiveLine, framePage, log, now, requestPageTurn, turnPage, v2Enabled],
   );
 
   // turnPage carries the sentence in flight onto the new sheet by calling back
@@ -5155,6 +5214,9 @@ export default function Board({
       firedCommandRef.current = "";
       lastAudioEndMsRef.current = audioEndMs;
       const text = correct(raw);
+      // Layer C of the speech audit: what InPublic committed, next to what
+      // Deepgram actually said. Dev-only, constant-false in production.
+      if (sttDebug.enabled) sttDebug.recordLayer("C", text, raw === text ? "verbatim" : `corrected from: ${raw}`);
       finalsRef.current.push({ text, tStart, tEnd });
       if (modeRef.current === "story") {
         settledCountRef.current = 0;
@@ -5179,49 +5241,102 @@ export default function Board({
       const unsent = words.slice(settledCountRef.current).join(" ");
       if (unsent) {
         scribePendingRef.current = `${scribePendingRef.current} ${unsent}`.trim();
+        // Layer D: the text actually handed to the reasoning/visual layer.
+        if (sttDebug.enabled) sttDebug.recordLayer("D", unsent, "to scribe");
       }
       settledCountRef.current = 0;
       prevInterimRef.current = [];
 
       log({ type: "transcript", text, rawTranscript: raw, normalizedTranscript: text, displayTranscript: text });
       setInterim("");
+
+      // V2 INVARIANT (docs/LIVE-SPEECH-PRESENTATION-V2.md, "Active Thought" /
+      // "Settled Thought"): fold consecutive finals belonging to one
+      // unfinished thought into a single growing block instead of one row
+      // per final. Reuses Story Mode's exact merge decision
+      // (lib/liveSpeech.ts) — deterministic, no model, no extra latency.
+      //
+      // `settledForLive` tracks thought completion, not "this is a final": a
+      // final that doesn't complete the thought is passed to writeLive as
+      // NOT settled, so it keeps the interim (soft) colour, its own anchor
+      // stays live, and the camera hold stays up. Settled here means only
+      // "structurally complete enough to stop mutating this block" — not a
+      // semantic judgement. liveRef.current is never cleared mid-thought, so
+      // every continuing final/interim patches the same anchored element via
+      // writeLive's own `ours` check; no extra anchoring code needed here.
+      let textForLive = text;
+      let settledForLive = true;
+      if (v2Enabled) {
+        const priorThought = v2ThoughtRef.current;
+        const pushed = pushStructuralSegment(priorThought, text, now());
+        v2ThoughtRef.current = pushed.state;
+        textForLive = pushed.thought ?? pushed.state.text;
+        settledForLive = Boolean(pushed.thought);
+        if (pushed.thought) {
+          log({
+            type: "thought",
+            rawSegments: [...priorThought.rawSegments, text],
+            merged: pushed.thought,
+            heldMs: priorThought.heldSince ? Math.max(0, now() - priorThought.heldSince) : 0,
+          });
+        }
+      }
+
       // Lock the line Deepgram just committed to. Everything below this runs
       // behind the writing, not in front of it — writeLive's own promise
       // resolves only after `commit()` has already dispatched the ink, so the
       // pulse below strictly follows it, never fronts it.
       const epochAtSettle = liveSeqRef.current;
-      const writeLiveDone = writeLive(text, true, { audioEndMs, streamEpoch, ...timing, kind: "final" });
-      void writeLiveDone.then(() => {
-        if (liveSeqRef.current !== epochAtSettle) return;
-        const ids = settledLiveRef.current?.ids;
-        if (!ids?.length) return;
-        // A brief, subtle settle flash on the line that just locked in —
-        // Part 5's "give existing truthful information temporal life", not a
-        // new mark and not new content. Never fires ahead of the ink itself:
-        // it only starts once writeLive's own commit() already ran.
-        const idSet = new Set(ids);
-        const steps = [
-          ...opacityPulse(100, 65, 1, 90),
-          ...opacityPulse(65, 100, 1, 90).map((s) => ({ ...s, delayMs: s.delayMs + 90 })),
-        ];
-        runPulse(
-          steps,
-          (opacity) => {
-            elementsRef.current = elementsRef.current.map((el) =>
-              idSet.has(el.id) ? patch(el, { opacity }) : el,
-            );
-            commit();
-          },
-          () => liveSeqRef.current !== epochAtSettle,
-        );
-      });
-      // Settle tier 2 against what was actually said: guesses the final
-      // confirms are promoted, guesses it contradicts disappear.
-      settleSpeculative(text);
-      nudgeScribe();
-      resetSilenceTimer();
+      const writeLiveDone = writeLive(textForLive, settledForLive, { audioEndMs, streamEpoch, ...timing, kind: "final" });
+      if (v2Enabled) {
+        // V2 INVARIANT: no flash/pop on finalisation — ink just becomes
+        // confident (docs/LIVE-SPEECH-PRESENTATION-V2.md, invariant #5).
+        if (settledForLive) {
+          void writeLiveDone.then(() => {
+            log({ type: "v2", event: "pop-suppressed" });
+          });
+        }
+      } else {
+        void writeLiveDone.then(() => {
+          if (liveSeqRef.current !== epochAtSettle) return;
+          const ids = settledLiveRef.current?.ids;
+          if (!ids?.length) return;
+          // A brief, subtle settle flash on the line that just locked in —
+          // Part 5's "give existing truthful information temporal life", not a
+          // new mark and not new content. Never fires ahead of the ink itself:
+          // it only starts once writeLive's own commit() already ran.
+          const idSet = new Set(ids);
+          const steps = [
+            ...opacityPulse(100, 65, 1, 90),
+            ...opacityPulse(65, 100, 1, 90).map((s) => ({ ...s, delayMs: s.delayMs + 90 })),
+          ];
+          runPulse(
+            steps,
+            (opacity) => {
+              elementsRef.current = elementsRef.current.map((el) =>
+                idSet.has(el.id) ? patch(el, { opacity }) : el,
+              );
+              commit();
+            },
+            () => liveSeqRef.current !== epochAtSettle,
+          );
+        });
+      }
+      if (!v2Enabled) {
+        // Settle tier 2 against what was actually said: guesses the final
+        // confirms are promoted, guesses it contradicts disappear.
+        settleSpeculative(text);
+        nudgeScribe();
+        resetSilenceTimer();
+      }
+      // V2 INVARIANT: Scribe (Tier 3a) and Beat->Artist->Organizer->Director
+      // (Tier 3b/3c) stay off the whole time — resetSilenceTimer is the only
+      // path into runBeat, so gating it above suppresses that entire chain,
+      // Math included. Do not call nudgeScribe/resetSilenceTimer
+      // unconditionally here; downstream visual intelligence must consume
+      // settled thought state, not compete with the active one.
     },
-    [correct, handleStoryFinal, log, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleSpeculative, writeLive, writeStoryCaption],
+    [correct, handleStoryFinal, log, now, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleSpeculative, v2Enabled, writeLive, writeStoryCaption],
   );
 
   const handleInterim = useCallback(
@@ -5263,7 +5378,18 @@ export default function Board({
       }
       // Put each provider interim on the sheet immediately: no model, no
       // throttle, and no wait for finalization.
-      void writeLive(shown, false, { audioEndMs, streamEpoch, ...timing, kind: "interim" });
+      //
+      // V2 only: if a thought is currently held open across finals (see
+      // handleFinal), preview this interim as a continuation of it — same
+      // prefix. The anchor itself needs no extra code here: a final that
+      // doesn't complete the thought is passed to writeLive as NOT settled
+      // (handleFinal), so liveRef.current is never cleared mid-thought and
+      // this interim patches the same element through writeLive's own
+      // existing `ours` check, same as any other interim.
+      const shownForLive = v2Enabled && v2ThoughtRef.current.text
+        ? `${v2ThoughtRef.current.text} ${shown}`.trim()
+        : shown;
+      void writeLive(shownForLive, false, { audioEndMs, streamEpoch, ...timing, kind: "interim" });
 
       // Latency vs. accuracy. Waiting for a final costs 1-3s; lettering the
       // raw interim draws Deepgram's guesses, which it then revises. The
@@ -5309,7 +5435,12 @@ export default function Board({
         // When off, nothing is scheduled at all: no setTimeout, no
         // recognition, no render. This is what makes a clean Reflex-off vs
         // Reflex-on comparison possible (Part 12).
-        if (fresh && features.reflex) {
+        //
+        // V2 INVARIANT: also suppressed under V2 regardless of the reflex
+        // flag. Live speech owns the screen until the thought settles —
+        // secondary visual systems must not write into the active thought
+        // lifecycle. See docs/LIVE-SPEECH-PRESENTATION-V2.md.
+        if (fresh && features.reflex && !v2Enabled) {
           speculativeUtteranceRef.current =
             `${speculativeUtteranceRef.current} ${fresh}`.trim();
 
@@ -5364,7 +5495,7 @@ export default function Board({
 
       if (silenceTimerRef.current) resetSilenceTimer();
     },
-    [handleStoryPartial, renderSpeculative, resetSilenceTimer, runVoiceCommand, writeLive, writeStoryCaption],
+    [handleStoryPartial, renderSpeculative, resetSilenceTimer, runVoiceCommand, v2Enabled, writeLive, writeStoryCaption],
   );
 
   /** Gemini engine: marks the model asked for, straight off the socket. */

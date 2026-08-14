@@ -275,6 +275,18 @@ export type LogEvent =
       target?: CameraView;
       occupiedCanvasRatio?: number;
     }
+  /**
+   * Live Speech Presentation V2 diagnostics (features.livePresentationV2).
+   * Development/experiment instrumentation only — lets the two "same talk,
+   * flag on vs off" recordings be compared without new code, per the same
+   * philosophy as camera-metric. See lib/features.ts's doc comment.
+   */
+  | {
+      t: number;
+      type: "v2";
+      event: "camera-follow-allowed" | "camera-follow-skipped" | "anchor-reset" | "pop-suppressed";
+      detail?: string;
+    }
   | {
       t: number;
       type: "comparison";

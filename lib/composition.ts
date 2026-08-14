@@ -328,6 +328,43 @@ export function rectInside(inner: CompositionRect, outer: CompositionRect, toler
     inner.y + inner.height <= outer.y + outer.height + tolerance;
 }
 
+/** Raw Excalidraw app-state scroll/zoom, in the shape `getAppState()` returns. */
+export interface LiveFollowViewport {
+  scrollX: number;
+  scrollY: number;
+  zoom: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Live Speech Presentation V2's camera contract (see
+ * docs/LIVE-SPEECH-PRESENTATION-V2.md): while a thought is actively growing,
+ * the camera may only be asked to follow it once it is genuinely about to
+ * leave the visible viewport — not on every interim. This is the pure
+ * containment check components/Board.tsx's writeLive calls to decide that;
+ * extracted here (rather than left inline) purely so the invariant is
+ * unit-testable without mounting Board. proposeCamera still owns the actual
+ * move decision/hysteresis — this only decides whether to ask it at all.
+ */
+export function liveLineFitsViewport(
+  line: CompositionRect,
+  viewport: LiveFollowViewport,
+  margin = 48,
+): boolean {
+  const zoom = viewport.zoom || 1;
+  const viewW = viewport.width / zoom;
+  const viewH = viewport.height / zoom;
+  if (viewW <= 0 || viewH <= 0) return false;
+  const visible: CompositionRect = {
+    x: -viewport.scrollX + margin,
+    y: -viewport.scrollY + margin,
+    width: viewW - margin * 2,
+    height: viewH - margin * 2,
+  };
+  return rectInside(line, visible, 0);
+}
+
 export function effectiveTextSize(fontSize: number, zoom: number, outputScale = 1): number {
   return Math.round(fontSize * zoom * outputScale * 10) / 10;
 }

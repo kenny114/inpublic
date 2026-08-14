@@ -54,6 +54,55 @@ export const features = {
    * one place instead of firing independently.
    */
   directorV1: true,
+  /**
+   * Live Speech Presentation V2 — a PROTECTED BASELINE, not an experiment
+   * anymore. Manually compared against legacy Standard Mode and confirmed
+   * materially cleaner; future visual intelligence is meant to build on top
+   * of this layer, not bypass or casually rewrite it. Full rationale,
+   * pipeline diagram, and the protected invariant list live in
+   * docs/LIVE-SPEECH-PRESENTATION-V2.md — read that before changing anything
+   * this flag gates. See also docs/decisions/ADR-LIVE-PRESENTATION-V2.md.
+   *
+   * Off means every call site this flag touches takes the exact branch that
+   * existed before it — zero behavior change, same pattern as `reflex` /
+   * `directorV1`. Governs HOW the live transcript looks and moves; it does
+   * not change recognition speed or the Tier 1 speech->ink path
+   * (components/Board.tsx's `writeLive`, hooks/useDeepgram.ts).
+   *
+   * On, for the duration of a session:
+   *  - Reflex (Tier 2), the Scribe (Tier 3a), and Beat/Artist/Director/Math
+   *    (Tier 3b/3c) are suppressed — nothing is scheduled, no extra call is
+   *    made. Tier 1 (Deepgram -> writeLive -> canvas) is untouched.
+   *  - A settled live line is no longer deleted the instant the next
+   *    utterance starts (writeLive's `dropSettledLiveLine`) — it stays on
+   *    the page, since nothing else in this mode redraws it.
+   *  - Consecutive Deepgram finals belonging to one unfinished thought
+   *    (lib/liveSpeech.ts's `pushStructuralSegment`, already used by Story
+   *    Mode, deterministic and model-free) patch the same anchored text
+   *    element instead of starting a new row per final.
+   *  - The camera does not reframe on every interim; it only follows the
+   *    live line when it is genuinely about to leave the safe viewport.
+   *  - The finalisation opacity pulse ("settle flash") is skipped.
+   *
+   * Dev-only override: with `NODE_ENV !== "production"`, `?v2=1` in the URL
+   * enables this mode for that page load regardless of the flag below, so
+   * on/off can be compared without editing and redeploying. See
+   * `isLivePresentationV2Enabled`.
+   */
+  livePresentationV2: false,
 } as const;
 
 export type FeatureFlags = typeof features;
+
+/**
+ * Resolves `features.livePresentationV2` plus its dev-only `?v2=1` override.
+ * Production always ignores the query param and reads the flag only — see
+ * the flag's doc comment above for why env/query overrides aren't trusted
+ * for anything user-facing in this codebase.
+ */
+export function isLivePresentationV2Enabled(): boolean {
+  if (features.livePresentationV2) return true;
+  if (process.env.NODE_ENV === "production") return false;
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("v2") === "1";
+}

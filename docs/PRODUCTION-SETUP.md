@@ -11,6 +11,37 @@
 7. Schedule `select public.expire_abandoned_usage_sessions_with_costs();` every five minutes with Supabase Cron.
 8. Review `provider_rate_cards` at launch and whenever a provider changes pricing. Prices are data, not application constants.
 
+## Transactional email (Resend as Supabase's SMTP provider)
+
+Supabase's built-in email service is capped at roughly two messages per hour for
+the whole project and is documented as testing-only. Past that cap GoTrue
+rejects the send, the row still lands in `auth.users`, and nobody receives a
+confirmation link — the failure looks exactly like a broken signup flow. Custom
+SMTP is therefore required before launch, not an optimisation.
+
+Sending domain is `mail.altraverse.xyz`. The root domain is left alone so the
+`altraversewebsite` deployment and its wildcard ALIAS are unaffected. DNS for
+`altraverse.xyz` is on Vercel nameservers, so records are managed with
+`vercel dns add altraverse.xyz <name> <type> "<value>" --scope kenny114s-projects`.
+
+1. In Resend, add the domain `mail.altraverse.xyz` and copy the DKIM and SPF
+   records it generates. Add them to Vercel DNS with the command above. The
+   DMARC record `_dmarc.mail TXT "v=DMARC1; p=none;"` is already in place.
+2. Wait for Resend to report the domain Verified.
+3. Create a Resend API key with send permission.
+4. In Supabase → Project Settings → Authentication → SMTP Settings, enable
+   custom SMTP: host `smtp.resend.com`, port `465`, username `resend`, password
+   the Resend API key, sender an address on `mail.altraverse.xyz`.
+5. In Supabase → Authentication → Rate Limits, raise the hourly email cap from
+   the default `2`. Custom SMTP does not lift this limit on its own; leaving it
+   at the default reproduces the original outage with a working provider behind
+   it.
+6. Verify with a real signup to an address outside the Supabase organisation.
+
+`NEXT_PUBLIC_SITE_URL` is unset. In production `siteOrigin()` falls back to the
+forwarded host, which is correct on Vercel, but set it explicitly once a custom
+domain is attached to this project so emailed links cannot follow a preview host.
+
 ## Whop sandbox
 
 Set `WHOP_BASE_URL=https://sandbox-api.whop.com/api/v1` while using sandbox resources. Leave it unset after replacing them with production resources.

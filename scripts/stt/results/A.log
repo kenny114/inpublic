@@ -1,0 +1,37 @@
+A n1 … So the idea here is that everything you say shows up on the board as y
+A n2 … Let me walk you through how this actually works in practice.
+A n3 … We started building this because whiteboards are slow and meetings are
+A n4 … The point is not to write a perfect transcript. It is to keep up with 
+A f1 … Right. So the first thing we do is capture the audio, and the second t
+A f2 … It has to be fast. It has to be accurate, and it has to keep working w
+A f3 … We are going to cover three things today, the pipeline, the accuracy, 
+A p1 … Align is running the session today.
+A p2 … I want to show you in public.
+A p3 … We render everything through Excalidraw.
+A p4 … The speech layer is Deepgram and the reasoning layer is clot from anth
+A p5 … We sell it through WAP.
+A p6 … I am from Trinidad And Tobago.
+A p7 … Align and Kemen are both on the call.
+A p8 … Ask a line about the Deepgram key terms.
+A c1 … Align booked the airline ticket.
+A c2 … Their notes are over there and they are not mine.
+A c3 … I need four of them for the demo.
+A c4 … Clawed clawed through the whole document.
+A c5 … The cat ran across the room.
+A c6 … Align said the airline lost her bag.
+A t1 … The model streams interim results over a WebSocket before it finalizes
+A t2 … We calculate word error rate as substitutions plus deletions plus inse
+A t3 … Latency is dominated by end pointing, not by inference.
+A t4 … The gross margin improves once the annual recurring revenue covers the
+A t5 … Differentiate the function and set the derivative equal to zero.
+A m1 … 39Times8.
+A m2 … Seventy six times fifty two.
+A m3 … Two x plus four equals ten.
+A m4 … One hundred and twenty minutes.
+A m5 … We went from 15% to 42% in one quarter.
+A d1 … So the thing is, we need to we need to ship this first.
+A d2 … It costs about sorry, it costs around $30 a month.
+A d3 … And then you just you know. You just say the word and it draws it.
+A d4 … The main thing, the main thing to understand is that,
+
+wrote C:\Users\kenny\saas\inpublic\scripts\stt\results\A.json (35 items)

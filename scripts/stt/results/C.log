@@ -1,0 +1,37 @@
+C n1 … So the idea here is that everything you say shows up on the board as y
+C n2 … Let me walk you through how this actually works in practice.
+C n3 … We started building this because whiteboards are slow and meetings are
+C n4 … The point is not to write a perfect transcript. It is to keep up with 
+C f1 … Right. So the first thing we do is capture the audio, and the second t
+C f2 … It has to be fast. It has to be accurate, and it has to keep working w
+C f3 … We are going to cover three things today, the pipeline, the accuracy, 
+C p1 … Align is running the session today.
+C p2 … I want to show you in public.
+C p3 … We render everything through Excalidraw.
+C p4 … The speech layer is Deepgram and the reasoning layer is clot from anth
+C p5 … We sell it through WAP.
+C p6 … I am from Trinidad and Tobago.
+C p7 … Align and Kemen are both on the call.
+C p8 … Ask a line about the Deepgram key terms.
+C c1 … Align booked the airline ticket.
+C c2 … Their notes are over there and they are not mine.
+C c3 … I need four of them for the demo.
+C c4 … Clawed clawed through the whole document.
+C c5 … The cat ran across the room.
+C c6 … Align said the airline lost her bag.
+C t1 … The model streams interim results over a WebSocket before it finalizes
+C t2 … We calculate word error rate as substitutions plus deletions plus inse
+C t3 … Latency is dominated by end pointing, not by inference.
+C t4 … The gross margin improves once the annual recurring revenue covers the
+C t5 … Differentiate the function and set the derivative equal to zero.
+C m1 … Thirty nine times eight.
+C m2 … Seventy six times fifty two.
+C m3 … Two x plus four equals ten.
+C m4 … One hundred and twenty minutes.
+C m5 … We went from fifteen percent to forty two percent in one quarter.
+C d1 … So the thing is, we need to we need to ship this first.
+C d2 … It costs about sorry, it costs around thirty dollars a month.
+C d3 … And then you just you know. You just say the word and it draws it.
+C d4 … The main thing, the main thing to understand is that,
+
+wrote C:\Users\kenny\saas\inpublic\scripts\stt\results\C.json (35 items)

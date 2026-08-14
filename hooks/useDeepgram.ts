@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { noteFinalTranscript, providerRequestHeaders } from "@/lib/usage-client";
 import { latency, latencyNow, type DiagnosticTraceEvent } from "@/lib/latency";
+import { sttDebug } from "@/lib/sttDebug";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -327,6 +328,13 @@ export function useDeepgram({
         node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
           if (!socketOpenRef.current || !connectionRef.current) return;
           noteAudioChunk();
+          // Dev-only, and a copy taken before the send so what is captured is
+          // exactly what left the machine. Constant-false in production.
+          if (sttDebug.enabled) {
+            sttDebug.recordAudio(event.data, captureRef.current?.kind === "audio-worklet-pcm16"
+              ? captureRef.current.sampleRate
+              : 48000);
+          }
           try {
             connectionRef.current.send(event.data);
             lastChunkSentAtRef.current = cbs.current.now();
@@ -579,6 +587,10 @@ export function useDeepgram({
     });
 
     connection.on(LiveTranscriptionEvents.Transcript, (data: any) => {
+      // Before the empty-text early return on purpose: an empty result still
+      // carries is_final/speech_final timing that a segmentation question needs.
+      if (sttDebug.enabled) sttDebug.recordMessage(data);
+
       const alt = data?.channel?.alternatives?.[0];
       const text: string = alt?.transcript ?? "";
       if (!text.trim()) return;
