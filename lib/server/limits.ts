@@ -54,4 +54,7 @@ export const routeLimits: Record<string, { limit: number; windowSeconds: number 
   story: { limit: positiveInteger("RATE_LIMIT_STORY_PER_MINUTE", 8), windowSeconds: 60 },
   math: { limit: positiveInteger("RATE_LIMIT_MATH_PER_MINUTE", 6), windowSeconds: 60 },
   audio: { limit: positiveInteger("RATE_LIMIT_AUDIO_PER_MINUTE", 4), windowSeconds: 60 },
+  // At most one call per settled thought, and thoughts are naturally paced by
+  // speech — this only bounds a misbehaving client, same reasoning as beat's.
+  "visual-reentry": { limit: positiveInteger("RATE_LIMIT_VISUAL_REENTRY_PER_MINUTE", 20), windowSeconds: 60 },
 };

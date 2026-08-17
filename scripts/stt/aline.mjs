@@ -18,7 +18,8 @@ const ITEMS = ["p1", "p7", "p8", "c1", "c6"];
 const CONDITIONS = {
   none: {},
   aline: { keyterm: ["Aline"] },
-  // What production sends today. "Airline" is in SEED_TERMS; "Aline" is not.
+  // Frozen pre-Domain-Vocabulary-V1 production baseline. "Airline" was in
+  // SEED_TERMS and "Aline" was absent.
   seed: {
     keyterm: ["Airline", "AI agents", "Affiliate Capital", "InPublic", "ClickLabs", "Excalidraw",
       "Deepgram", "Anthropic", "Claude", "Trinidad and Tobago", "Kenny Farmer", "sketchnote",

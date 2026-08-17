@@ -5,6 +5,7 @@ import { guardProviderRequest, reconcileProviderCost } from "@/lib/server/provid
 export const dynamic = "force-dynamic";
 
 const TTL_SECONDS = 60;
+const DEVELOPMENT_REPLAY_TTL_SECONDS = 180;
 
 /**
  * Mints a short-lived Deepgram credential for the browser. The root key never
@@ -22,12 +23,24 @@ export async function GET(request: Request) {
   // doesn't get attributed to the wrong side by guesswork. Dev-only console
   // output — never sent anywhere, never on the speech-in-progress path.
   const t0 = Date.now();
-  const guard = await guardProviderRequest(request, { feature: "deepgram", provider: "deepgram", model: "nova-3", audioSeconds: 45 });
+  const guard = await guardProviderRequest(request, {
+    feature: "deepgram",
+    provider: "deepgram",
+    model: "nova-3",
+    audioSeconds: 45,
+    allowDevelopmentReplay: true,
+  });
   const guardMs = Date.now() - t0;
   if (guard instanceof Response) {
     if (isDev) console.log(`[deepgram/token] guard rejected after ${guardMs}ms`);
     return guard;
   }
+  // The natural benchmark is 87.96 seconds. A normal live credential remains
+  // 60 seconds, while the dev-only replay capability gets enough lifetime to
+  // keep one unchanged WebSocket open through the full file and endpointing.
+  const ttlSeconds = guard.sessionId === "development-replay"
+    ? DEVELOPMENT_REPLAY_TTL_SECONDS
+    : TTL_SECONDS;
   const rootKey = process.env.DEEPGRAM_API_KEY;
   if (!rootKey) {
     await reconcileProviderCost(guard, "failed", { actualCostUsd: 0 });
@@ -42,7 +55,7 @@ export async function GET(request: Request) {
   try {
     const t1 = Date.now();
     const { result, error } = await deepgram.auth.grantToken({
-      ttl_seconds: TTL_SECONDS,
+      ttl_seconds: ttlSeconds,
     });
     const grantMs = Date.now() - t1;
     if (isDev) {
@@ -73,11 +86,11 @@ export async function GET(request: Request) {
       await deepgram.manage.createProjectKey(projectId, {
         comment: "inpublic ephemeral browser key",
         scopes: ["usage:write"],
-        time_to_live_in_seconds: TTL_SECONDS,
+        time_to_live_in_seconds: ttlSeconds,
       });
     if (keyError) throw keyError;
 
-    return NextResponse.json({ key: key?.key, expiresIn: TTL_SECONDS });
+    return NextResponse.json({ key: key?.key, expiresIn: ttlSeconds });
   } catch (err) {
     await reconcileProviderCost(guard, "failed", { actualCostUsd: 0 });
     console.error("[deepgram/token]", err);

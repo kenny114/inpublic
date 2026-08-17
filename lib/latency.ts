@@ -57,8 +57,7 @@ export type SampleKey =
    * (`start`+`duration`). Deepgram's own docs say not to use those fields for
    * precise latency measurement, so despite the name this is NOT a wall-clock
    * provider/network latency figure — treat it as an audio/transcript
-   * alignment diagnostic only. See LATENCY-AUDIT.md. For a true wall-clock
-   * speech→ink number use `"chunk_to_ink"` below.
+   * alignment diagnostic only. See LATENCY-AUDIT.md.
    */
   | "lag"
   | "render"
@@ -78,21 +77,26 @@ export type SampleKey =
   | "build_live_line"
   | "commit"
   | "long_task"
-  /** Wall-clock time from the last audio chunk sent to any Deepgram message
-   * arriving, independent of Deepgram's self-reported audio-timeline math —
-   * see hooks/useDeepgram.ts's lastChunkSentAtRef for why this exists. */
+  /** Wall-clock proximity from the latest audio chunk sent to any Deepgram
+   * message arriving. Non-causal during continuous audio: the response can
+   * cover an older source region. */
   | "chunk_to_message"
   /** Deepgram's own VAD SpeechStarted event to the first raw interim text
    * that follows it — a ground-truth "how long from you actually speaking to
    * any text at all", independent of any InPublic-side heuristic. */
   | "speech_onset_to_raw_interim"
   /**
-   * The true wall-clock speech→ink number: last audio chunk sent → ink
-   * committed (`lib/telemetry.ts` `chunkToInkSample`). Never derived from
-   * Deepgram `start`/`duration`. This is the metric to lead with; `"lag"` is
-   * a diagnostic, not a latency claim.
+   * Latest-chunk send → ink committed (`lib/telemetry.ts`
+   * `chunkToInkSample`). It avoids Deepgram timeline arithmetic but is still
+   * non-causal during continuous audio.
    */
   | "chunk_to_ink";
+
+export interface LatencySampleEvent {
+  key: SampleKey;
+  value: number;
+  at: number;
+}
 
 export interface LatencySummary {
   sessionId: string | null;
@@ -117,6 +121,7 @@ export interface LatencySummary {
   interimLagP95: number | null;
   chunkGapP50: number | null;
   chunkGapP95: number | null;
+  chunkGapMax: number | null;
   firstVisibleWordMs: number | null;
   speechToSpeculativeP50: number | null;
   speechToScribeP50: number | null;
@@ -137,7 +142,7 @@ export interface LatencySummary {
   chunkToMessageMax: number | null;
   speechOnsetToRawInterimP50: number | null;
   speechOnsetToRawInterimP95: number | null;
-  /** True wall-clock speech→ink, ms. See the `"chunk_to_ink"` SampleKey doc. */
+  /** Latest-chunk-to-ink proximity, ms. See `"chunk_to_ink"` above. */
   chunkToInkP50: number | null;
   chunkToInkP95: number | null;
   chunkToInkMax: number | null;
@@ -191,6 +196,7 @@ export class LatencyRecorder {
   private milestones = new Map<MilestoneName, number>();
   private samples = new Map<SampleKey, number[]>();
   private interims = 0;
+  private observers = new Set<(event: LatencySampleEvent) => void>();
   sessionId: string | null = null;
   mode = "standard";
 
@@ -221,6 +227,16 @@ export class LatencyRecorder {
     list.push(value);
     if (list.length > MAX_SAMPLES) list.splice(0, list.length - MAX_SAMPLES);
     this.samples.set(key, list);
+    if (this.observers.size) {
+      const event = { key, value, at: latencyNow() };
+      for (const observer of this.observers) observer(event);
+    }
+  }
+
+  /** Dev-lab instrumentation. With no subscriber (the normal path), this is inert. */
+  subscribe(observer: (event: LatencySampleEvent) => void): () => void {
+    this.observers.add(observer);
+    return () => this.observers.delete(observer);
   }
 
   /** Bulk variant, for the arrays useDeepgram already accumulates. */
@@ -267,6 +283,7 @@ export class LatencyRecorder {
       interimLagP95: this.quantile("interim_lag", 0.95),
       chunkGapP50: this.quantile("chunk_gap", 0.5),
       chunkGapP95: this.quantile("chunk_gap", 0.95),
+      chunkGapMax: this.max("chunk_gap"),
       firstVisibleWordMs: this.quantile("first_visible_word", 0.5),
       speechToSpeculativeP50: this.quantile("speech_to_speculative", 0.5),
       speechToScribeP50: this.quantile("speech_to_scribe", 0.5),
@@ -340,7 +357,7 @@ export function formatLatencySummary(summary: LatencySummary): string {
       ],
     },
     {
-      title: "LIVE INK (tier 1) — true wall-clock",
+      title: "LIVE INK (tier 1) — latest-chunk proximity",
       rows: [
         { label: "Chunk sent → Ink (p50)", value: summary.chunkToInkP50 },
         { label: "Chunk sent → Ink (p95)", value: summary.chunkToInkP95 },

@@ -228,6 +228,19 @@ check(
   extractSpokenNumbers("twenty one").has(21),
 );
 check(
+  "spoken number extraction handles 'ten thousand' (Visual Re-entry's quantitative_change needs this)",
+  extractSpokenNumbers("revenue went from ten thousand dollars to twenty thousand dollars").has(10000) &&
+    extractSpokenNumbers("revenue went from ten thousand dollars to twenty thousand dollars").has(20000),
+);
+check(
+  "spoken number extraction handles a compound tens+ones thousand ('twenty one thousand')",
+  extractSpokenNumbers("twenty one thousand").has(21000),
+);
+check(
+  "spoken number extraction handles 'three hundred'",
+  extractSpokenNumbers("three hundred").has(300),
+);
+check(
   "the correct extraction ('3x + 5 = 20') grounds against what was actually said",
   groundEquationInSource("3x + 5 = 20", "three x plus five equals twenty").grounded,
 );

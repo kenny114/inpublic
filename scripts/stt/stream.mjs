@@ -42,8 +42,7 @@ const CHUNK_MS = 80; // matches public/pcm-capture-worklet.js
  * @param {object} opts  Deepgram live options, merged over the production set
  * @param {object} [cfg] { trailingSilenceMs, apiKey }
  */
-export async function streamFile(file, opts = {}, cfg = {}) {
-  const { pcm, sampleRate, channels } = readWav(file);
+export async function streamPcm({ pcm, sampleRate, channels }, opts = {}, cfg = {}) {
   const apiKey = cfg.apiKey ?? process.env.DEEPGRAM_API_KEY;
   if (!apiKey) throw new Error("DEEPGRAM_API_KEY is not set");
 
@@ -65,10 +64,13 @@ export async function streamFile(file, opts = {}, cfg = {}) {
   const messages = [];
   const t0 = Date.now();
   let opened = false;
+  const audioDurationMs = (pcm.length / 2 / channels / sampleRate) * 1000;
 
   await new Promise((resolve, reject) => {
     const finish = () => resolve();
-    const timeout = setTimeout(finish, 60000);
+    // Allow full natural-session replays to finish at real-time cadence, plus
+    // trailing silence and provider close/finalisation overhead.
+    const timeout = setTimeout(finish, Math.max(60000, audioDurationMs + 15000));
 
     connection.on(LiveTranscriptionEvents.Open, async () => {
       opened = true;
@@ -127,7 +129,11 @@ export async function streamFile(file, opts = {}, cfg = {}) {
     });
   });
 
-  return { messages, durationMs: (pcm.length / 2 / channels / sampleRate) * 1000, sampleRate };
+  return { messages, durationMs: audioDurationMs, sampleRate };
+}
+
+export async function streamFile(file, opts = {}, cfg = {}) {
+  return streamPcm(readWav(file), opts, cfg);
 }
 
 /** The transcript InPublic would have ended up with: finals, in order, joined. */

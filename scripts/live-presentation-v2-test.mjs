@@ -32,7 +32,13 @@
 
 import assert from "node:assert/strict";
 import { features, isLivePresentationV2Enabled } from "../lib/features.ts";
-import { EMPTY_THOUGHT, pushStructuralSegment } from "../lib/liveSpeech.ts";
+import {
+  EMPTY_PRESENTATION_THOUGHT,
+  EMPTY_THOUGHT,
+  MAX_PRESENTATION_WORDS,
+  pushPresentationSegment,
+  pushStructuralSegment,
+} from "../lib/liveSpeech.ts";
 import { liveLineFitsViewport } from "../lib/composition.ts";
 
 let pass = 0;
@@ -46,16 +52,138 @@ function section(title) {
   console.log(`\n── ${title}`);
 }
 
+// ------------------------------------------------------- V3 boundary safety
+
+section("Thought-Boundary Safety V3: exact natural-corpus continuations");
+
+function replayPresentation(segments) {
+  let state = EMPTY_PRESENTATION_THOUGHT;
+  const thoughts = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    const result = pushPresentationSegment(state, segments[index], 1000 + index * 500);
+    state = result.state;
+    thoughts.push(...result.thoughts);
+  }
+  return { state, thoughts };
+}
+
+const exactContinuations = [
+  {
+    fragment: "The idea is just",
+    segments: [
+      "Marketing InPublic is really simple. The idea is just",
+      "post, create content, create content that really showcase it, but",
+      "really, like, really capitalize on the visual aspect",
+      "because InPublic is our visual tool, our visual expressive tool.",
+    ],
+    joined: "The idea is just post, create content",
+  },
+  {
+    fragment: "I quite like",
+    segments: ["I quite like", "talking and really seeing how my my words are really", "I quite like it."],
+    joined: "I quite like talking",
+  },
+  {
+    fragment: "InPublic was built",
+    segments: ["InPublic was built", "by me to help solve this insecurity of mine."],
+    joined: "InPublic was built by me",
+  },
+  {
+    fragment: "I'm also thinking",
+    segments: ["I'm also thinking", "like, are we gonna for the affiliate aspect, are we gonna, like,"],
+    joined: "I'm also thinking like, are we gonna",
+  },
+  {
+    fragment: "there was no real way I could make progress without",
+    segments: [
+      "I can't code it. So there was no real way I could make progress without",
+      "realistically using AI agents beside my knowledge wise.",
+    ],
+    joined: "there was no real way I could make progress without realistically using AI agents",
+  },
+  {
+    fragment: "interestingly, I was like, let me just",
+    segments: ["interestingly, I was like, let me just", "go and research", "see what types of expressions they were out there to see what"],
+    joined: "interestingly, I was like, let me just go and research",
+  },
+  {
+    fragment: "How much minutes are we gonna have, like, users",
+    segments: [
+      "How much minutes are we gonna have, like, users",
+      "Like, how much like, really going into that? Like, how much minutes we're gonna have working on that because minutes considering pricing is something that's really important.",
+    ],
+    joined: "How much minutes are we gonna have, like, users Like, how much",
+  },
+];
+
+for (const sample of exactContinuations) {
+  const first = pushPresentationSegment(EMPTY_PRESENTATION_THOUGHT, sample.segments[0], 1000);
+  check(`${sample.fragment}: does not settle from its corpus final`, !first.thoughts.some((thought) => thought.text === sample.fragment));
+  const replayed = replayPresentation(sample.segments);
+  const completeText = [...replayed.thoughts.map((thought) => thought.text), replayed.state.text].join(" ");
+  check(`${sample.fragment}: joins its exact following corpus context`, completeText.includes(sample.joined), completeText);
+}
+
+section("Thought-Boundary Safety V3: prefix/tail, short clauses, questions, and safety bound");
+
+{
+  const result = pushPresentationSegment(
+    EMPTY_PRESENTATION_THOUGHT,
+    "Marketing InPublic is really simple. The idea is just",
+    1000,
+  );
+  check("completed prefix settles independently", result.thoughts[0]?.text === "Marketing InPublic is really simple.");
+  check("unfinished suffix remains live", result.state.text === "The idea is just", result.state.text);
+  check(
+    "prefix plus tail preserves every word exactly",
+    [...result.thoughts.map((thought) => thought.text), result.state.text].join(" ") ===
+      "Marketing InPublic is really simple. The idea is just",
+  );
+}
+
+for (const sentence of ["It worked.", "That's why.", "I agree.", "This matters.", "What should we build next?", "Why did this happen?"]) {
+  const result = pushPresentationSegment(EMPTY_PRESENTATION_THOUGHT, sentence, 1000);
+  check(`${sentence}: legitimate short/complete unit settles`, result.thoughts[0]?.text === sentence);
+}
+
+for (const question of ["What exactly how exactly are we gonna really", "How much minutes are we gonna"]) {
+  const result = pushPresentationSegment(EMPTY_PRESENTATION_THOUGHT, question, 1000);
+  check(`${question}: unfinished question remains live`, result.thoughts.length === 0 && result.state.text === question);
+}
+
+{
+  const long = Array.from({ length: 70 }, (_, index) => `word${index + 1}`).join(" ");
+  const result = pushPresentationSegment(EMPTY_PRESENTATION_THOUGHT, long, 1000);
+  const units = [...result.thoughts.map((thought) => thought.text), result.state.text].filter(Boolean);
+  check("punctuation-free speech is bounded", units.every((unit) => unit.split(/\s+/).length <= MAX_PRESENTATION_WORDS));
+  check("forced splits preserve order and every token", units.join(" ") === long);
+  check("safety telemetry identifies the forced split", result.decisions.some((item) => item.reason === "safe_forced_split"));
+}
+
 // ---------------------------------------------------------------- flag/off
 
-section("feature flag: livePresentationV2 defaults off (legacy path stays available)");
+section("feature flag: livePresentationV2 is the committed production default (docs/VALIDATED-STACK-PRODUCTION-ACTIVATION-V1.md)");
 
-check("livePresentationV2 defaults to false", features.livePresentationV2 === false);
-check("isLivePresentationV2Enabled() is false with the flag off, no window", isLivePresentationV2Enabled() === false);
-
-section("dev-only ?v2=1 override");
-
+// Product contract: a normal visitor, zero query params, in production, is
+// on V2 — not the legacy pipeline. This must fail loudly if the flag is
+// ever flipped back without a deliberate revert.
+check("livePresentationV2 is the committed default", features.livePresentationV2 === true);
 const originalEnv = process.env.NODE_ENV;
+process.env.NODE_ENV = "production";
+delete globalThis.window;
+check(
+  "STANDARD MODE DEFAULT: production, no window, no query params -> V2 active",
+  isLivePresentationV2Enabled() === true,
+);
+process.env.NODE_ENV = originalEnv;
+
+section("dev-only ?v2=1 override (mechanics, simulated pre-activation state)");
+
+// The override only has anything to prove when the committed flag is off —
+// this section temporarily simulates the pre-activation committed state
+// (`false`) to exercise the override in isolation, then restores the real
+// committed default asserted above.
+features.livePresentationV2 = false;
 
 process.env.NODE_ENV = "development";
 globalThis.window = { location: { search: "?v2=1" } };
@@ -67,7 +195,7 @@ check("no query param leaves V2 off in development", isLivePresentationV2Enabled
 process.env.NODE_ENV = "production";
 globalThis.window = { location: { search: "?v2=1" } };
 check(
-  "?v2=1 is IGNORED in production — the override must never leak into prod",
+  "?v2=1 is IGNORED in production — the override must never leak into prod, while the committed flag is off",
   isLivePresentationV2Enabled() === false,
 );
 
@@ -81,8 +209,8 @@ section("flag on always wins, regardless of environment");
 // just the dev override) is what the function ultimately reads.
 features.livePresentationV2 = true;
 check("isLivePresentationV2Enabled() is true once the flag itself is on", isLivePresentationV2Enabled() === true);
-features.livePresentationV2 = false;
-check("flipping it back off restores legacy behavior", isLivePresentationV2Enabled() === false);
+// Leave it on: `true` is the real committed default this whole suite runs
+// against below (V3, camera, thought-merging all assume V2 is active).
 
 // ---------------------------------------------------------- thought merging
 

@@ -2,6 +2,7 @@ import type { PageTurnReason } from "./pagination";
 import type { SemanticScene } from "./semantic";
 import type { InPublicMode, StoryAction, StoryOperation } from "./story";
 import type { CameraView, CompositionRect, ReadabilityRole } from "./composition";
+import type { CameraProposalSnapshot } from "./cameraReplay";
 import type { LatencySummary } from "./latency";
 
 type StoryLoggedAction = StoryAction["type"] | "story_event";
@@ -37,6 +38,43 @@ export interface Final {
 
 export type LogEvent =
   | { t: number; type: "transcript"; text: string; rawTranscript?: string; normalizedTranscript?: string; displayTranscript?: string }
+  | {
+      t: number;
+      type: "thought-boundary";
+      reason:
+        | "terminal_complete"
+        | "stable_clause"
+        | "completed_prefix"
+        | "continuation_hold"
+        | "safety_bound"
+        | "safe_forced_split";
+      text: string;
+      wordCount: number;
+      charCount: number;
+      providerFinalCount: number;
+      heldMs: number;
+    }
+  /**
+   * Exact V2 presentation unit retained for development/research exports.
+   * This is emitted after pushStructuralSegment has already made its normal
+   * decision; it observes that decision and never participates in it.
+   */
+  | {
+      t: number;
+      type: "settled-thought";
+      thoughtId: string;
+      text: string;
+      sourceSegments: string[];
+      startedAtMs: number;
+      settledAtMs: number;
+      pageId: number;
+      sessionId: string;
+      sessionGeneration: number;
+      sourceRegion?: {
+        audioStartMs: number;
+        audioEndMs: number;
+      };
+    }
   | { t: number; type: "sketch"; labels: string[] }
   | {
       t: number;
@@ -79,7 +117,7 @@ export type LogEvent =
       t: number;
       type: "speech-stream";
       streamEpoch: number;
-      capture: "audio-worklet-pcm16" | "media-recorder";
+      capture: "audio-worklet-pcm16" | "media-recorder" | "replay-pcm16";
       sampleRate?: number;
       audioChunks: number;
       chunkGapP50: number;
@@ -256,6 +294,23 @@ export type LogEvent =
       event: "started" | "completed" | "cancelled";
       target: CameraView;
       reason: string;
+      animationId?: string;
+      proposalId?: string;
+      transitionId?: string;
+      replacementAnimationId?: string;
+    }
+  | ({ t: number; type: "camera-proposal" } & CameraProposalSnapshot)
+  | {
+      t: number;
+      type: "camera-page-arrival-coalesced";
+      pageGeneration: number;
+      pageIndex: number;
+      eventCycleId: number;
+      transitionId: string;
+      pageProposalId: string;
+      liveProposalId: string;
+      originalPageTarget: CameraView;
+      retainedLiveTarget: CameraView;
     }
   /**
    * Camera-follow diagnostics: whether a reframe request from newly-landed
@@ -286,6 +341,87 @@ export type LogEvent =
       type: "v2";
       event: "camera-follow-allowed" | "camera-follow-skipped" | "anchor-reset" | "pop-suppressed";
       detail?: string;
+    }
+  /**
+   * Visual Re-entry V1 diagnostics (features.visualReentryV1). Lets a
+   * `?v2=1` vs `?v2=1&vr=1` recording pair be diffed the same way V2's own
+   * events are, and lets the metrics in docs/VISUAL-REENTRY-V1.md's
+   * "Metrics" section be computed straight from a session log — see that
+   * doc's Logging section for what each event means and which fields it
+   * carries.
+   */
+  | {
+      t: number;
+      type: "visual-reentry";
+      event:
+        | "thought-received"
+        | "candidate-accepted"
+        | "candidate-rejected"
+        | "fast-path-attempted"
+        | "fast-path-succeeded"
+        | "fast-path-rejected"
+        | "model-fallback-started"
+        | "evidence-held"
+        | "evidence-combined"
+        | "sequence-evidence-opened"
+        | "sequence-evidence-extended"
+        | "sequence-evidence-completed"
+        | "cause-evidence-opened"
+        | "cause-evidence-extended"
+        | "cause-evidence-completed"
+        | "comparison-evidence-opened"
+        | "comparison-evidence-extended"
+        | "comparison-evidence-completed"
+        | "evidence-invalidated-page-turn"
+        | "request-suppressed-in-flight"
+        | "decision-started"
+        | "decision-ended"
+        | "request-aborted"
+        | "decision-none"
+        | "decision-enumeration"
+        | "decision-quantitative"
+        | "decision-sequence"
+        | "decision-cause-effect"
+        | "decision-comparison"
+        | "parse-failed"
+        | "grounding-passed"
+        | "grounding-failed"
+        | "render-started"
+        | "render-completed"
+        | "render-suppressed-active-speech"
+        | "stale-result-dropped"
+        | "durable-result-ready"
+        | "durable-result-held"
+        | "durable-result-committed"
+        | "durable-result-quiet-committed"
+        | "durable-result-expired"
+        | "camera-requested"
+        | "camera-suppressed"
+        | "duplicate-thought-skipped";
+      thoughtId?: string;
+      reason?: string;
+      /** ms from decision-started to the decision resolving (none/enumeration/quantitative/parse-failed) — averageDecisionLatency's raw samples. */
+      decisionLatencyMs?: number;
+      /** ms from render-started to render-completed. */
+      renderLatencyMs?: number;
+      /** A short, truncated form of the settled thought's text (never a full model prompt/payload). */
+      sourceExcerpt?: string;
+      /** Exact literal source retained only in development/research evidence exports. */
+      sourceText?: string;
+      /** Original V2 thought IDs when a bounded evidence window owns a combined source. */
+      participantThoughtIds?: string[];
+      decisionSource?: "deterministic_fast_path" | "model_fallback";
+      visualFamily?: "enumeration" | "quantitative_change" | "sequence" | "cause_effect" | "comparison";
+      /** Per-anchor provenance for quantitative deterministic successes; no transcript payload is needed. */
+      fromModality?: "exact" | "approximate";
+      toModality?: "exact" | "approximate";
+      /** True when a rejected fast path contained one of V1.4's supported literal qualifiers. */
+      approximationPresent?: boolean;
+      /** Replay-clock timestamp captured at the exact local-gate completion boundary. */
+      candidateCompletedAtMs?: number;
+      candidateCompleteToIntentMs?: number;
+      candidateCompleteToDurableReadyMs?: number;
+      candidateCompleteToCommitMs?: number;
     }
   | {
       t: number;

@@ -17,11 +17,14 @@ import { TranscriptStrip } from "@/components/TranscriptStrip";
 import { LatencyOverlay } from "@/components/LatencyOverlay";
 import { RecordingPanel } from "@/components/RecordingPanel";
 import { AudioReplayPanel } from "@/components/AudioReplayPanel";
+import { DevReplayLab } from "@/components/DevReplayLab";
 import { useDeepgram, type DeepgramResultTiming } from "@/hooks/useDeepgram";
 import { useGeminiLive } from "@/hooks/useGeminiLive";
 import { useUsageSession } from "@/hooks/useUsageSession";
 import { startListeningSession } from "@/lib/listeningSession";
-import { latency, latencyNow, formatLatencySummary } from "@/lib/latency";
+import { latency, latencyNow, formatLatencySummary, percentile, type LatencySampleEvent } from "@/lib/latency";
+import { correlateSamples, isReplayLabEnabled, type DecisionWindow, type ReplayDisconnectPlan, type ReplayExperimentMode, type ReplayRunReport } from "@/lib/replayLab";
+import { buildCorpusEvidence, buildCorpusScene } from "@/lib/corpus";
 import { recordLatencySummary, storedLatencySamples } from "@/lib/latencySink";
 import { providerRequestHeaders } from "@/lib/usage-client";
 import { requestDelayMs, retryAfterMs } from "@/lib/requestScheduling";
@@ -104,12 +107,16 @@ import {
   withinInitialCompositionWindow,
 } from "@/lib/attention";
 import {
+  EMPTY_PRESENTATION_THOUGHT,
   EMPTY_THOUGHT,
   STRUCTURAL_HOLD_MS,
   earlyVoiceCommand,
+  flushPresentationThought,
   flushStructuralThought,
   localVoiceCommand,
+  pushPresentationSegment,
   type LocalVoiceCommand,
+  type PresentationThoughtState,
   pushStructuralSegment,
   retirePending,
   type StructuralThoughtState,
@@ -135,6 +142,16 @@ import {
   type ReadabilityRole,
   type TextReadabilitySample,
 } from "@/lib/composition";
+import {
+  CAMERA_PROPOSAL_SNAPSHOT_VERSION,
+  type CameraProposalKind,
+  type CameraSpringSnapshot,
+} from "@/lib/cameraReplay";
+import {
+  samePageArrivalTransition,
+  type PageArrivalIdentity,
+  type PendingPageArrivalCamera,
+} from "@/lib/pageArrivalCoalescing";
 import { detectGesture, extractConcepts } from "@/lib/sketch";
 import { comparisonPairKey, detectComparison } from "@/lib/director";
 import { computeComparisonLayout, type ComparisonBox } from "@/lib/choreographerComparison";
@@ -146,7 +163,13 @@ import {
   unmarkProcessCommitted,
   type DirectorState,
 } from "@/lib/directorState";
-import { features, isLivePresentationV2Enabled } from "@/lib/features";
+import { features, isLivePresentationV2Enabled, isVisualReentryV1Enabled } from "@/lib/features";
+import { commitPreparedVisualReentry, prepareVisualReentry, type PreparedVisualReentry } from "@/lib/visualReentry/orchestrate";
+import { evaluateVisualCandidate } from "@/lib/visualReentry/candidate";
+import { advanceVisualEvidence, completePendingCauseEvidence, completePendingComparisonEvidence, type VisualEvidenceEntry } from "@/lib/visualReentry/evidence";
+import { chooseVisualCommitMode } from "@/lib/visualReentry/commitPolicy";
+import { claimThought } from "@/lib/visualReentry/ownership";
+import type { SettledThought } from "@/lib/visualReentry/types";
 import {
   activeStoryScene,
   applyStoryActions,
@@ -249,6 +272,8 @@ const LIVE_CAMERA_OVERVIEW_MS = 1800;
  * board periodically reveals what has actually landed on it.
  */
 const MAX_LIVE_CAMERA_HOLD_MS = 6000;
+const VISUAL_REENTRY_RESULT_TTL_MS = 30_000;
+const VISUAL_REENTRY_PENDING_MAX = 3;
 /**
  * How long a deliberate user pan/zoom keeps the camera from following up
  * with a routine (non-urgent) reframe. Mirrors the touch-lock pattern
@@ -459,9 +484,26 @@ export default function Board({
 
   // ---- log -----------------------------------------------------------------
   const logRef = useRef<LogEvent[]>([]);
+  const replayModeRef = useRef<ReplayExperimentMode | null>(null);
+  const replayDecisionWindowsRef = useRef<DecisionWindow[]>([]);
+  const replayDecisionOpenRef = useRef<Map<string, DecisionWindow>>(new Map());
+  const replayMaxConcurrencyRef = useRef(0);
   const log = useCallback(
     (event: LogEventInput) => {
       logRef.current.push({ ...event, t: now() } as LogEvent);
+      if (replayModeRef.current && event.type === "visual-reentry") {
+        const id = event.thoughtId ?? "unknown";
+        if (event.event === "decision-started") {
+          const window = { start: performance.now() };
+          replayDecisionOpenRef.current.set(id, window);
+          replayDecisionWindowsRef.current.push(window);
+          replayMaxConcurrencyRef.current = Math.max(replayMaxConcurrencyRef.current, replayDecisionOpenRef.current.size);
+        } else if (event.event === "decision-ended" || event.event === "request-aborted") {
+          const window = replayDecisionOpenRef.current.get(id);
+          if (window) window.end = performance.now();
+          replayDecisionOpenRef.current.delete(id);
+        }
+      }
     },
     [now],
   );
@@ -522,8 +564,17 @@ export default function Board({
     velocity: CameraVelocity;
     lastFrameAt: number;
     reason: string;
+    animationId: string;
+    proposalId?: string;
+    transitionId?: string;
     rafId: number;
   } | null>(null);
+  const cameraProposalSequenceRef = useRef(0);
+  const cameraAnimationSequenceRef = useRef(0);
+  const cameraPageGenerationRef = useRef(0);
+  const cameraEventCycleSequenceRef = useRef(0);
+  const pendingPageArrivalTransitionRef = useRef<PageArrivalIdentity | null>(null);
+  const pendingPageArrivalCameraRef = useRef<PendingPageArrivalCamera | null>(null);
   const liveCameraHoldRef = useRef(false);
   /** When the hold was last (re)asserted — see the staleness check in framePage. */
   const liveCameraHoldSetAtRef = useRef(0);
@@ -735,6 +786,20 @@ export default function Board({
   const aiAbortRef = useRef<AbortController | null>(null);
   /** Cancels an in-flight Scribe call. */
   const scribeAbortRef = useRef<AbortController | null>(null);
+  /** Cancels an in-flight Visual Re-entry decision call — one controller for the whole chain, same idiom as aiAbortRef/scribeAbortRef/storyAbortRef. */
+  const visualReentryAbortRef = useRef<AbortController | null>(null);
+  const visualReentryInFlightRef = useRef(false);
+  const visualReentryGenerationRef = useRef(0);
+  const visualReentryPendingRef = useRef<Array<{ prepared: PreparedVisualReentry; generation: number; launchLiveSeq: number }>>([]);
+  const visualReentryEvidenceRef = useRef<VisualEvidenceEntry[]>([]);
+  const causeEvidenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const comparisonEvidenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visualReentryCommitBusyRef = useRef(false);
+  const visualReentryFlushRequestedRef = useRef(false);
+  const flushVisualReentryRef = useRef<(() => Promise<boolean>) | null>(null);
+  const visualReentryDrainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Part 12's ownership guard: no settled-thought id is ever processed twice. Reset (not trimmed) once it grows large — a long session shouldn't accumulate this forever, and a duplicate id from far in the past is not a realistic case to guard against. */
+  const visualReentryProcessedIdsRef = useRef<Set<string>>(new Set());
 
   /**
    * The board as meaning, for the models. Positions come from the concept's
@@ -871,6 +936,13 @@ export default function Board({
    */
   const v2Enabled = useMemo(() => isLivePresentationV2Enabled(), []);
   /**
+   * Visual Re-entry V1 (features.visualReentryV1) — downstream of V2's
+   * settled-thought output only; see docs/VISUAL-REENTRY-V1.md. Resolved
+   * once per mount, same reasoning as v2Enabled above.
+   */
+  const vrEnabled = useMemo(() => isVisualReentryV1Enabled(), []);
+  const replayLabEnabled = useMemo(() => isDev && isReplayLabEnabled(window.location.search), []);
+  /**
    * The thought currently being held open across Deepgram finals, under V2
    * only. `pushStructuralSegment`/`flushStructuralThought` (lib/liveSpeech.ts)
    * are the exact same deterministic, model-free merge Story Mode already
@@ -878,7 +950,9 @@ export default function Board({
    * decide whether the next final continues the current visual block or
    * starts a new one. Empty text means no thought is currently held open.
    */
-  const v2ThoughtRef = useRef<StructuralThoughtState>(EMPTY_THOUGHT);
+  const v2ThoughtRef = useRef<PresentationThoughtState>(EMPTY_PRESENTATION_THOUGHT);
+  const v2ThoughtStreamEpochRef = useRef(0);
+  const v2ThoughtSourceRegionRef = useRef<{ audioStartMs: number; audioEndMs: number } | null>(null);
   /**
    * Where the most recent transcript ended on Deepgram's audio timeline.
    *
@@ -960,7 +1034,11 @@ export default function Board({
    * leaves the shot — which means the camera holds perfectly still while you
    * talk, and only moves when the page actually turns.
    */
-  const animateCamera = useCallback((target: CameraView, reason: string) => {
+  const animateCamera = useCallback((
+    target: CameraView,
+    reason: string,
+    metadata: { animationId?: string; proposalId?: string; transitionId?: string } = {},
+  ) => {
     const app = apiRef.current?.getAppState?.();
     if (!app) return;
     const from: CameraView = {
@@ -970,6 +1048,7 @@ export default function Board({
     };
     const reduced = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const existing = cameraMotionRef.current;
+    const animationId = metadata.animationId ?? `camera-animation-${++cameraAnimationSequenceRef.current}`;
     const isAtTarget = Math.abs(from.scrollX - target.scrollX) < 0.5
       && Math.abs(from.scrollY - target.scrollY) < 0.5
       && Math.abs(from.zoom - target.zoom) < 0.001;
@@ -981,23 +1060,35 @@ export default function Board({
     if (reduced) {
       if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
       cameraMotionRef.current = null;
-      log({ type: "camera", event: "started", target, reason });
+      log({ type: "camera", event: "started", target, reason, animationId, proposalId: metadata.proposalId, transitionId: metadata.transitionId });
       apiRef.current?.updateScene({ appState: { scrollX: target.scrollX, scrollY: target.scrollY, zoom: { value: target.zoom } } });
       compositionRef.current = { ...compositionRef.current, camera: target, proposedTarget: undefined, movementReason: undefined };
-      log({ type: "camera", event: "completed", target, reason });
+      log({ type: "camera", event: "completed", target, reason, animationId, proposalId: metadata.proposalId, transitionId: metadata.transitionId });
       releasePendingReframeRef.current?.();
       return;
     }
 
     if (existing) {
-      log({ type: "camera", event: "cancelled", target: existing.target, reason: existing.reason });
+      log({
+        type: "camera",
+        event: "cancelled",
+        target: existing.target,
+        reason: existing.reason,
+        animationId: existing.animationId,
+        proposalId: existing.proposalId,
+        transitionId: existing.transitionId,
+        replacementAnimationId: animationId,
+      });
       existing.target = target;
       existing.reason = reason;
-      log({ type: "camera", event: "started", target, reason });
+      existing.animationId = animationId;
+      existing.proposalId = metadata.proposalId;
+      existing.transitionId = metadata.transitionId;
+      log({ type: "camera", event: "started", target, reason, animationId, proposalId: metadata.proposalId, transitionId: metadata.transitionId });
       return;
     }
 
-    log({ type: "camera", event: "started", target, reason });
+    log({ type: "camera", event: "started", target, reason, animationId, proposalId: metadata.proposalId, transitionId: metadata.transitionId });
     const frame = (time: number) => {
       const motion = cameraMotionRef.current;
       if (!motion) return;
@@ -1021,7 +1112,15 @@ export default function Board({
       apiRef.current?.updateScene({ appState: { scrollX: completedTarget.scrollX, scrollY: completedTarget.scrollY, zoom: { value: completedTarget.zoom } } });
       cameraMotionRef.current = null;
       compositionRef.current = { ...compositionRef.current, camera: completedTarget, proposedTarget: undefined, movementReason: undefined };
-      log({ type: "camera", event: "completed", target: completedTarget, reason: completedReason });
+      log({
+        type: "camera",
+        event: "completed",
+        target: completedTarget,
+        reason: completedReason,
+        animationId: motion.animationId,
+        proposalId: motion.proposalId,
+        transitionId: motion.transitionId,
+      });
       // Now that this move has actually finished (not merely superseded —
       // see the `existing` retarget branch above, which never reaches here),
       // replay whatever reframe request the in-flight-move guard deferred
@@ -1035,9 +1134,24 @@ export default function Board({
       velocity: { scrollX: 0, scrollY: 0, zoom: 0 },
       lastFrameAt: startedAt,
       reason,
+      animationId,
+      proposalId: metadata.proposalId,
+      transitionId: metadata.transitionId,
       rafId: requestAnimationFrame(frame),
     };
   }, [log]);
+
+  const flushPendingPageArrivalCamera = useCallback((identity?: PageArrivalIdentity) => {
+    const candidate = pendingPageArrivalCameraRef.current;
+    if (!candidate || (identity && !samePageArrivalTransition(candidate, identity))) return;
+    pendingPageArrivalCameraRef.current = null;
+    log({ type: "camera-metric", event: "executed", reason: candidate.reason, target: candidate.target });
+    animateCamera(candidate.target, candidate.reason, {
+      animationId: `camera-animation-${++cameraAnimationSequenceRef.current}`,
+      proposalId: candidate.proposalId,
+      transitionId: candidate.transitionId,
+    });
+  }, [animateCamera, log]);
 
   /** Stop whatever comparison/process move is in flight, if any (Part 17: races/cancellation). */
   const cancelConceptMotion = useCallback((reason: string) => {
@@ -1543,6 +1657,7 @@ export default function Board({
     mathFocalConceptId: string | null = null,
     liveFocalElementId: string | null = null,
     allowFullZoomChange = false,
+    livePageArrivalIdentity: PageArrivalIdentity | null = null,
   ) => {
     // Delayed Scribe/Beat commits may continue while the speaker is talking.
     // They may draw, but the live line owns the shot until its overview timer.
@@ -1699,7 +1814,7 @@ export default function Board({
     if (!liveFocalElementId) {
       log({ type: "camera-metric", event: "requested", reason, force, manualPriorityActive });
     }
-    const proposal = proposeCamera({
+    const proposalInput = {
       state: compositionRef.current,
       viewport: recordingViewport(Number(app.width), Number(app.height)),
       currentCamera,
@@ -1715,7 +1830,51 @@ export default function Board({
       followMovingSubject: Boolean(liveFocalElement),
       maximumZoomChange: allowFullZoomChange ? 1 : undefined,
       manualPriorityActive,
-    });
+    };
+    const proposalKind: CameraProposalKind = reason.startsWith("page turn:")
+      ? "page_turn"
+      : liveFocalElement
+        ? "live_follow"
+        : reason === "overview after live narration"
+          ? "overview"
+          : "structural";
+    const pageArrivalIdentity = proposalKind === "page_turn"
+      ? pendingPageArrivalTransitionRef.current
+      : proposalKind === "live_follow"
+        ? livePageArrivalIdentity
+        : null;
+    const transitionId = pageArrivalIdentity?.transitionId;
+    const eventCycleId = pageArrivalIdentity?.eventCycleId;
+    const firstLiveAfterPageTurn = proposalKind === "live_follow" && Boolean(transitionId);
+    const proposalId = `camera-proposal-${++cameraProposalSequenceRef.current}`;
+    const spring = cameraMotionRef.current;
+    const springSnapshot: CameraSpringSnapshot | null = spring ? {
+      camera: { ...spring.camera },
+      velocity: { ...spring.velocity },
+      target: { ...spring.target },
+      lastFrameAt: spring.lastFrameAt,
+      animationId: spring.animationId,
+      reason: spring.reason,
+    } : null;
+    const proposal = proposeCamera(proposalInput);
+    if (isDev || replayModeRef.current !== null) {
+      log({
+        type: "camera-proposal",
+        version: CAMERA_PROPOSAL_SNAPSHOT_VERSION,
+        eventId: proposalId,
+        capturedAtPerf: performance.now(),
+        proposalKind,
+        pageIndex: pageRef.current,
+        pageGeneration: cameraPageGenerationRef.current,
+        pageBounds,
+        transitionId,
+        eventCycleId,
+        firstLiveAfterPageTurn,
+        input: proposalInput,
+        spring: springSnapshot,
+        recorded: proposal,
+      });
+    }
     compositionRef.current = proposal.state;
     sketchPannedRef.current = true;
     log({
@@ -1742,16 +1901,63 @@ export default function Board({
     if (proposal.move) {
       compositionHistoryRef.current.push({ ...compositionRef.current, camera: currentCamera, proposedTarget: undefined });
       if (compositionHistoryRef.current.length > 200) compositionHistoryRef.current.shift();
-      if (!liveFocalElementId) log({ type: "camera-metric", event: "executed", reason: proposal.reason, target: proposal.target });
-      animateCamera(proposal.target, proposal.reason);
-    } else if (!liveFocalElementId && !proposal.contentFits) {
-      // The camera decided not to move, but its own math says the content
-      // still doesn't fit the safe frame afterward — a real visibility
-      // failure, not a suppressed cosmetic tweak. Verified from proposeCamera's
-      // own post-decision fit check, not inferred separately.
-      log({ type: "camera-metric", event: "failed_visibility_check", reason: proposal.reason, occupiedCanvasRatio: proposal.occupiedCanvasRatio });
+      const pendingPageCamera = pendingPageArrivalCameraRef.current;
+      const coalescesPendingPage = firstLiveAfterPageTurn
+        && samePageArrivalTransition(pendingPageCamera, pageArrivalIdentity);
+
+      if (pendingPageCamera && !coalescesPendingPage) {
+        flushPendingPageArrivalCamera();
+      }
+
+      if (proposalKind === "page_turn" && pageArrivalIdentity) {
+        const candidate: PendingPageArrivalCamera = {
+          ...pageArrivalIdentity,
+          proposalId,
+          target: proposal.target,
+          reason: proposal.reason,
+        };
+        pendingPageArrivalCameraRef.current = candidate;
+        if (!pageArrivalIdentity.expectsLiveFollow) {
+          queueMicrotask(() => flushPendingPageArrivalCamera(pageArrivalIdentity));
+        }
+      } else {
+        if (coalescesPendingPage && pendingPageCamera && pageArrivalIdentity) {
+          pendingPageArrivalCameraRef.current = null;
+          pendingPageArrivalTransitionRef.current = null;
+          log({
+            type: "camera-page-arrival-coalesced",
+            pageGeneration: pageArrivalIdentity.pageGeneration,
+            pageIndex: pageArrivalIdentity.pageIndex,
+            eventCycleId: pageArrivalIdentity.eventCycleId,
+            transitionId: pageArrivalIdentity.transitionId,
+            pageProposalId: pendingPageCamera.proposalId,
+            liveProposalId: proposalId,
+            originalPageTarget: pendingPageCamera.target,
+            retainedLiveTarget: proposal.target,
+          });
+        }
+        if (!liveFocalElementId) log({ type: "camera-metric", event: "executed", reason: proposal.reason, target: proposal.target });
+        animateCamera(proposal.target, proposal.reason, {
+          animationId: `camera-animation-${++cameraAnimationSequenceRef.current}`,
+          proposalId,
+          transitionId,
+        });
+      }
+    } else {
+      const pendingPageCamera = pendingPageArrivalCameraRef.current;
+      if (firstLiveAfterPageTurn && samePageArrivalTransition(pendingPageCamera, pageArrivalIdentity)) {
+        pendingPageArrivalTransitionRef.current = null;
+        flushPendingPageArrivalCamera(pageArrivalIdentity ?? undefined);
+      }
+      if (!liveFocalElementId && !proposal.contentFits) {
+        // The camera decided not to move, but its own math says the content
+        // still doesn't fit the safe frame afterward — a real visibility
+        // failure, not a suppressed cosmetic tweak. Verified from proposeCamera's
+        // own post-decision fit check, not inferred separately.
+        log({ type: "camera-metric", event: "failed_visibility_check", reason: proposal.reason, occupiedCanvasRatio: proposal.occupiedCanvasRatio });
+      }
     }
-  }, [animateCamera, log]);
+  }, [animateCamera, flushPendingPageArrivalCamera, log]);
 
   /**
    * Replay whatever reframe request the hold/in-flight guards in framePage
@@ -1819,11 +2025,37 @@ export default function Board({
         : "";
       const midThought = carried !== "" && !isThoughtComplete(carried);
       dropLiveLine();
+      if (visualReentryEvidenceRef.current.length > 0) {
+        log({ type: "visual-reentry", event: "evidence-invalidated-page-turn", reason: "page locality changed before evidence completed" });
+        visualReentryEvidenceRef.current = [];
+        if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
+        causeEvidenceTimerRef.current = null;
+        if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
+        comparisonEvidenceTimerRef.current = null;
+      }
 
       pagePensRef.current.set(pageRef.current, { ...penRef.current });
       pageMarksRef.current.set(pageRef.current, marksRef.current);
 
       pageRef.current += 1;
+      cameraPageGenerationRef.current += 1;
+      const pageArrivalTransitionId = `page-arrival-${cameraPageGenerationRef.current}-page-${pageRef.current}`;
+      const pageArrivalIdentity: PageArrivalIdentity = {
+        transitionId: pageArrivalTransitionId,
+        pageGeneration: cameraPageGenerationRef.current,
+        pageIndex: pageRef.current,
+        eventCycleId: ++cameraEventCycleSequenceRef.current,
+        expectsLiveFollow: !carry || Boolean(carried),
+      };
+      pendingPageArrivalTransitionRef.current = pageArrivalIdentity;
+      // This is an exact logical continuation token, not a time window. The
+      // global fallback expires this cycle; an explicitly carried writeLive
+      // keeps the same token across its local font/measurement awaits.
+      queueMicrotask(() => {
+        if (samePageArrivalTransition(pendingPageArrivalTransitionRef.current, pageArrivalIdentity)) {
+          pendingPageArrivalTransitionRef.current = null;
+        }
+      });
       penRef.current = newPagePen(pageRef.current);
       marksRef.current = new Map();
       sketchRef.current.labels = [];
@@ -1844,9 +2076,13 @@ export default function Board({
       // Re-letter the carried sentence on the new sheet. Deliberately after
       // the log and the camera move, so the line lands on the page the viewer
       // is already looking at.
-      if (carry && carried) void writeLiveRef.current?.(carried, false);
+      if (carry && carried) {
+        void writeLiveRef.current?.(carried, false, undefined, pageArrivalIdentity)
+          .finally(() => flushPendingPageArrivalCamera(pageArrivalIdentity));
+      }
+      return pageArrivalIdentity;
     },
-    [dropLiveLine, findElement, framePage, log],
+    [dropLiveLine, findElement, flushPendingPageArrivalCamera, framePage, log],
   );
 
   /**
@@ -1856,7 +2092,7 @@ export default function Board({
   const pageTurnRequestedAtRef = useRef(0);
   /** writeLive is defined below turnPage but called by it. */
   const writeLiveRef = useRef<
-    ((text: string, settled: boolean, timing?: AudioTiming) => Promise<void>) | null
+    ((text: string, settled: boolean, timing?: AudioTiming, pageArrivalIdentity?: PageArrivalIdentity) => Promise<void>) | null
   >(null);
 
   /**
@@ -2485,7 +2721,7 @@ export default function Board({
    * add a model call, a semantic lookup, or layout planning here: don't.
    */
   const writeLive = useCallback(
-    async (text: string, settled: boolean, timing?: AudioTiming) => {
+    async (text: string, settled: boolean, timing?: AudioTiming, inheritedPageArrivalIdentity?: PageArrivalIdentity) => {
       const spoken = text.trim();
       if (!spoken) return;
       const seq = ++liveSeqRef.current;
@@ -2546,15 +2782,23 @@ export default function Board({
             reason: "kept the current thought on the first-minute composition",
           });
         } else {
-          turnPage("long-utterance", "utterance outgrew the sheet", { carry: false });
+          inheritedPageArrivalIdentity = turnPage("long-utterance", "utterance outgrew the sheet", { carry: false });
           base = { ...penRef.current };
           probe = { ...base };
           spot = lineStart(probe);
           elementId = "";
           const retryStartedAt = now();
-          built = await buildLiveLine(spoken, spot.x, spot.y, settled);
+          try {
+            built = await buildLiveLine(spoken, spot.x, spot.y, settled);
+          } catch (error) {
+            flushPendingPageArrivalCamera(inheritedPageArrivalIdentity);
+            throw error;
+          }
           latency.observe("build_live_line", now() - retryStartedAt);
-          if (seq !== liveSeqRef.current) return;
+          if (seq !== liveSeqRef.current) {
+            flushPendingPageArrivalCamera(inheritedPageArrivalIdentity);
+            return;
+          }
         }
       }
 
@@ -2645,7 +2889,7 @@ export default function Board({
       // Do not make this call unconditional again — that reintroduces the
       // "camera follows every word" distraction V2 exists to remove.
       if (!v2Enabled) {
-        framePage(false, "following live narration", null, elementId);
+        framePage(false, "following live narration", null, elementId, false, inheritedPageArrivalIdentity ?? null);
       } else {
         const app = apiRef.current?.getAppState?.();
         const fits = liveLineFitsViewport(
@@ -2660,20 +2904,27 @@ export default function Board({
         );
         if (fits) {
           log({ type: "v2", event: "camera-follow-skipped", detail: settled ? "final" : "interim" });
+          if (inheritedPageArrivalIdentity) flushPendingPageArrivalCamera(inheritedPageArrivalIdentity);
         } else {
           log({ type: "v2", event: "camera-follow-allowed", detail: settled ? "final" : "interim" });
-          framePage(false, "following live narration", null, elementId);
+          framePage(false, "following live narration", null, elementId, false, inheritedPageArrivalIdentity ?? null);
         }
       }
       if (settled) {
         liveCameraOverviewTimerRef.current = setTimeout(() => {
           liveCameraOverviewTimerRef.current = null;
           liveCameraHoldRef.current = false;
-          // Something concrete (a diagram, an Artist batch) queued a reframe
-          // while the hold was up — that is more useful than a generic
-          // overview and wins. Otherwise fall back to the overview reveal.
-          if (pendingReframeRef.current) releasePendingReframeRef.current?.();
-          else framePage(true, "overview after live narration", null, null, true);
+          // Generic Overview Removal V1 (docs/GENERIC-OVERVIEW-REMOVAL-V1-PRODUCTION-VALIDATION.md):
+          // this timer still exists purely to release the live-camera hold —
+          // a queued Visual Re-entry commit or a pending structural reframe
+          // still deserves to run the moment speech goes quiet. What it no
+          // longer does is fall back to a generic full-page overview when
+          // neither of those is waiting; "nothing happened for 1.8 seconds"
+          // is not by itself a camera command.
+          void flushVisualReentryRef.current?.().then((committed) => {
+            if (committed) return;
+            if (pendingReframeRef.current) releasePendingReframeRef.current?.();
+          });
         }, LIVE_CAMERA_OVERVIEW_MS);
       }
 
@@ -2762,7 +3013,7 @@ export default function Board({
       // A settled line ends the thought a deferred page turn was waiting on.
       if (settled && pageTurnRequestedAtRef.current) requestPageTurn("capacity");
     },
-    [commit, dropSettledLiveLine, framePage, log, now, requestPageTurn, turnPage, v2Enabled],
+    [commit, dropSettledLiveLine, flushPendingPageArrivalCamera, framePage, log, now, requestPageTurn, turnPage, v2Enabled],
   );
 
   // turnPage carries the sentence in flight onto the new sheet by calling back
@@ -5177,6 +5428,18 @@ export default function Board({
       prevInterimRef.current = [];
       aiAbortRef.current?.abort();
       scribeAbortRef.current?.abort();
+      visualReentryAbortRef.current?.abort();
+      visualReentryAbortRef.current = null;
+      visualReentryInFlightRef.current = false;
+      visualReentryGenerationRef.current += 1;
+      visualReentryPendingRef.current = [];
+      visualReentryEvidenceRef.current = [];
+      if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
+      causeEvidenceTimerRef.current = null;
+      if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
+      comparisonEvidenceTimerRef.current = null;
+      if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
+      visualReentryDrainTimerRef.current = null;
       setInterim("");
       commit();
       log({ type: "command", command, rawTranscript: raw, when });
@@ -5189,6 +5452,249 @@ export default function Board({
     },
     [clearStoryCaption, commit, doStoryUndo, doUndo, dropAllSpeculative, dropLiveLine, log, turnPage],
   );
+
+  const revealVisualReentry = useCallback((bounds: { x: number; y: number; w: number; h: number }, thoughtId: string) => {
+    const app = apiRef.current?.getAppState?.();
+    const fits = liveLineFitsViewport(
+      { x: bounds.x, y: bounds.y, width: bounds.w, height: bounds.h },
+      {
+        scrollX: Number(app?.scrollX ?? 0),
+        scrollY: Number(app?.scrollY ?? 0),
+        zoom: Number(app?.zoom?.value ?? app?.zoom ?? 1) || 1,
+        width: Number(app?.width ?? 0),
+        height: Number(app?.height ?? 0),
+      },
+    );
+    if (fits) {
+      log({ type: "visual-reentry", event: "camera-suppressed", thoughtId, reason: "already visible" });
+    } else {
+      log({ type: "visual-reentry", event: "camera-requested", thoughtId });
+      framePage(false, "visual re-entry reveal");
+    }
+  }, [framePage, log]);
+
+  const flushVisualReentry = useCallback(async (): Promise<boolean> => {
+    if (visualReentryCommitBusyRef.current) {
+      visualReentryFlushRequestedRef.current = true;
+      return false;
+    }
+    // Never race geometry against a mutable interim line. A settled line has
+    // already reserved its row, though, so the camera hold alone is not a
+    // placement hazard.
+    if (liveRef.current !== null) return false;
+    visualReentryCommitBusyRef.current = true;
+    try {
+      while (visualReentryPendingRef.current.length) {
+        const entry = visualReentryPendingRef.current[0];
+        const commitMode = chooseVisualCommitMode({
+          hasMutableLiveLine: liveRef.current !== null,
+          cameraHold: liveCameraHoldRef.current,
+          launchLiveSeq: entry.launchLiveSeq,
+          currentLiveSeq: liveSeqRef.current,
+        });
+        // During speech, only a result whose source thought predates the
+        // latest live update may enter quietly. A just-settled result waits
+        // for either continued speech or the ordinary safe reveal window.
+        if (commitMode === "blocked") return false;
+        const quietCommit = commitMode === "quiet";
+        const placementPen = penRef.current;
+        const placementSeq = liveSeqRef.current;
+        const isRelevant = () =>
+          entry.generation === visualReentryGenerationRef.current &&
+          entry.prepared.thought.page === pageRef.current &&
+          now() - entry.prepared.decidedAt <= VISUAL_REENTRY_RESULT_TTL_MS;
+        const result = await commitPreparedVisualReentry(entry.prepared, {
+          pen: placementPen,
+          isSafe: () => chooseVisualCommitMode({
+            hasMutableLiveLine: liveRef.current !== null,
+            cameraHold: liveCameraHoldRef.current,
+            launchLiveSeq: entry.launchLiveSeq,
+            currentLiveSeq: liveSeqRef.current,
+          }) !== "blocked",
+          isRelevant,
+          isPlacementCurrent: () => penRef.current === placementPen && liveSeqRef.current === placementSeq,
+          commitVisual: (elements) => {
+            elementsRef.current = [...elementsRef.current, ...(elements as SceneElement[])];
+            commit();
+          },
+          revealIfNeeded: (bounds) => {
+            if (quietCommit) {
+              log({ type: "visual-reentry", event: "camera-suppressed", thoughtId: entry.prepared.thought.id, reason: "quiet commit while speech owns attention" });
+            } else {
+              revealVisualReentry(bounds, entry.prepared.thought.id);
+            }
+          },
+          log,
+          now,
+        });
+        if (result === "held") return false;
+        visualReentryPendingRef.current.shift();
+        if (result === "committed") {
+          if (quietCommit) {
+            log({ type: "visual-reentry", event: "durable-result-quiet-committed", thoughtId: entry.prepared.thought.id });
+          }
+          if (visualReentryPendingRef.current.length) {
+            if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
+            visualReentryDrainTimerRef.current = setTimeout(() => {
+              visualReentryDrainTimerRef.current = null;
+              void flushVisualReentryRef.current?.();
+            }, LIVE_CAMERA_OVERVIEW_MS);
+          }
+          return true;
+        }
+      }
+      return false;
+    } finally {
+      visualReentryCommitBusyRef.current = false;
+      if (visualReentryFlushRequestedRef.current) {
+        visualReentryFlushRequestedRef.current = false;
+        queueMicrotask(() => void flushVisualReentryRef.current?.());
+      }
+    }
+  }, [commit, log, now, revealVisualReentry]);
+  flushVisualReentryRef.current = flushVisualReentry;
+
+  const launchVisualReentryCandidate = useCallback((candidateThought: SettledThought, reason: string, sequenceCompleted = false, causeCompleted = false, comparisonCompleted = false) => {
+    const experimentMode = replayModeRef.current;
+    const candidateCompletedAt = now();
+    const participantThoughtIds = candidateThought.participantThoughtIds ?? [candidateThought.id];
+    if (candidateThought.id.startsWith("evidence:")) log({
+      type: "visual-reentry",
+      event: "evidence-combined",
+      thoughtId: candidateThought.id,
+      reason,
+      sourceText: candidateThought.text,
+      participantThoughtIds,
+    });
+    if (sequenceCompleted) log({ type: "visual-reentry", event: "sequence-evidence-completed", thoughtId: candidateThought.id, reason, visualFamily: "sequence" });
+    if (causeCompleted) log({ type: "visual-reentry", event: "cause-evidence-completed", thoughtId: candidateThought.id, reason, visualFamily: "cause_effect" });
+    if (comparisonCompleted) log({ type: "visual-reentry", event: "comparison-evidence-completed", thoughtId: candidateThought.id, reason, visualFamily: "comparison" });
+    const candidate = evaluateVisualCandidate(candidateThought.text);
+    log({
+      type: "visual-reentry",
+      event: candidate.candidate ? "candidate-accepted" : "candidate-rejected",
+      thoughtId: candidateThought.id,
+      reason: candidate.reason,
+      sourceExcerpt: candidateThought.text.slice(0, 80),
+      sourceText: candidateThought.text,
+      participantThoughtIds,
+      candidateCompletedAtMs: candidateCompletedAt,
+      visualFamily: candidate.family,
+    });
+    if (!candidate.candidate || experimentMode === "vr_shell") return;
+
+    if (visualReentryProcessedIdsRef.current.size > 200) visualReentryProcessedIdsRef.current.clear();
+    if (!claimThought(visualReentryProcessedIdsRef.current, candidateThought.id)) {
+      log({ type: "visual-reentry", event: "duplicate-thought-skipped", thoughtId: candidateThought.id });
+      return;
+    }
+    if (visualReentryInFlightRef.current) {
+      log({ type: "visual-reentry", event: "request-suppressed-in-flight", thoughtId: candidateThought.id, reason: "one decision is already in flight" });
+      return;
+    }
+
+    const generation = visualReentryGenerationRef.current;
+    const launchLiveSeq = liveSeqRef.current;
+    const controller = new AbortController();
+    visualReentryAbortRef.current = controller;
+    visualReentryInFlightRef.current = true;
+    void prepareVisualReentry(candidateThought, {
+      signal: controller.signal,
+      log,
+      now,
+      experimentMode: experimentMode === "vr_decision" ? "vr_decision" : "vr_full",
+      candidateCompletedAt,
+    }).then((prepared) => {
+      if (!prepared) return;
+      if (generation !== visualReentryGenerationRef.current || prepared.thought.page !== pageRef.current) {
+        log({ type: "visual-reentry", event: "durable-result-expired", thoughtId: candidateThought.id, reason: "page/session changed before result became ready" });
+        return;
+      }
+      if (visualReentryPendingRef.current.length >= VISUAL_REENTRY_PENDING_MAX) {
+        const dropped = visualReentryPendingRef.current.shift();
+        if (dropped) log({ type: "visual-reentry", event: "durable-result-expired", thoughtId: dropped.prepared.thought.id, reason: "durable queue capacity reached" });
+      }
+      visualReentryPendingRef.current.push({ prepared, generation, launchLiveSeq });
+      if (liveCameraHoldRef.current || liveRef.current !== null) {
+        log({ type: "visual-reentry", event: "durable-result-held", thoughtId: candidateThought.id, reason: "speech is active" });
+      }
+      void flushVisualReentryRef.current?.();
+    }).finally(() => {
+      if (visualReentryAbortRef.current === controller) {
+        visualReentryAbortRef.current = null;
+        visualReentryInFlightRef.current = false;
+      }
+    });
+  }, [log, now]);
+
+  const handleSettledVisualReentry = useCallback((thought: SettledThought) => {
+    log({
+      type: "visual-reentry",
+      event: "thought-received",
+      thoughtId: thought.id,
+      sourceExcerpt: thought.text.slice(0, 80),
+      sourceText: thought.text,
+      participantThoughtIds: [thought.id],
+    });
+    void flushVisualReentryRef.current?.();
+    if (causeEvidenceTimerRef.current) {
+      clearTimeout(causeEvidenceTimerRef.current);
+      causeEvidenceTimerRef.current = null;
+    }
+    if (comparisonEvidenceTimerRef.current) {
+      clearTimeout(comparisonEvidenceTimerRef.current);
+      comparisonEvidenceTimerRef.current = null;
+    }
+
+    const priorWindow = visualReentryEvidenceRef.current;
+    let evidence = advanceVisualEvidence(priorWindow, thought);
+    if (evidence.status === "rejected" && priorWindow.some((entry) => entry.family === "cause_effect")) {
+      const prior = completePendingCauseEvidence(priorWindow);
+      if (prior?.candidate) launchVisualReentryCandidate(prior.candidate, prior.reason, false, true);
+      evidence = advanceVisualEvidence([], thought);
+    }
+    visualReentryEvidenceRef.current = evidence.next;
+    if (evidence.status === "pending") {
+      log({ type: "visual-reentry", event: "evidence-held", thoughtId: thought.id, reason: evidence.reason, sourceText: thought.text, participantThoughtIds: [thought.id] });
+      if (evidence.sequenceEvidence) log({ type: "visual-reentry", event: `sequence-evidence-${evidence.sequenceEvidence}`, thoughtId: thought.id, reason: evidence.reason, visualFamily: "sequence" });
+      if (evidence.causeEvidence) {
+        log({ type: "visual-reentry", event: `cause-evidence-${evidence.causeEvidence}`, thoughtId: thought.id, reason: evidence.reason, visualFamily: "cause_effect" });
+        causeEvidenceTimerRef.current = setTimeout(() => {
+          causeEvidenceTimerRef.current = null;
+          const completed = completePendingCauseEvidence(visualReentryEvidenceRef.current);
+          if (!completed?.candidate) return;
+          visualReentryEvidenceRef.current = [];
+          launchVisualReentryCandidate(completed.candidate, completed.reason, false, true);
+        }, 6_000);
+      }
+      if (evidence.comparisonEvidence) {
+        log({ type: "visual-reentry", event: `comparison-evidence-${evidence.comparisonEvidence}`, thoughtId: thought.id, reason: evidence.reason, visualFamily: "comparison" });
+        if (evidence.comparisonEvidence === "extended") {
+          comparisonEvidenceTimerRef.current = setTimeout(() => {
+            comparisonEvidenceTimerRef.current = null;
+            const completed = completePendingComparisonEvidence(visualReentryEvidenceRef.current);
+            if (!completed?.candidate) return;
+            visualReentryEvidenceRef.current = [];
+            launchVisualReentryCandidate(completed.candidate, completed.reason, false, false, true);
+          }, 3_500);
+        }
+      }
+      return;
+    }
+    if (!evidence.candidate) {
+      log({
+        type: "visual-reentry",
+        event: "candidate-rejected",
+        thoughtId: thought.id,
+        reason: evidence.reason,
+        sourceExcerpt: thought.text.slice(0, 80),
+        sourceText: thought.text,
+        participantThoughtIds: [thought.id],
+      });
+      return;
+    }
+    launchVisualReentryCandidate(evidence.candidate, evidence.reason, evidence.sequenceEvidence === "completed", evidence.causeEvidence === "completed", evidence.comparisonEvidence === "completed");
+  }, [launchVisualReentryCandidate, log]);
 
   /**
    * Guards against a command running twice.
@@ -5250,11 +5756,11 @@ export default function Board({
       log({ type: "transcript", text, rawTranscript: raw, normalizedTranscript: text, displayTranscript: text });
       setInterim("");
 
-      // V2 INVARIANT (docs/LIVE-SPEECH-PRESENTATION-V2.md, "Active Thought" /
+      // V2/V3 INVARIANT (docs/LIVE-SPEECH-PRESENTATION-V2.md, "Active Thought" /
       // "Settled Thought"): fold consecutive finals belonging to one
-      // unfinished thought into a single growing block instead of one row
-      // per final. Reuses Story Mode's exact merge decision
-      // (lib/liveSpeech.ts) — deterministic, no model, no extra latency.
+      // unfinished thought into a bounded growing block instead of one row
+      // per final. Presentation uses its own conservative deterministic
+      // boundary policy; Story Mode's structural policy remains untouched.
       //
       // `settledForLive` tracks thought completion, not "this is a final": a
       // final that doesn't complete the thought is passed to writeLive as
@@ -5264,20 +5770,61 @@ export default function Board({
       // semantic judgement. liveRef.current is never cleared mid-thought, so
       // every continuing final/interim patches the same anchored element via
       // writeLive's own `ours` check; no extra anchoring code needed here.
-      let textForLive = text;
-      let settledForLive = true;
+      const v3SettledThoughts: SettledThought[] = [];
+      let v3PendingText = "";
       if (v2Enabled) {
         const priorThought = v2ThoughtRef.current;
-        const pushed = pushStructuralSegment(priorThought, text, now());
+        const receivedAt = now();
+        const pushed = pushPresentationSegment(priorThought, text, receivedAt);
+        v2ThoughtStreamEpochRef.current = streamEpoch;
+        const segmentRegion = {
+          audioStartMs: Math.max(0, audioEndMs - Math.max(0, tEnd - tStart)),
+          audioEndMs,
+        };
+        const priorRegion = v2ThoughtSourceRegionRef.current;
+        const sourceRegion = priorRegion ? {
+          audioStartMs: Math.min(priorRegion.audioStartMs, segmentRegion.audioStartMs),
+          audioEndMs: Math.max(priorRegion.audioEndMs, segmentRegion.audioEndMs),
+        } : segmentRegion;
         v2ThoughtRef.current = pushed.state;
-        textForLive = pushed.thought ?? pushed.state.text;
-        settledForLive = Boolean(pushed.thought);
-        if (pushed.thought) {
+        v3PendingText = pushed.state.text;
+        v2ThoughtSourceRegionRef.current = pushed.state.text ? sourceRegion : null;
+        for (const boundary of pushed.decisions) {
+          log({ type: "thought-boundary", ...boundary });
+        }
+        for (const emission of pushed.thoughts) {
+          const thoughtId =
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `thought-${receivedAt}-${v3SettledThoughts.length}`;
+          const settledThought: SettledThought = {
+            id: thoughtId,
+            text: emission.text,
+            sourceSegments: emission.rawSegments.length ? emission.rawSegments : [emission.text],
+            page: pageRef.current,
+            startedAt: emission.heldSince || receivedAt,
+            settledAt: receivedAt,
+            sessionGeneration: streamEpoch,
+            sourceRegion,
+          };
+          v3SettledThoughts.push(settledThought);
           log({
             type: "thought",
-            rawSegments: [...priorThought.rawSegments, text],
-            merged: pushed.thought,
-            heldMs: priorThought.heldSince ? Math.max(0, now() - priorThought.heldSince) : 0,
+            rawSegments: settledThought.sourceSegments,
+            merged: emission.text,
+            heldMs: emission.heldSince ? Math.max(0, now() - emission.heldSince) : 0,
+          });
+          log({
+            type: "settled-thought",
+            thoughtId,
+            text: emission.text,
+            sourceSegments: settledThought.sourceSegments,
+            startedAtMs: settledThought.startedAt ?? receivedAt,
+            settledAtMs: receivedAt,
+            pageId: pageRef.current,
+            sessionId: sessionIdRef.current,
+            sessionGeneration: streamEpoch,
+            sourceRegion,
           });
         }
       }
@@ -5287,16 +5834,30 @@ export default function Board({
       // resolves only after `commit()` has already dispatched the ink, so the
       // pulse below strictly follows it, never fronts it.
       const epochAtSettle = liveSeqRef.current;
-      const writeLiveDone = writeLive(textForLive, settledForLive, { audioEndMs, streamEpoch, ...timing, kind: "final" });
+      const finalTiming = { audioEndMs, streamEpoch, ...timing, kind: "final" as const };
+      let writeLiveDone: Promise<void>;
       if (v2Enabled) {
-        // V2 INVARIANT: no flash/pop on finalisation — ink just becomes
-        // confident (docs/LIVE-SPEECH-PRESENTATION-V2.md, invariant #5).
-        if (settledForLive) {
-          void writeLiveDone.then(() => {
+        // V3 changes only permanence. Every interim still reaches writeLive
+        // immediately above; a final may now lock one or more completed
+        // prefixes and leave an unresolved tail on a fresh live anchor.
+        writeLiveDone = (async () => {
+          if (v3SettledThoughts.length === 0) {
+            await writeLive(v3PendingText || text, false, finalTiming);
+            return;
+          }
+          for (let i = 0; i < v3SettledThoughts.length; i += 1) {
+            const thought = v3SettledThoughts[i];
+            const isLastVisibleWrite = i === v3SettledThoughts.length - 1 && !v3PendingText;
+            await writeLive(thought.text, true, isLastVisibleWrite ? finalTiming : undefined);
             log({ type: "v2", event: "pop-suppressed" });
-          });
-        }
+            if (vrEnabled || (replayModeRef.current !== null && replayModeRef.current !== "v2_only")) {
+              handleSettledVisualReentry(thought);
+            }
+          }
+          if (v3PendingText) await writeLive(v3PendingText, false, finalTiming);
+        })();
       } else {
+        writeLiveDone = writeLive(text, true, finalTiming).then(() => undefined);
         void writeLiveDone.then(() => {
           if (liveSeqRef.current !== epochAtSettle) return;
           const ids = settledLiveRef.current?.ids;
@@ -5336,8 +5897,59 @@ export default function Board({
       // unconditionally here; downstream visual intelligence must consume
       // settled thought state, not compete with the active one.
     },
-    [correct, handleStoryFinal, log, now, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleSpeculative, v2Enabled, writeLive, writeStoryCaption],
+    [correct, handleSettledVisualReentry, handleStoryFinal, log, now, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleSpeculative, v2Enabled, vrEnabled, writeLive, writeStoryCaption],
   );
+
+  const flushPresentationBoundary = useCallback(async () => {
+    if (!v2Enabled || !v2ThoughtRef.current.text.trim()) return;
+    const receivedAt = now();
+    const flushed = flushPresentationThought(v2ThoughtRef.current, receivedAt);
+    const sourceRegion = v2ThoughtSourceRegionRef.current ?? undefined;
+    const sessionGeneration = v2ThoughtStreamEpochRef.current;
+    v2ThoughtRef.current = flushed.state;
+    v2ThoughtSourceRegionRef.current = null;
+    for (const boundary of flushed.decisions) log({ type: "thought-boundary", ...boundary });
+    for (let index = 0; index < flushed.thoughts.length; index += 1) {
+      const emission = flushed.thoughts[index];
+      const thoughtId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `thought-flush-${receivedAt}-${index}`;
+      const thought: SettledThought = {
+        id: thoughtId,
+        text: emission.text,
+        sourceSegments: emission.rawSegments.length ? emission.rawSegments : [emission.text],
+        page: pageRef.current,
+        startedAt: emission.heldSince || receivedAt,
+        settledAt: receivedAt,
+        sessionGeneration,
+        sourceRegion,
+      };
+      log({
+        type: "thought",
+        rawSegments: thought.sourceSegments,
+        merged: thought.text,
+        heldMs: emission.heldSince ? Math.max(0, receivedAt - emission.heldSince) : 0,
+      });
+      log({
+        type: "settled-thought",
+        thoughtId,
+        text: thought.text,
+        sourceSegments: thought.sourceSegments,
+        startedAtMs: thought.startedAt ?? receivedAt,
+        settledAtMs: receivedAt,
+        pageId: pageRef.current,
+        sessionId: sessionIdRef.current,
+        sessionGeneration,
+        sourceRegion,
+      });
+      await writeLive(thought.text, true);
+      log({ type: "v2", event: "pop-suppressed" });
+      if (vrEnabled || (replayModeRef.current !== null && replayModeRef.current !== "v2_only")) {
+        handleSettledVisualReentry(thought);
+      }
+    }
+  }, [handleSettledVisualReentry, log, now, v2Enabled, vrEnabled, writeLive]);
 
   const handleInterim = useCallback(
     (text: string, audioEndMs: number, streamEpoch: number, confidence = 0, timing?: DeepgramResultTiming) => {
@@ -5593,6 +6205,7 @@ export default function Board({
     onInterim: handleInterim,
     onSessionStart: handleSessionStart,
     now,
+    sessionId: () => sessionIdRef.current,
     keyterms: activeTerms,
     onKeyterms: (terms) => log({ type: "keyterms", terms }),
     onStreamMetrics: (metrics) => log({ type: "speech-stream", ...metrics }),
@@ -5631,6 +6244,7 @@ export default function Board({
     const listening = status === "live" || status === "connecting" || status === "reconnecting";
     if (listening) {
       stopEngine();
+      await flushPresentationBoundary();
       // usage.stop() clears the active-session id as its first action, so it
       // hands the id back here rather than leaving it to be re-read from the
       // (by-then-null) global — see hooks/useUsageSession.ts.
@@ -5668,7 +6282,244 @@ export default function Board({
       prewarmEngine,
       usage.renew,
     );
-  }, [deepgram, guest, log, prewarmEngine, startEngine, status, stopEngine, usage]);
+  }, [deepgram, flushPresentationBoundary, guest, log, prewarmEngine, startEngine, status, stopEngine, usage]);
+
+  const runReplayExperiment = useCallback(async (
+    experimentMode: ReplayExperimentMode,
+    file: File,
+    round: number,
+    disconnectPlan: ReplayDisconnectPlan = { atAudioMs: [] },
+  ): Promise<ReplayRunReport> => {
+    if (!replayLabEnabled || ENGINE !== "deepgram") throw new Error("The replay lab requires the development Deepgram engine.");
+    if (status !== "idle") throw new Error("Stop the active microphone session before replaying audio.");
+
+    // Clean, equivalent state for every run. This intentionally resets only
+    // session-owned state; feature configuration and production behavior are
+    // not mutated by the lab.
+    aiAbortRef.current?.abort();
+    scribeAbortRef.current?.abort();
+    storyAbortRef.current?.abort();
+    visualReentryAbortRef.current?.abort();
+    visualReentryAbortRef.current = null;
+    visualReentryInFlightRef.current = false;
+    visualReentryGenerationRef.current += 1;
+    visualReentryPendingRef.current = [];
+    visualReentryEvidenceRef.current = [];
+    if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
+    cameraMotionRef.current = null;
+    cameraProposalSequenceRef.current = 0;
+    cameraAnimationSequenceRef.current = 0;
+    cameraPageGenerationRef.current = 0;
+    cameraEventCycleSequenceRef.current = 0;
+    pendingPageArrivalTransitionRef.current = null;
+    pendingPageArrivalCameraRef.current = null;
+    compositionRef.current = initialCompositionState();
+    apiRef.current?.updateScene({ appState: { scrollX: 0, scrollY: 0, zoom: { value: 1 } } });
+    if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
+    causeEvidenceTimerRef.current = null;
+    if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
+    comparisonEvidenceTimerRef.current = null;
+    if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
+    visualReentryDrainTimerRef.current = null;
+    if (scribeTimerRef.current) clearTimeout(scribeTimerRef.current);
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    elementsRef.current = [];
+    boardRef.current = new SemanticBoard();
+    pageRef.current = 0;
+    pagePensRef.current = new Map();
+    penRef.current = newPagePen(0);
+    marksRef.current = new Map();
+    renderedMarkKeysRef.current = new Set();
+    decorationsRef.current = new Set();
+    conceptElementRef.current = new Map();
+    conceptPageRef.current = new Map();
+    framesRef.current = [];
+    finalsRef.current = [];
+    pendingTextRef.current = "";
+    liveUtteranceRef.current = "";
+    liveRef.current = null;
+    settledLiveRef.current = null;
+    liveLineIdsRef.current = new Set();
+    liveSeqRef.current += 1;
+    v2ThoughtRef.current = EMPTY_PRESENTATION_THOUGHT;
+    v2ThoughtStreamEpochRef.current = 0;
+    v2ThoughtSourceRegionRef.current = null;
+    prevInterimRef.current = [];
+    settledCountRef.current = 0;
+    visualReentryProcessedIdsRef.current = new Set();
+    replayDecisionWindowsRef.current = [];
+    replayDecisionOpenRef.current = new Map();
+    replayMaxConcurrencyRef.current = 0;
+    setInterim("");
+    commit();
+
+    const logStart = logRef.current.length;
+    const samples: LatencySampleEvent[] = [];
+    const unsubscribe = latency.subscribe((sample) => samples.push(sample));
+    latency.reset();
+    t0Ref.current = Date.now();
+    latency.mark("start_pressed", latencyNow());
+    replayModeRef.current = experimentMode;
+    const startedAt = new Date().toISOString();
+    try {
+      // Replay obtains a short-lived server-validated development capability
+      // inside useDeepgram. It deliberately does not start/renew/end a product
+      // usage session, so regression rounds cannot consume user or trial time.
+      latency.mark("lease_ready", latencyNow());
+      const audio = await deepgram.startReplay(file, disconnectPlan);
+      await flushPresentationBoundary();
+      // Each benchmark run needs a fresh capability/credential. Reusing a
+      // partially aged token can close an 87.96-second second run even though
+      // a freshly issued 180-second replay token is long enough.
+      deepgram.stop(false);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+      const summary = latency.summary();
+      summary.mode = experimentMode;
+      summary.sessionId = sessionIdRef.current;
+      const runEvents = logRef.current.slice(logStart);
+      const corpusEvidence = buildCorpusEvidence(runEvents);
+      const events = runEvents.filter((event): event is Extract<LogEvent, { type: "visual-reentry" }> => event.type === "visual-reentry");
+      const decisionLatencies = events.flatMap((event) => event.event === "decision-ended" && event.decisionLatencyMs !== undefined ? [event.decisionLatencyMs] : []);
+      const sourceLatency = (field: "candidateCompleteToDurableReadyMs" | "candidateCompleteToCommitMs") => ({
+        deterministic_fast_path: (() => {
+          const values = events.flatMap((event) => event.decisionSource === "deterministic_fast_path" && event[field] !== undefined ? [event[field]] : []);
+          return { count: values.length, p50: percentile(values, .5), p95: percentile(values, .95) };
+        })(),
+        model_fallback: (() => {
+          const values = events.flatMap((event) => event.decisionSource === "model_fallback" && event[field] !== undefined ? [event[field]] : []);
+          return { count: values.length, p50: percentile(values, .5), p95: percentile(values, .95) };
+        })(),
+      });
+      const settledThoughtCount = corpusEvidence.settledThoughts.length;
+      const candidateAcceptedCount = events.filter((event) => event.event === "candidate-accepted").length;
+      const visualDecisionCount = events.filter((event) => event.event === "decision-started").length;
+      const vr = {
+        settledThoughtCount,
+        candidateAcceptedCount,
+        candidateRejectedCount: events.filter((event) => event.event === "candidate-rejected").length,
+        evidenceHeldCount: events.filter((event) => event.event === "evidence-held").length,
+        evidenceCombinedCount: events.filter((event) => event.event === "evidence-combined").length,
+        visualDecisionCount,
+        decisionLatencyP50: percentile(decisionLatencies, .5),
+        decisionLatencyP95: percentile(decisionLatencies, .95),
+        staleResultDroppedCount: events.filter((event) => event.event === "stale-result-dropped").length,
+        abortedRequestCount: events.filter((event) => event.event === "request-aborted").length,
+        noneCount: events.filter((event) => event.event === "decision-none").length,
+        groundingCount: events.filter((event) => event.event === "grounding-passed" || event.event === "grounding-failed").length,
+        renderedVisualCount: events.filter((event) => event.event === "render-completed").length,
+        durableResultReadyCount: events.filter((event) => event.event === "durable-result-ready").length,
+        durableResultHeldCount: events.filter((event) => event.event === "durable-result-held").length,
+        durableResultCommittedCount: events.filter((event) => event.event === "durable-result-committed").length,
+        quietCommittedCount: events.filter((event) => event.event === "durable-result-quiet-committed").length,
+        maxRequestConcurrency: replayMaxConcurrencyRef.current,
+        fastPathAttemptCount: events.filter((event) => event.event === "fast-path-attempted").length,
+        fastPathSuccessCount: events.filter((event) => event.event === "fast-path-succeeded").length,
+        fastPathRejectedCount: events.filter((event) => event.event === "fast-path-rejected").length,
+        modelFallbackCount: events.filter((event) => event.event === "model-fallback-started").length,
+        fastPathEnumerationCount: events.filter((event) => event.event === "decision-enumeration" && event.decisionSource === "deterministic_fast_path").length,
+        fastPathQuantitativeCount: events.filter((event) => event.event === "decision-quantitative" && event.decisionSource === "deterministic_fast_path").length,
+        exactFastPathCount: events.filter((event) => event.event === "fast-path-succeeded" &&
+          ((event.fromModality === undefined && event.toModality === undefined) ||
+            (event.fromModality === "exact" && event.toModality === "exact"))).length,
+        approximateFastPathCount: events.filter((event) => event.event === "fast-path-succeeded" && (event.fromModality === "approximate" || event.toModality === "approximate")).length,
+        approximateFallbackCount: events.filter((event) => event.event === "model-fallback-started" && event.approximationPresent === true).length,
+        fastPathGroundingPassCount: events.filter((event) => event.event === "grounding-passed" && event.decisionSource === "deterministic_fast_path").length,
+        fastPathGroundingFailCount: events.filter((event) => event.event === "grounding-failed" && event.decisionSource === "deterministic_fast_path").length,
+        fastPathCommittedCount: events.filter((event) => event.event === "durable-result-committed" && event.decisionSource === "deterministic_fast_path").length,
+        modelCommittedCount: events.filter((event) => event.event === "durable-result-committed" && event.decisionSource === "model_fallback").length,
+        modelCallsAvoidedByCandidateGate: Math.max(0, settledThoughtCount - candidateAcceptedCount),
+        modelCallsAvoidedByFastPath: events.filter((event) => event.event === "fast-path-succeeded").length,
+        overallModelCallRate: settledThoughtCount > 0 ? visualDecisionCount / settledThoughtCount : 0,
+        sequenceEvidenceOpened: events.filter((event) => event.event === "sequence-evidence-opened").length,
+        sequenceEvidenceExtended: events.filter((event) => event.event === "sequence-evidence-extended").length,
+        sequenceEvidenceCompleted: events.filter((event) => event.event === "sequence-evidence-completed").length,
+        sequenceCandidateCount: events.filter((event) => event.event === "candidate-accepted" && event.visualFamily === "sequence").length,
+        sequenceFastPathCount: events.filter((event) => event.event === "fast-path-succeeded" && event.visualFamily === "sequence").length,
+        sequenceModelFallbackCount: events.filter((event) => event.event === "model-fallback-started" && event.visualFamily === "sequence").length,
+        sequenceGroundingPass: events.filter((event) => event.event === "grounding-passed" && event.visualFamily === "sequence").length,
+        sequenceGroundingFail: events.filter((event) => event.event === "grounding-failed" && event.visualFamily === "sequence").length,
+        sequenceCommittedCount: events.filter((event) => event.event === "durable-result-committed" && event.visualFamily === "sequence").length,
+        causeEvidenceOpened: events.filter((event) => event.event === "cause-evidence-opened").length,
+        causeEvidenceExtended: events.filter((event) => event.event === "cause-evidence-extended").length,
+        causeEvidenceCompleted: events.filter((event) => event.event === "cause-evidence-completed").length,
+        causeCandidateCount: events.filter((event) => event.event === "candidate-accepted" && event.visualFamily === "cause_effect").length,
+        causeFastPathCount: events.filter((event) => event.event === "fast-path-succeeded" && event.visualFamily === "cause_effect").length,
+        causeModelFallbackCount: events.filter((event) => event.event === "model-fallback-started" && event.visualFamily === "cause_effect").length,
+        causeGroundingPassCount: events.filter((event) => event.event === "grounding-passed" && event.visualFamily === "cause_effect").length,
+        causeGroundingFailCount: events.filter((event) => event.event === "grounding-failed" && event.visualFamily === "cause_effect").length,
+        causeCommittedCount: events.filter((event) => event.event === "durable-result-committed" && event.visualFamily === "cause_effect").length,
+        causeRejectedUncertain: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("uncertain causal modality")).length,
+        causeRejectedNegated: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("negation near causal")).length,
+        causeRejectedTemporal: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("temporal order is not causality")).length,
+        causeRejectedCorrelation: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("correlation/association is not causality")).length,
+        comparisonEvidenceOpened: events.filter((event) => event.event === "comparison-evidence-opened").length,
+        comparisonEvidenceExtended: events.filter((event) => event.event === "comparison-evidence-extended").length,
+        comparisonEvidenceCompleted: events.filter((event) => event.event === "comparison-evidence-completed").length,
+        comparisonCandidateCount: events.filter((event) => event.event === "candidate-accepted" && event.visualFamily === "comparison").length,
+        comparisonFastPathCount: events.filter((event) => event.event === "fast-path-succeeded" && event.visualFamily === "comparison").length,
+        comparisonModelFallbackCount: events.filter((event) => event.event === "model-fallback-started" && event.visualFamily === "comparison").length,
+        comparisonGroundingPassCount: events.filter((event) => event.event === "grounding-passed" && event.visualFamily === "comparison").length,
+        comparisonGroundingFailCount: events.filter((event) => event.event === "grounding-failed" && event.visualFamily === "comparison").length,
+        comparisonCommittedCount: events.filter((event) => event.event === "durable-result-committed" && event.visualFamily === "comparison").length,
+        comparisonRejectedCooccurrence: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("co-occur")).length,
+        comparisonRejectedUncertain: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("uncertain comparison")).length,
+        comparisonRejectedNegated: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("negated comparison")).length,
+        pageTurnInvalidationCount: events.filter((event) => event.event === "evidence-invalidated-page-turn" || (event.event === "durable-result-expired" && event.reason?.includes("page/session"))).length,
+        candidateToDurableReady: sourceLatency("candidateCompleteToDurableReadyMs"),
+        candidateToCommit: sourceLatency("candidateCompleteToCommitMs"),
+      };
+      const visualLifecycles = events
+        .filter((event) => event.event === "candidate-accepted")
+        .map((candidate) => {
+          const sameThought = events.filter((event) => event.thoughtId === candidate.thoughtId);
+          const at = (name: Extract<LogEvent, { type: "visual-reentry" }>["event"]) =>
+            sameThought.find((event) => event.event === name)?.t ?? null;
+          const fast = sameThought.find((event) => event.event === "fast-path-succeeded");
+          const committed = sameThought.find((event) => event.event === "durable-result-committed");
+          return {
+            thoughtId: candidate.thoughtId ?? "unknown",
+            sourceExcerpt: candidate.sourceExcerpt ?? "",
+            candidateCompletedAtMs: candidate.candidateCompletedAtMs ?? candidate.t,
+            durableReadyAtMs: at("durable-result-ready"),
+            commitAtMs: at("durable-result-committed"),
+            quietCommitAtMs: at("durable-result-quiet-committed"),
+            groundingPassedAtMs: at("grounding-passed"),
+            decisionSource: fast?.decisionSource ?? committed?.decisionSource ?? null,
+            fromModality: fast?.fromModality ?? null,
+            toModality: fast?.toModality ?? null,
+            cameraRequested: sameThought.some((event) => event.event === "camera-requested"),
+            cameraSuppressed: sameThought.some((event) => event.event === "camera-suppressed"),
+          };
+        });
+      return {
+        mode: experimentMode,
+        round,
+        audio,
+        latency: summary,
+        vr,
+        correlation: correlateSamples(samples, replayDecisionWindowsRef.current),
+        decisionWindows: replayDecisionWindowsRef.current.map((window) => ({ ...window })),
+        visualLifecycles,
+        settledThoughts: corpusEvidence.settledThoughts,
+        visualSources: corpusEvidence.visualSources,
+        scene: buildCorpusScene(elementsRef.current, pageRef.current),
+        events: runEvents,
+        pageTurns: runEvents
+          .filter((event): event is Extract<LogEvent, { type: "page" }> => event.type === "page")
+          .map((event) => ({ atMs: event.t, page: event.index, trigger: event.reason, reason: event.why })),
+        transcript: finalsRef.current.map((item) => item.text).join(" ").trim(),
+        startedAt,
+        longTasks: runEvents
+          .filter((event): event is Extract<LogEvent, { type: "long-task" }> => event.type === "long-task")
+          .map((event) => ({ atMs: event.perfNow, durationMs: event.durationMs })),
+      };
+    } finally {
+      unsubscribe();
+      replayModeRef.current = null;
+      deepgram.stop(false);
+    }
+  }, [commit, deepgram, replayLabEnabled, status]);
 
   const wasListeningRef = useRef(false);
   useEffect(() => {
@@ -5683,6 +6534,18 @@ export default function Board({
       scribeFailuresRef.current = 0;
       storyAbortRef.current?.abort();
       storyQueueRef.current = [];
+      visualReentryAbortRef.current?.abort();
+      visualReentryAbortRef.current = null;
+      visualReentryInFlightRef.current = false;
+      visualReentryGenerationRef.current += 1;
+      visualReentryPendingRef.current = [];
+      visualReentryEvidenceRef.current = [];
+      if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
+      causeEvidenceTimerRef.current = null;
+      if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
+      comparisonEvidenceTimerRef.current = null;
+      if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
+      visualReentryDrainTimerRef.current = null;
     }
     wasListeningRef.current = listening;
   }, [status]);
@@ -5712,6 +6575,18 @@ export default function Board({
       window.removeEventListener("beforeunload", flush);
       flush();
     };
+  }, []);
+
+  useEffect(() => () => {
+    visualReentryAbortRef.current?.abort();
+    visualReentryPendingRef.current = [];
+    visualReentryEvidenceRef.current = [];
+    if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
+    causeEvidenceTimerRef.current = null;
+    if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
+    comparisonEvidenceTimerRef.current = null;
+    if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
+    visualReentryDrainTimerRef.current = null;
   }, []);
 
   /** Put a saved session back on the canvas. */
@@ -5979,6 +6854,18 @@ export default function Board({
         aiAbortRef.current?.abort();
         scribeAbortRef.current?.abort();
         storyAbortRef.current?.abort();
+        visualReentryAbortRef.current?.abort();
+        visualReentryAbortRef.current = null;
+        visualReentryInFlightRef.current = false;
+        visualReentryGenerationRef.current += 1;
+        visualReentryPendingRef.current = [];
+        visualReentryEvidenceRef.current = [];
+        if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
+        causeEvidenceTimerRef.current = null;
+        if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
+        comparisonEvidenceTimerRef.current = null;
+        if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
+        visualReentryDrainTimerRef.current = null;
         storyQueueRef.current = [];
         const origin = pageOrigin(pageRef.current);
         const pageHasStandardContent = !activeStoryScene(storyRef.current) && elementsRef.current.some((element) =>
@@ -6094,7 +6981,7 @@ export default function Board({
   }, []);
 
   const handleDownloadLog = useCallback(() => {
-    downloadLog(logRef.current, t0Ref.current, storyRef.current, modeRef.current);
+    downloadLog(logRef.current, t0Ref.current, storyRef.current, modeRef.current, sessionIdRef.current);
   }, []);
 
   const finishSession = useCallback(() => {
@@ -6166,6 +7053,8 @@ export default function Board({
       {isDev && showLatencyOverlay && (
         <LatencyOverlay onMarkStall={markPerceivedStall} />
       )}
+
+      {replayLabEnabled && <DevReplayLab run={runReplayExperiment} />}
 
       <ErrorBanner text={errorText} onDismiss={() => setErrorText(null)} onRetry={toggle} />
 

@@ -8,6 +8,7 @@ const schema = read("supabase/migrations/202608090001_foundation.sql");
 const spend = read("supabase/migrations/202608090002_spend_controls.sql");
 const whop = read("supabase/migrations/202608090003_whop_events.sql");
 const guard = read("lib/server/provider-guard.ts");
+const deepgramRoute = read("app/api/deepgram/token/route.ts");
 const beatRoute = read("app/api/beat/route.ts");
 const webhook = read("app/api/webhooks/whop/route.ts");
 const projectRoute = read("app/api/projects/route.ts");
@@ -15,6 +16,10 @@ const projectItemRoute = read("app/api/projects/[id]/route.ts");
 const persist = read("lib/persist.ts");
 const authRoute = read("app/api/auth/[action]/route.ts");
 const middleware = read("middleware.ts");
+const replayAuthorizationRoute = read("app/api/dev/replay-authorization/route.ts");
+const replayAuthorization = read("lib/server/developmentReplayAuthorization.ts");
+const deepgramHook = read("hooks/useDeepgram.ts");
+const board = read("components/Board.tsx");
 
 const checks = [];
 const check = (name, value) => { assert.equal(Boolean(value), true, name); checks.push(name); };
@@ -62,6 +67,15 @@ check("expired leases are rejected", guard.includes("lease_expires_at") && guard
 check("admin flags are database-owned and default off", adminEntitlements.includes("is_admin boolean not null default false") && adminEntitlements.includes("unlimited_minutes boolean not null default false"));
 check("unlimited minutes are explicit in the entitlement contract", adminEntitlements.includes("is_admin boolean, unlimited_minutes boolean") && adminEntitlements.includes("v_allowance := 2147483647") && adminEntitlements.includes("v_max := 2147483647"));
 check("unlimited minutes retain provider cost controls", adminEntitlements.includes("cost and emergency controls still apply") && guard.includes("reserve_provider_cost"));
+check("production replay authorization fails closed server-side", replayAuthorization.includes('process.env.NODE_ENV !== "development"') && replayAuthorizationRoute.includes("mintDevelopmentReplayAuthorization"));
+check("replay authorization is one-use and short-lived", replayAuthorization.includes("TTL_MS = 30_000") && replayAuthorization.lastIndexOf("grants().delete(token)") < replayAuthorization.lastIndexOf("timingSafeEqual"));
+check("only the Deepgram credential route opts into development replay", deepgramRoute.includes("allowDevelopmentReplay: true") && (guard.match(/allowDevelopmentReplay/g) ?? []).length === 2);
+check("long replay credentials do not change the live credential lifetime", deepgramRoute.includes("DEVELOPMENT_REPLAY_TTL_SECONDS = 180") && deepgramRoute.includes('guard.sessionId === "development-replay"') && deepgramRoute.includes(": TTL_SECONDS"));
+check("normal microphone startup cannot request replay authorization", deepgramHook.indexOf('captureRef.current?.kind === "replay-pcm16"') < deepgramHook.indexOf('fetch("/api/dev/replay-authorization"'));
+check("replay coordinator does not start a product usage lease", !board.slice(board.indexOf("const runReplayExperiment"), board.indexOf("const wasListeningRef")).includes("usage.start()"));
+check("each replay run discards its provider credential", board.slice(board.indexOf("const runReplayExperiment"), board.indexOf("const wasListeningRef")).includes("deepgram.stop(false)"));
+check("a stale socket close cannot cancel the next replay run", deepgramHook.includes("if (connectionRef.current !== connection) return"));
+check("replay reconnect resumes one sender without bursting or restarting", deepgramHook.includes("replaySenderActiveRef.current") && deepgramHook.includes('reconnectRebasePending ? "reconnect" : undefined') && deepgramHook.includes("scheduler.resolve(audioStartMs") && deepgramHook.includes("activeConnection.send(pcm.buffer)"));
 
 // An unreadable beat response is retried once rather than silently becoming a
 // skip — a malformed answer is a lost thought, not a decision. The retry has

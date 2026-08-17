@@ -13,6 +13,7 @@ import {
   keyterms,
   soundsLike,
 } from "../lib/vocab.ts";
+import { ExactMicAudioRetention } from "../lib/corpusAudio.ts";
 import { decidePageTurn, isThoughtComplete, MAX_DEFER_MS } from "../lib/pagination.ts";
 import { detectBackReference, resolveReference } from "../lib/reference.ts";
 import { pathBlocked, routeArrow } from "../lib/routing.ts";
@@ -211,6 +212,51 @@ check("invalid Retry-After uses a safe fallback", retryAfterMs("later", 60_000, 
 
 // ---------------------------------------------------------------- vocabulary
 
+section("exact microphone PCM retention");
+
+{
+  const hook = readFileSync(fileURLToPath(new URL("../hooks/useDeepgram.ts", import.meta.url)), "utf8");
+  const sendAt = hook.indexOf("connection.send(event.data)");
+  const retainAt = hook.indexOf("exactMicAudio.recordChunk(event.data");
+  check("Deepgram send remains ahead of passive corpus retention", sendAt >= 0 && retainAt > sendAt);
+  const sessionExport = readFileSync(fileURLToPath(new URL("../lib/sessionLog.ts", import.meta.url)), "utf8");
+  check("development session export includes exact PCM WAV and metadata", sessionExport.includes('"exact-mic-audio.wav"') && sessionExport.includes('"exact-mic-audio.json"'));
+}
+
+{
+  const retained = new ExactMicAudioRetention(() => true);
+  retained.beginSession("session-a");
+  const first = new Int16Array([-32768, -1, 0, 32767]);
+  const gap = new Int16Array([111, 222]);
+  const resumed = new Int16Array([333, 444, 555]);
+  retained.recordChunk(first.buffer, 48_000, { sent: true, streamEpoch: 1, bufferedAmount: 0 });
+  retained.recordChunk(gap.buffer, 48_000, { sent: false, streamEpoch: null });
+  retained.recordChunk(resumed.buffer, 48_000, { sent: true, streamEpoch: 2, bufferedAmount: 12 });
+  retained.finishSession();
+
+  const snapshot = retained.snapshot();
+  const metadata = snapshot?.metadata;
+  check("retention preserves every PCM sample across reconnect gaps", metadata?.sampleCount === 9);
+  check("retention preserves chunk order and counts", metadata?.chunkCount === 3 && metadata.sentChunkCount === 2 && metadata.unsentChunkCount === 1);
+  check("retention records transport epochs separately", metadata?.transportEpochs.length === 3 && metadata.transportEpochs[0].streamEpoch === 1 && metadata.transportEpochs[1].streamEpoch === null && metadata.transportEpochs[2].streamEpoch === 2);
+  check("retention reports the worklet PCM format", metadata?.capture === "audio-worklet-pcm16" && metadata.sampleRate === 48_000 && metadata.channels === 1 && metadata.bitsPerSample === 16);
+
+  const wav = new DataView(await snapshot.wav.arrayBuffer());
+  const decoded = new Int16Array(wav.buffer, 44);
+  check("WAV export is PCM16 with an exact sample payload", wav.getUint16(20, true) === 1 && wav.getUint32(24, true) === 48_000 && JSON.stringify([...decoded]) === JSON.stringify([...first, ...gap, ...resumed]));
+
+  retained.beginSession("session-b");
+  retained.recordChunk(new Int16Array([7, 8]).buffer, 48_000, { sent: true, streamEpoch: 1 });
+  check("a new speech session resets the retained PCM", retained.metadata()?.sessionId === "session-b" && retained.metadata()?.sampleCount === 2 && retained.metadata()?.chunkCount === 1);
+}
+
+{
+  const disabled = new ExactMicAudioRetention(() => false);
+  disabled.beginSession("off");
+  disabled.recordChunk(new Int16Array([1, 2]).buffer, 48_000, { sent: true, streamEpoch: 1 });
+  check("retention off allocates no corpus snapshot", disabled.snapshot() === null);
+}
+
 section("recognition repair");
 
 {
@@ -276,6 +322,7 @@ check("phonetics: unrelated", soundsLike("people", "Airline") < 0.5);
   check("keyterms include concepts", terms.includes("AI agents"));
   check("keyterms drop the Untitled placeholder", !terms.includes("Untitled"));
   check("keyterms fall back to the seed list", terms.includes("Airline"));
+  check("keyterms include the measured Aline provider hint", terms.includes("Aline"));
   check("keyterms are capped", terms.length <= 40, String(terms.length));
 }
 
@@ -303,6 +350,10 @@ check(
   check("InPublic named vocabulary wins", correctTranscript("in public app", ["InPublic"]).text === "InPublic app");
   check("ClickLabs named vocabulary is available", keyterms({}).includes("ClickLabs"));
   check("Airline named vocabulary remains available", keyterms({}).includes("Airline"));
+  check("Aline named vocabulary is available", keyterms({}).includes("Aline"));
+  check("Aline provider hint does not rewrite the ordinary phrase a line", correctTranscript("Please draw a line here", keyterms({})).text === "Please draw a line here");
+  check("Aline provider hint does not rewrite the distinct name Elaine", correctTranscript("Elaine is on the call", keyterms({})).text === "Elaine is on the call");
+  check("Aline provider hint does not rewrite the valid Airline product", correctTranscript("Airline is on the board", keyterms({})).text === "Airline is on the board");
 }
 
 // ----------------------------------------------------------- live speech lane

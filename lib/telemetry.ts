@@ -48,11 +48,13 @@ export function liveLatencySample(
 }
 
 /**
- * True wall-clock speech-to-ink: last audio chunk sent → ink committed.
+ * Latest-chunk-to-ink proximity: last audio chunk sent → ink committed.
  * `sinceChunkSentMs` (chunk sent → Deepgram message received) plus the time
  * from message received to ink committed — no Deepgram `start`/`duration`
- * anywhere in this computation. This is the metric to use for real latency
- * claims; `liveLatencySample` above is not.
+ * anywhere in this computation. During continuous audio the last chunk is not
+ * necessarily the chunk that caused the transcript, so this is non-causal and
+ * must not be used for speech-latency claims. Development replay uses the
+ * deterministic sample clock to make that association instead.
  *
  * Reuses the same stream-epoch guard as `liveLatencySample` so a reconnect
  * mid-utterance can't corrupt this measurement either.

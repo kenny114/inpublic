@@ -28,9 +28,24 @@ const TENS: Record<string, number> = {
 };
 
 /**
+ * "twenty thousand" -> 20000, "three hundred" -> 300, "twenty one thousand"
+ * -> 21000. Deliberately not a general number-language parser (no compound
+ * "twelve thousand five hundred", no millions) — just enough for the
+ * revenue/count-style figures Visual Re-entry's quantitative_change needs
+ * (docs/VISUAL-REENTRY-V1.md), which the two-digit-only pass above was never
+ * meant to cover (see its own doc comment). Additive to that pass, not a
+ * replacement: the plain "twenty" in "twenty thousand" still gets added on
+ * its own by the loop above too, which is harmless — grounding only checks
+ * whether a specific target number is present in the set, so an extra,
+ * smaller value sitting alongside the real one never causes a false match.
+ */
+const MULTIPLIERS: Record<string, number> = { hundred: 100, thousand: 1000 };
+
+/**
  * Spoken numbers found in free text — digits directly, plus number words up
  * to "ninety nine" (this milestone's arithmetic doesn't go past two-digit
- * coefficients/constants in practice; larger numbers still match via digits).
+ * coefficients/constants in practice; larger numbers still match via digits),
+ * plus simple hundred/thousand multiples (see MULTIPLIERS above).
  */
 export function extractSpokenNumbers(text: string): Set<number> {
   const found = new Set<number>();
@@ -49,6 +64,21 @@ export function extractSpokenNumbers(text: string): Set<number> {
         found.add(TENS[w]);
       }
     }
+  }
+
+  for (let i = 0; i < words.length; i++) {
+    const multiplier = MULTIPLIERS[words[i]];
+    if (!multiplier) continue;
+    let amount = 1;
+    let j = i - 1;
+    if (j >= 0 && words[j] in ONES) {
+      amount = ONES[words[j]];
+      j -= 1;
+      if (j >= 0 && words[j] in TENS) amount += TENS[words[j]];
+    } else if (j >= 0 && words[j] in TENS) {
+      amount = TENS[words[j]];
+    }
+    found.add(amount * multiplier);
   }
   return found;
 }

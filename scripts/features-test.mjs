@@ -12,7 +12,7 @@
  */
 
 import assert from "node:assert/strict";
-import { features } from "../lib/features.ts";
+import { features, isLivePresentationV2Enabled, isVisualReentryV1Enabled } from "../lib/features.ts";
 
 let pass = 0;
 const failures = [];
@@ -31,7 +31,84 @@ check("standardMode is enabled", features.standardMode === true);
 check("storyMode is parked", features.storyMode === false);
 check("audioReplay is parked", features.audioReplay === false);
 check("choreographerComparison is enabled", features.choreographerComparison === true);
-check("directorV1 defaults off", features.directorV1 === false);
+check("directorV1 is enabled", features.directorV1 === true);
+
+section("validated stack is the committed production default (docs/VALIDATED-STACK-PRODUCTION-ACTIVATION-V1.md)");
+
+// This is the product contract this section exists to protect: a normal
+// visitor with zero query params, in production, gets V2 + Visual Re-entry
+// with no legacy fallback. If either flag below is ever flipped back to
+// `false` without deliberately reverting the whole activation, this must
+// fail loudly rather than silently ship the legacy pipeline again.
+check("livePresentationV2 is the committed default", features.livePresentationV2 === true);
+check("visualReentryV1 is the committed default", features.visualReentryV1 === true);
+
+const originalEnv = process.env.NODE_ENV;
+process.env.NODE_ENV = "production";
+delete globalThis.window;
+check(
+  "STANDARD MODE DEFAULT: production, no window, no query params -> V2 active",
+  isLivePresentationV2Enabled() === true,
+);
+check(
+  "STANDARD MODE DEFAULT: production, no window, no query params -> Visual Re-entry active",
+  isVisualReentryV1Enabled() === true,
+);
+process.env.NODE_ENV = originalEnv;
+
+section("isVisualReentryV1Enabled() requires V2 to also be on (override mechanics, simulated pre-activation state)");
+
+// Both isLivePresentationV2Enabled() and isVisualReentryV1Enabled() read
+// `window.location.search` directly (not React state), so a minimal window
+// shim with only `location.search` is enough to exercise the resolvers
+// outside a browser — same idiom as the localStorage shim above. The
+// override only has anything to prove when the committed flags are off, so
+// this section temporarily simulates the pre-activation committed state
+// (both `false`) to exercise the override logic in isolation, then restores
+// the real committed defaults asserted above.
+features.livePresentationV2 = false;
+features.visualReentryV1 = false;
+
+const withSearch = (search) => {
+  globalThis.window = { location: { search } };
+};
+
+check("with both flags off, no query params: disabled", !isVisualReentryV1Enabled());
+
+withSearch("?vr=1");
+check("?vr=1 alone (no v2): still disabled — V1 is meaningless without V2", !isVisualReentryV1Enabled());
+
+withSearch("?v2=1");
+check("?v2=1 alone (no vr): disabled", !isVisualReentryV1Enabled());
+
+withSearch("?v2=1&vr=1");
+check("?v2=1&vr=1 together: enabled (dev override)", isVisualReentryV1Enabled());
+
+delete globalThis.window;
+
+section("isVisualReentryV1Enabled() — dev override works, production ignores it (Part 15)");
+
+process.env.NODE_ENV = "development";
+withSearch("?v2=1&vr=1");
+check("dev override works: ?v2=1&vr=1 enables V1 in development", isVisualReentryV1Enabled());
+
+process.env.NODE_ENV = "production";
+withSearch("?v2=1&vr=1");
+check(
+  "production ignores query override — ?v2=1&vr=1 must NOT enable V1 in production while the committed flags are off",
+  isVisualReentryV1Enabled() === false,
+);
+
+// The flag itself (not the query override) is what production honors.
+features.livePresentationV2 = true;
+features.visualReentryV1 = true;
+withSearch("");
+check("in production, the committed flags alone (no query needed) enable V1", isVisualReentryV1Enabled() === true);
+
+// Already back to the real committed defaults (both `true`) here, so no
+// restore is needed — just clean up the shims this section installed.
+delete globalThis.window;
+process.env.NODE_ENV = originalEnv;
 
 section("preferences.readPreferences() clamps a stale story preference to standard");
 

@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { noteFinalTranscript, providerRequestHeaders } from "@/lib/usage-client";
 import { latency, latencyNow, type DiagnosticTraceEvent } from "@/lib/latency";
 import { sttDebug } from "@/lib/sttDebug";
+import { exactMicAudio } from "@/lib/corpusAudio";
+import type { ReplayAudioInfo, ReplayChunkDiagnostic, ReplayConnectionDiagnostic, ReplayDisconnectPlan, ReplayProviderDiagnostic, ReplaySpeechDiagnostics } from "@/lib/replayLab";
+import { mayUseReplayScheduler, ReplayAbsoluteScheduler, type ReplayRebase } from "@/lib/replayPacing";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -15,16 +18,16 @@ export interface DeepgramResultTiming {
   kind: "interim" | "final";
   /**
    * Wall-clock ms from the last audio chunk sent to this message arriving —
-   * the same measurement as the "chunk_to_message" latency sample, carried
-   * through so the caller can anchor an ink-side wall-clock metric (see
-   * lib/telemetry.ts) instead of Deepgram's self-reported audio timeline.
+   * the same non-causal latest-chunk proximity measurement as the
+   * "chunk_to_message" sample. It is carried through for backwards-compatible
+   * diagnostics, not as an association between text and source audio.
    */
   sinceChunkSentMs?: number;
 }
 
 export interface SpeechStreamMetrics {
   streamEpoch: number;
-  capture: "audio-worklet-pcm16" | "media-recorder";
+  capture: "audio-worklet-pcm16" | "media-recorder" | "replay-pcm16";
   sampleRate?: number;
   audioChunks: number;
   chunkGapP50: number;
@@ -70,6 +73,8 @@ interface Options {
   onSessionStart: () => void;
   /** Reads the current session clock in ms. */
   now: () => number;
+  /** Stable application session identity for development corpus artifacts. */
+  sessionId?: () => string;
   /** Anything worth showing the user or writing to the log. */
   onNote?: (text: string) => void;
   /** Surfaced in the UI. Null clears the banner. */
@@ -132,7 +137,15 @@ type CaptureState =
       sink: GainNode;
       sampleRate: number;
     }
-  | { kind: "media-recorder" };
+  | { kind: "media-recorder" }
+  | {
+      kind: "replay-pcm16";
+      samples: Float32Array;
+      sourceSampleRate: number;
+      sampleRate: number;
+      fileName: string;
+      durationMs: number;
+    };
 
 /**
  * Browser-side Deepgram live transcription. The root key stays on the server;
@@ -148,6 +161,7 @@ export function useDeepgram({
   onInterim,
   onSessionStart,
   now,
+  sessionId,
   onNote,
   onError,
   enabled = true,
@@ -169,6 +183,43 @@ export function useDeepgram({
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Aborts an in-flight token fetch when the user stops mid-connect. */
   const abortRef = useRef<AbortController | null>(null);
+  const replayCancelledRef = useRef(false);
+  const replaySenderActiveRef = useRef(false);
+  const replayCompletionRef = useRef<{
+    resolve: (info: ReplayAudioInfo) => void;
+    reject: (error: Error) => void;
+  } | null>(null);
+  const replayStartedAtRef = useRef(0);
+  const replayAudioStartedAtRef = useRef(0);
+  const replayDisconnectPlanRef = useRef<ReplayDisconnectPlan>({ atAudioMs: [] });
+  const replayForcedDisconnectsRef = useRef<Set<number>>(new Set());
+  const replayChunksRef = useRef<ReplayChunkDiagnostic[]>([]);
+  const replayProviderResponsesRef = useRef<ReplayProviderDiagnostic[]>([]);
+  const replayConnectionsRef = useRef<ReplayConnectionDiagnostic[]>([]);
+  const connectionGenerationRef = useRef(0);
+  const socketGenerationRef = useRef(0);
+  const currentConnectionGenerationRef = useRef(0);
+  const currentSocketGenerationRef = useRef(0);
+  const socketAudioBaseMsRef = useRef<Map<number, number>>(new Map());
+  const replayLatestProviderAudioMsRef = useRef<number | null>(null);
+  const replaySendAttemptsRef = useRef(0);
+  const replayPausedSendsRef = useRef(0);
+  const replayRebasesRef = useRef<ReplayRebase[]>([]);
+
+  const replayElapsed = useCallback(() => replayStartedAtRef.current ? performance.now() - replayStartedAtRef.current : 0, []);
+  const noteReplayConnection = useCallback((event: ReplayConnectionDiagnostic["event"], detail?: string, audioPositionMs: number | null = null, chunkSequence: number | null = null) => {
+    if (!isDev || captureRef.current?.kind !== "replay-pcm16") return;
+    replayConnectionsRef.current.push({
+      event,
+      atMs: Math.round(replayElapsed()),
+      wallClockTimeMs: performance.now(),
+      connectionGeneration: currentConnectionGenerationRef.current,
+      socketGeneration: currentSocketGenerationRef.current,
+      audioPositionMs,
+      chunkSequence,
+      ...(detail ? { detail } : {}),
+    });
+  }, [replayElapsed]);
 
   /**
    * Where this socket's audio timeline sits on the session clock.
@@ -191,13 +242,11 @@ export function useDeepgram({
    * bookkeeping wrong" question, temporary and additive — it changes no
    * transcription behaviour.
    *
-   * `lastChunkSentAtRef` is a second, independent way to measure how long a
-   * result took to come back: wall-clock time since we last handed audio to
-   * the WebSocket, with no dependence on Deepgram's self-reported `start`/
-   * `duration` fields at all. `audioEndMs` (used everywhere else in this file)
-   * is *inferred* from those fields; if that inference were ever wrong, every
-   * measurement built on it would be wrong the same way and agree with itself.
-   * This one can't share that blind spot.
+   * `lastChunkSentAtRef` measures wall-clock proximity to the latest send. It
+   * is independent of Deepgram's `start`/`duration`, but it is not causal:
+   * continuous audio means the latest chunk is usually newer than the audio
+   * represented by the response. ReplaySpeechDiagnostics provides the causal
+   * sample-clock association for development investigations.
    */
   const lastChunkSentAtRef = useRef(0);
   /** Set on Deepgram's own SpeechStarted VAD event; cleared once consumed by
@@ -260,6 +309,7 @@ export function useDeepgram({
     onInterim,
     onSessionStart,
     now,
+    sessionId,
     onNote,
     onError,
     keyterms,
@@ -271,6 +321,7 @@ export function useDeepgram({
     onInterim,
     onSessionStart,
     now,
+    sessionId,
     onNote,
     onError,
     keyterms,
@@ -314,6 +365,90 @@ export function useDeepgram({
     latency.mark("first_audio_chunk", at);
   }, []);
 
+  const socketBufferedAmount = useCallback((connection: any): number | null => {
+    // The Deepgram SDK does not expose bufferedAmount, but its browser client
+    // retains the native WebSocket as `conn`. Replay diagnostics inspect that
+    // runtime field without making production transport depend on it.
+    const value = Number(connection?.conn?.bufferedAmount);
+    return Number.isFinite(value) ? value : null;
+  }, []);
+
+  const findReplayChunkAt = useCallback((globalAudioMs: number | null) => {
+    if (globalAudioMs === null || !Number.isFinite(globalAudioMs)) return null;
+    const chunks = replayChunksRef.current;
+    for (let index = chunks.length - 1; index >= 0; index -= 1) {
+      const chunk = chunks[index];
+      if (globalAudioMs >= chunk.audioStartMs - 1 && globalAudioMs <= chunk.audioEndMs + 1) return chunk;
+      if (chunk.audioEndMs <= globalAudioMs) return chunk;
+    }
+    return null;
+  }, []);
+
+  const collectReplayDiagnostics = useCallback((): ReplaySpeechDiagnostics => {
+    const chunks = replayChunksRef.current.map((chunk) => ({ ...chunk }));
+    const providerResponses = replayProviderResponsesRef.current.map((response) => ({ ...response }));
+    const connections = replayConnectionsRef.current.map((event) => ({ ...event }));
+    const nullable = (values: Array<number | null>, quantile: number) => {
+      const finite = values.filter((value): value is number => value !== null && Number.isFinite(value));
+      return finite.length ? percentile(finite, quantile) : null;
+    };
+    const maximum = (values: Array<number | null>) => {
+      const finite = values.filter((value): value is number => value !== null && Number.isFinite(value));
+      return finite.length ? Math.round(Math.max(...finite)) : null;
+    };
+    const scheduleErrors = chunks.map((chunk) => chunk.scheduleErrorMs);
+    const sendLags = chunks.map((chunk) => chunk.sendLagMs);
+    const buffers = chunks.map((chunk) => chunk.bufferedAmount);
+    const regionLags = providerResponses.map((response) => response.providerRegionLagMs);
+    const wordLags = providerResponses.map((response) => response.latestWordLagMs);
+    const liveEdgeLags = providerResponses.map((response) => response.audioLiveEdgeLagMs);
+    const checkpointLag = (sourceMs: number) => {
+      const chunk = chunks.find((candidate) => candidate.audioEndMs >= sourceMs);
+      return chunk ? Math.round(chunk.sendLagMs) : null;
+    };
+    return {
+      disconnectPlan: { atAudioMs: [...replayDisconnectPlanRef.current.atAudioMs] },
+      chunks,
+      providerResponses,
+      connections,
+      summary: {
+        sendAttempts: replaySendAttemptsRef.current,
+        successfulSends: chunks.length,
+        pausedSends: replayPausedSendsRef.current,
+        reconnectCount: connections.filter((event) => event.event === "reconnect_scheduled").length,
+        forcedDisconnectCount: connections.filter((event) => event.event === "forced_close").length,
+        rebaseCount: replayRebasesRef.current.length,
+        rebaseReasons: replayRebasesRef.current.map((rebase) => rebase.reason),
+        intentionalRebaseDelayMs: Math.round(replayRebasesRef.current.at(-1)?.totalIntentionalDelayMs ?? 0),
+        scheduleErrorP50: nullable(scheduleErrors, .5),
+        scheduleErrorP95: nullable(scheduleErrors, .95),
+        scheduleErrorMax: maximum(scheduleErrors),
+        scheduledSendErrorP50: nullable(scheduleErrors, .5),
+        scheduledSendErrorP95: nullable(scheduleErrors, .95),
+        scheduledSendErrorMax: maximum(scheduleErrors),
+        sendLagP50: nullable(sendLags, .5),
+        sendLagP95: nullable(sendLags, .95),
+        sendLagMax: maximum(sendLags),
+        bufferedAmountP50: nullable(buffers, .5),
+        bufferedAmountP95: nullable(buffers, .95),
+        bufferedAmountMax: maximum(buffers),
+        providerRegionLagP50: nullable(regionLags, .5),
+        providerRegionLagP95: nullable(regionLags, .95),
+        providerRegionLagMax: maximum(regionLags),
+        latestWordLagP50: nullable(wordLags, .5),
+        latestWordLagP95: nullable(wordLags, .95),
+        latestWordLagMax: maximum(wordLags),
+        audioLiveEdgeLagP50: nullable(liveEdgeLags, .5),
+        audioLiveEdgeLagP95: nullable(liveEdgeLags, .95),
+        audioLiveEdgeLagMax: maximum(liveEdgeLags),
+        sendLagAt10s: checkpointLag(10_000),
+        sendLagAt30s: checkpointLag(30_000),
+        sendLagAt60s: checkpointLag(60_000),
+        sendLagAt87s: checkpointLag(87_000),
+      },
+    };
+  }, []);
+
   const prepareCapture = useCallback(async (stream: MediaStream) => {
     if (captureRef.current) return;
     if (typeof AudioWorkletNode !== "undefined") {
@@ -326,20 +461,34 @@ export function useDeepgram({
         const sink = context.createGain();
         sink.gain.value = 0;
         node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-          if (!socketOpenRef.current || !connectionRef.current) return;
-          noteAudioChunk();
-          // Dev-only, and a copy taken before the send so what is captured is
-          // exactly what left the machine. Constant-false in production.
-          if (sttDebug.enabled) {
-            sttDebug.recordAudio(event.data, captureRef.current?.kind === "audio-worklet-pcm16"
-              ? captureRef.current.sampleRate
-              : 48000);
+          const capture = captureRef.current;
+          const sampleRate = capture?.kind === "audio-worklet-pcm16" ? capture.sampleRate : context?.sampleRate ?? 48000;
+          const connection = connectionRef.current;
+          let sent = false;
+          let bufferedAmount: number | null = null;
+          if (socketOpenRef.current && connection) {
+            noteAudioChunk();
+            try {
+              // This remains first. Corpus retention observes the same buffer
+              // only after the normal transport send has returned.
+              connection.send(event.data);
+              lastChunkSentAtRef.current = cbs.current.now();
+              sent = true;
+              bufferedAmount = socketBufferedAmount(connection);
+              if (sttDebug.enabled) sttDebug.recordAudio(event.data, sampleRate);
+            } catch {
+              /* socket closed between the open check and send */
+            }
           }
-          try {
-            connectionRef.current.send(event.data);
-            lastChunkSentAtRef.current = cbs.current.now();
-          } catch {
-            /* socket closed between the open check and send */
+          // During reconnect gaps the worklet continues producing PCM. Keep
+          // those samples continuous and mark them unsent/null-epoch rather
+          // than silently splicing two transport epochs together.
+          if (isDev && exactMicAudio.retaining) {
+            exactMicAudio.recordChunk(event.data, sampleRate, {
+              sent,
+              streamEpoch: sent ? streamEpochRef.current : null,
+              bufferedAmount,
+            });
           }
         };
         source.connect(node);
@@ -363,7 +512,7 @@ export function useDeepgram({
     }
     captureRef.current = { kind: "media-recorder" };
     latency.mark("worklet_ready", latencyNow());
-  }, [noteAudioChunk]);
+  }, [noteAudioChunk, socketBufferedAmount]);
 
   /** Import the SDK once and hold it. Safe to call repeatedly. */
   const loadSdk = useCallback(async () => {
@@ -412,7 +561,8 @@ export function useDeepgram({
     return task;
   }, [loadSdk, prepareCapture]);
 
-  const stop = useCallback(() => {
+  const stop = useCallback((preserveCredential = false) => {
+    replayCancelledRef.current = true;
     startedRef.current = false;
     reconnectingRef.current = false;
     attemptsRef.current = 0;
@@ -426,8 +576,9 @@ export function useDeepgram({
     // The credential is scoped to the listening session that is ending. Even
     // though it may still be valid for a few seconds, holding it across a stop
     // would outlive the lease it was minted under.
-    tokenRef.current = null;
+    if (!preserveCredential) tokenRef.current = null;
 
+    exactMicAudio.finishSession();
     teardownSocket();
     const capture = captureRef.current;
     captureRef.current = null;
@@ -449,6 +600,10 @@ export function useDeepgram({
   const reconnectRef = useRef<() => void>(() => {});
 
   const openSocket = useCallback(async () => {
+    if (captureRef.current?.kind === "replay-pcm16") {
+      currentConnectionGenerationRef.current = ++connectionGenerationRef.current;
+      noteReplayConnection("connecting");
+    }
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -458,9 +613,22 @@ export function useDeepgram({
     // optimisation.
     const cached = tokenRef.current;
     let credential = cached && cached.expiresAtMs > Date.now() ? cached : null;
+    if (credential) noteReplayConnection("credential_reused");
 
     if (!credential) {
-      const res = await fetch("/api/deepgram/token", { signal: ac.signal, headers: providerRequestHeaders() });
+      let headers = providerRequestHeaders();
+      if (captureRef.current?.kind === "replay-pcm16") {
+        const replayResponse = await fetch("/api/dev/replay-authorization", {
+          method: "POST",
+          signal: ac.signal,
+          headers: { "content-type": "application/json" },
+        });
+        if (!replayResponse.ok) throw new Error(`replay authorization ${replayResponse.status}`);
+        const replay = await replayResponse.json() as { authorization?: string };
+        if (!replay.authorization) throw new Error("replay authorization missing");
+        headers = { ...headers, "x-inpublic-replay-authorization": replay.authorization };
+      }
+      const res = await fetch("/api/deepgram/token", { signal: ac.signal, headers });
       if (!res.ok) {
       const body = await res.text();
       // The Owner/Admin hint is only ever relevant to a 500 here — that's
@@ -496,13 +664,14 @@ export function useDeepgram({
         expiresAtMs: Date.now() + Math.max(0, ttlSeconds - 10) * 1000,
       };
       tokenRef.current = credential;
+      noteReplayConnection("credential_minted");
     }
     latency.mark("token_ready", latencyNow());
 
     const { createClient, LiveTranscriptionEvents } = await loadSdk();
 
     const stream = streamRef.current;
-    if (!stream) throw new Error("microphone stream is gone");
+    if (!stream && captureRef.current?.kind !== "replay-pcm16") throw new Error("microphone stream is gone");
 
     // /auth/grant returns a bearer token; createProjectKey returns an API key.
     const deepgram = credential.accessToken
@@ -533,18 +702,25 @@ export function useDeepgram({
       // ground-truth "the user started talking" timestamp from Deepgram's own
       // VAD, independent of anything InPublic infers from text.
       vad_events: true,
-      ...(capture?.kind === "audio-worklet-pcm16"
+      ...(capture?.kind === "audio-worklet-pcm16" || capture?.kind === "replay-pcm16"
         ? { encoding: "linear16" as const, sample_rate: capture.sampleRate, channels: 1 }
         : {}),
       ...(terms.length ? { keyterm: terms } : {}),
     });
     connectionRef.current = connection;
+    const connectionGeneration = currentConnectionGenerationRef.current;
+    let socketGeneration = 0;
 
     connection.on(LiveTranscriptionEvents.Open, () => {
       cbs.current.onSessionStart();
       // Anchor this socket's audio timeline to the session clock.
       audioEpochRef.current = cbs.current.now();
       streamEpochRef.current += 1;
+      if (captureRef.current?.kind === "replay-pcm16") {
+        socketGeneration = ++socketGenerationRef.current;
+        currentSocketGenerationRef.current = socketGeneration;
+        noteReplayConnection("open");
+      }
       streamMetricsRef.current = emptyMetrics();
       currentTraceRef.current = [];
       currentTraceStartRef.current = 0;
@@ -560,6 +736,7 @@ export function useDeepgram({
       // AudioWorklet is primary; MediaRecorder is a compatibility fallback.
       // Its timeslice is advisory, so the real chunk cadence is measured.
       if (capture?.kind === "media-recorder") {
+        if (!stream) return;
         const recorder = new MediaRecorder(stream);
         recorderRef.current = recorder;
         recorder.ondataavailable = (event) => {
@@ -574,6 +751,164 @@ export function useDeepgram({
           }
         };
         recorder.start(80);
+      }
+
+      if (capture?.kind === "replay-pcm16" && mayUseReplayScheduler(capture.kind)) {
+        replayCancelledRef.current = false;
+        // Reconnects run this Open handler too. The existing sender owns the
+        // file offset and resumes against connectionRef; never start a second
+        // sender from offset zero.
+        if (replaySenderActiveRef.current) return;
+        replaySenderActiveRef.current = true;
+        void (async () => {
+          const framesPerChunk = Math.round(capture.sampleRate * 0.08);
+          const startedAt = performance.now();
+          replayAudioStartedAtRef.current = startedAt;
+          const scheduler = new ReplayAbsoluteScheduler(startedAt);
+          let chunkCount = 0;
+          let reconnectRebasePending = false;
+          const recordRebase = (rebase: ReplayRebase | null, chunkSequence: number) => {
+            if (!rebase) return;
+            replayRebasesRef.current.push(rebase);
+            noteReplayConnection(
+              "scheduler_rebase",
+              `${rebase.reason}; +${Math.round(rebase.addedIntentionalDelayMs)}ms; total ${Math.round(rebase.totalIntentionalDelayMs)}ms`,
+              rebase.sourceTimeMs,
+              chunkSequence,
+            );
+          };
+          try {
+            for (let offset = 0; offset < capture.samples.length; offset += framesPerChunk) {
+              const end = Math.min(offset + framesPerChunk, capture.samples.length);
+              const audioStartMs = offset / capture.sampleRate * 1000;
+              const audioEndMs = end / capture.sampleRate * 1000;
+              const chunkSequence = chunkCount + 1;
+              const pcm = new Int16Array(end - offset);
+              for (let index = offset; index < end; index += 1) {
+                const sample = Math.max(-1, Math.min(1, capture.samples[index]));
+                pcm[index - offset] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+              }
+              let sent = false;
+              let disconnectedAt: number | null = null;
+              let pausedBeforeSend = false;
+              let sendAttempts = 0;
+              while (!sent) {
+                if (replayCancelledRef.current) throw new Error("Replay cancelled by the run coordinator");
+                if (!socketOpenRef.current || !connectionRef.current) {
+                  if (!pausedBeforeSend) {
+                    pausedBeforeSend = true;
+                    replayPausedSendsRef.current += 1;
+                  }
+                  disconnectedAt ??= performance.now();
+                  reconnectRebasePending = true;
+                  if (performance.now() - disconnectedAt > 20_000) {
+                    throw new Error(`Replay reconnect timed out at ${Math.round(offset / capture.sampleRate * 1000)}ms`);
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, 25));
+                  continue;
+                }
+                let deadline = scheduler.resolve(
+                  audioStartMs,
+                  performance.now(),
+                  reconnectRebasePending ? "reconnect" : undefined,
+                );
+                reconnectRebasePending = false;
+                recordRebase(deadline.rebase, chunkSequence);
+                if (deadline.delayMs > 1) await new Promise((resolve) => setTimeout(resolve, deadline.delayMs));
+                // Re-check after the one-shot timer. A suspended browser may
+                // wake far past the deadline; rebase this next unsent chunk
+                // once instead of bursting every overdue chunk.
+                deadline = scheduler.resolve(audioStartMs, performance.now());
+                recordRebase(deadline.rebase, chunkSequence);
+                const activeConnection = connectionRef.current;
+                if (!socketOpenRef.current || !activeConnection) {
+                  reconnectRebasePending = true;
+                  continue;
+                }
+                try {
+                  sendAttempts += 1;
+                  replaySendAttemptsRef.current += 1;
+                  const idealScheduledAt = startedAt + audioStartMs;
+                  const scheduledAt = deadline.targetAtMs;
+                  activeConnection.send(pcm.buffer);
+                  const sentAt = performance.now();
+                  noteAudioChunk();
+                  lastChunkSentAtRef.current = cbs.current.now();
+                  const socketGeneration = currentSocketGenerationRef.current;
+                  if (!socketAudioBaseMsRef.current.has(socketGeneration)) {
+                    socketAudioBaseMsRef.current.set(socketGeneration, audioStartMs);
+                    if (socketGeneration > 1) noteReplayConnection("resume", undefined, audioStartMs, chunkSequence);
+                  }
+                  const elapsed = sentAt - startedAt;
+                  const sendLeadMs = audioEndMs - elapsed;
+                  replayChunksRef.current.push({
+                    chunkSequence,
+                    sampleStart: offset,
+                    sampleEnd: end,
+                    audioStartMs,
+                    audioEndMs,
+                    idealScheduledAtMs: idealScheduledAt - startedAt,
+                    cadenceScheduledAtMs: scheduledAt - startedAt,
+                    sentAtMs: elapsed,
+                    wallClockSendTimeMs: sentAt,
+                    scheduleErrorMs: sentAt - scheduledAt,
+                    scheduledSendErrorMs: sentAt - scheduledAt,
+                    cadenceErrorMs: sentAt - scheduledAt,
+                    sourceClockDriftMs: sentAt - scheduledAt,
+                    intentionalRebaseDelayMs: scheduler.intentionalRebaseDelayMs,
+                    sendLeadMs,
+                    sendLagMs: Math.max(0, sentAt - scheduledAt),
+                    socketGeneration,
+                    connectionGeneration: currentConnectionGenerationRef.current,
+                    bufferedAmount: socketBufferedAmount(activeConnection),
+                    sendAttempts,
+                    pausedBeforeSend,
+                  });
+                  sent = true;
+
+                  const forcedAt = replayDisconnectPlanRef.current.atAudioMs.find((target) =>
+                    audioEndMs >= target && !replayForcedDisconnectsRef.current.has(target));
+                  if (forcedAt !== undefined) {
+                    replayForcedDisconnectsRef.current.add(forcedAt);
+                    noteReplayConnection("forced_close", `planned at ${forcedAt}ms`, audioEndMs, chunkSequence);
+                    // Development-only abrupt transport close. requestClose()
+                    // asks Deepgram to finalize normally, which would not test
+                    // the reconnect/resume path under investigation.
+                    // Pause the replay sender synchronously: WebSocket.close()
+                    // changes readyState immediately, but the SDK's Close
+                    // callback can arrive later after its queued frame drains.
+                    socketOpenRef.current = false;
+                    activeConnection?.conn?.close(4000, "dev replay forced disconnect");
+                  }
+                } catch {
+                  disconnectedAt ??= performance.now();
+                  reconnectRebasePending = true;
+                  await new Promise((resolve) => setTimeout(resolve, 25));
+                }
+              }
+              chunkCount += 1;
+            }
+            const pacingDriftMs = Math.round(replayChunksRef.current.at(-1)?.sourceClockDriftMs ?? 0);
+            // Give endpointing and the final transcript time to arrive before
+            // handing control back to the lab. The socket itself is stopped by
+            // the run coordinator, consistently for every mode.
+            await new Promise((resolve) => setTimeout(resolve, 1800));
+            replayCompletionRef.current?.resolve({
+              name: capture.fileName,
+              durationMs: Math.round(capture.durationMs),
+              sourceSampleRate: capture.sourceSampleRate,
+              replaySampleRate: capture.sampleRate,
+              chunkCount,
+              pacingDriftMs,
+              diagnostics: collectReplayDiagnostics(),
+            });
+          } catch (error) {
+            replayCompletionRef.current?.reject(error instanceof Error ? error : new Error(String(error)));
+          } finally {
+            replaySenderActiveRef.current = false;
+            replayCompletionRef.current = null;
+          }
+        })();
       }
 
       // Deepgram closes idle sockets after ~10s of silence.
@@ -593,20 +928,78 @@ export function useDeepgram({
 
       const alt = data?.channel?.alternatives?.[0];
       const text: string = alt?.transcript ?? "";
+      const receivedAtMs = cbs.current.now();
+      if (isDev && captureRef.current?.kind === "replay-pcm16") {
+        const wallClockReceiveTimeMs = performance.now();
+        const providerStart = Number(data?.start);
+        const providerDuration = Number(data?.duration);
+        const providerStartMs = Number.isFinite(providerStart) ? providerStart * 1000 : null;
+        const providerDurationMs = Number.isFinite(providerDuration) ? providerDuration * 1000 : null;
+        const providerRegionEndMs = providerStartMs !== null && providerDurationMs !== null
+          ? providerStartMs + providerDurationMs
+          : null;
+        const wordEnds = Array.isArray(alt?.words)
+          ? alt.words.map((word: any) => Number(word?.end) * 1000).filter(Number.isFinite)
+          : [];
+        const latestWordEndMs = wordEnds.length ? Math.max(...wordEnds) : null;
+        const base = socketAudioBaseMsRef.current.get(socketGeneration) ?? null;
+        const globalRegionEndMs = base !== null && providerRegionEndMs !== null ? base + providerRegionEndMs : null;
+        const globalLatestWordEndMs = base !== null && latestWordEndMs !== null ? base + latestWordEndMs : null;
+        const regionChunk = findReplayChunkAt(globalRegionEndMs);
+        const wordChunk = findReplayChunkAt(globalLatestWordEndMs);
+        const latestChunk = replayChunksRef.current.at(-1) ?? null;
+        const latestAudioSentMs = latestChunk?.audioEndMs ?? null;
+        if (globalRegionEndMs !== null) {
+          replayLatestProviderAudioMsRef.current = Math.max(
+            replayLatestProviderAudioMsRef.current ?? Number.NEGATIVE_INFINITY,
+            globalRegionEndMs,
+          );
+        }
+        const latestProviderConfirmedAudioMs = replayLatestProviderAudioMsRef.current;
+        replayProviderResponsesRef.current.push({
+          responseSequence: replayProviderResponsesRef.current.length + 1,
+          receivedAtMs: replayAudioStartedAtRef.current ? wallClockReceiveTimeMs - replayAudioStartedAtRef.current : 0,
+          wallClockReceiveTimeMs,
+          socketGeneration,
+          connectionGeneration,
+          requestId: typeof data?.metadata?.request_id === "string" ? data.metadata.request_id : null,
+          providerStartMs,
+          providerDurationMs,
+          providerRegionEndMs,
+          latestWordEndMs,
+          globalRegionEndMs,
+          globalLatestWordEndMs,
+          relevantRegionSentAtMs: regionChunk?.sentAtMs ?? null,
+          relevantWordSentAtMs: wordChunk?.sentAtMs ?? null,
+          providerRegionLagMs: regionChunk ? wallClockReceiveTimeMs - regionChunk.wallClockSendTimeMs : null,
+          latestWordLagMs: wordChunk ? wallClockReceiveTimeMs - wordChunk.wallClockSendTimeMs : null,
+          latestAudioSentMs,
+          latestProviderConfirmedAudioMs,
+          audioLiveEdgeLagMs: latestAudioSentMs !== null && latestProviderConfirmedAudioMs !== null
+            ? Math.max(0, latestAudioSentMs - latestProviderConfirmedAudioMs)
+            : null,
+          legacyLatestChunkToMessageMs: lastChunkSentAtRef.current
+            ? Math.max(0, Math.round(receivedAtMs - lastChunkSentAtRef.current))
+            : null,
+          transcriptExcerpt: text.slice(0, 120),
+          isFinal: Boolean(data?.is_final),
+          speechFinal: Boolean(data?.speech_final),
+          fromFinalize: Boolean(data?.from_finalize),
+        });
+      }
       if (!text.trim()) return;
 
       const audioEndMs =
         audioEpochRef.current +
         ((data.start ?? 0) + (data.duration ?? 0)) * 1000;
-      const receivedAtMs = cbs.current.now();
       const firstWordEnd = Number(alt?.words?.[0]?.end);
       const firstWordEndMs = Number.isFinite(firstWordEnd)
         ? audioEpochRef.current + firstWordEnd * 1000
         : undefined;
       const metrics = streamMetricsRef.current;
 
-      // Diagnostic only, see lastChunkSentAtRef above: a second, independent
-      // read on "how long did that take" that doesn't go through audioEndMs.
+      // Diagnostic only, see lastChunkSentAtRef above: proximity to the most
+      // recent send, not the causal latency of the transcript's audio region.
       const sinceChunkSentMs = lastChunkSentAtRef.current
         ? Math.max(0, Math.round(receivedAtMs - lastChunkSentAtRef.current))
         : undefined;
@@ -709,12 +1102,21 @@ export function useDeepgram({
       // Don't declare failure here — Close follows, and that path reconnects.
     });
 
-    connection.on(LiveTranscriptionEvents.Close, () => {
+    connection.on(LiveTranscriptionEvents.Close, (event: unknown) => {
+      if (isDev && captureRef.current?.kind === "replay-pcm16") {
+        console.warn("[deepgram] replay socket closed", event);
+      }
+      // A stopped run may deliver its Close event after the next replay has
+      // already installed a fresh connection. That obsolete event must not
+      // tear down/cancel the new run or schedule a reconnect for the old one.
+      if (connectionRef.current !== connection) return;
       if (!startedRef.current) return;
+      const latestChunk = replayChunksRef.current.at(-1);
+      noteReplayConnection("close", String((event as { code?: number; reason?: string })?.code ?? "unknown"), latestChunk?.audioEndMs ?? null, latestChunk?.chunkSequence ?? null);
       teardownSocket();
       reconnectRef.current();
     });
-  }, [noteAudioChunk, teardownSocket]);
+  }, [collectReplayDiagnostics, findReplayChunkAt, noteAudioChunk, noteReplayConnection, socketBufferedAmount, teardownSocket]);
 
   reconnectRef.current = () => {
     if (!startedRef.current || reconnectingRef.current) return;
@@ -732,6 +1134,8 @@ export function useDeepgram({
     }
 
     const delay = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
+    const latestChunk = replayChunksRef.current.at(-1);
+    noteReplayConnection("reconnect_scheduled", `attempt ${attempt + 1} in ${delay}ms`, latestChunk?.audioEndMs ?? null, latestChunk?.chunkSequence ?? null);
     attemptsRef.current = attempt + 1;
     setStatus("reconnecting");
     cbs.current.onError?.(
@@ -771,15 +1175,21 @@ export function useDeepgram({
       // already prewarmed, this resolves immediately and the socket opens on
       // the next tick.
       await prewarm();
+      exactMicAudio.beginSession(cbs.current.sessionId?.() ?? `speech-${Date.now()}`);
+      if (exactMicAudio.retaining) cbs.current.onNote?.("exact microphone PCM corpus retention enabled");
       await openSocket();
       return true;
     } catch (err) {
-      if ((err as Error)?.name === "AbortError") return false;
+      if ((err as Error)?.name === "AbortError") {
+        exactMicAudio.finishSession();
+        return false;
+      }
       // console.warn, not console.error: Next's dev overlay intercepts errors
       // and throws a full-screen panel over the canvas. A mic that won't start
       // should be a red dot on the control bar, not a takeover mid-recording.
       // Dev-only now too — a real user's console shouldn't see raw internals.
       if (isDev) console.warn("[deepgram] start failed", err);
+      exactMicAudio.finishSession();
       startedRef.current = false;
       // The prewarmed graph is being torn down here, so the memo of it has to
       // go too — otherwise the next attempt would await a resolved promise and
@@ -805,6 +1215,63 @@ export function useDeepgram({
     }
   }, [enabled, openSocket, prepareCapture]);
 
+  /** Dev-only source swap: decode/resample a file, then use the same socket. */
+  const startReplay = useCallback(async (file: File, disconnectPlan: ReplayDisconnectPlan = { atAudioMs: [] }): Promise<ReplayAudioInfo> => {
+    if (!isDev || !enabled) throw new Error("Replay mode is unavailable");
+    if (startedRef.current) throw new Error("A speech source is already active");
+    setStatus("connecting");
+    cbs.current.onError?.(null);
+    replayStartedAtRef.current = performance.now();
+    replayAudioStartedAtRef.current = 0;
+    replayDisconnectPlanRef.current = { atAudioMs: [...disconnectPlan.atAudioMs].sort((a, b) => a - b) };
+    replayForcedDisconnectsRef.current = new Set();
+    replayChunksRef.current = [];
+    replayProviderResponsesRef.current = [];
+    replayConnectionsRef.current = [];
+    socketAudioBaseMsRef.current = new Map();
+    replayLatestProviderAudioMsRef.current = null;
+    replaySendAttemptsRef.current = 0;
+    replayPausedSendsRef.current = 0;
+    replayRebasesRef.current = [];
+    const context = new AudioContext({ sampleRate: 48000 });
+    try {
+      const decoded = await context.decodeAudioData(await file.arrayBuffer());
+      const targetRate = 48000;
+      const frameCount = Math.ceil(decoded.duration * targetRate);
+      const offline = new OfflineAudioContext(1, frameCount, targetRate);
+      const source = offline.createBufferSource();
+      source.buffer = decoded;
+      source.connect(offline.destination);
+      source.start();
+      const rendered = await offline.startRendering();
+      const samples = new Float32Array(rendered.getChannelData(0));
+      captureRef.current = {
+        kind: "replay-pcm16",
+        samples,
+        sourceSampleRate: decoded.sampleRate,
+        sampleRate: targetRate,
+        fileName: file.name,
+        durationMs: decoded.duration * 1000,
+      };
+      latency.mark("worklet_ready", latencyNow());
+      await loadSdk();
+      startedRef.current = true;
+      attemptsRef.current = 0;
+      const completion = new Promise<ReplayAudioInfo>((resolve, reject) => {
+        replayCompletionRef.current = { resolve, reject };
+      });
+      await openSocket();
+      return await completion;
+    } catch (error) {
+      startedRef.current = false;
+      captureRef.current = null;
+      setStatus("error");
+      throw error;
+    } finally {
+      await context.close().catch(() => {});
+    }
+  }, [enabled, loadSdk, openSocket]);
+
   const toggle = useCallback(() => {
     if (startedRef.current) stop();
     else void start();
@@ -827,5 +1294,5 @@ export function useDeepgram({
     };
   }, [closeTrace]);
 
-  return { status, start, stop, toggle, prewarm, getDiagnosticTraces };
+  return { status, start, startReplay, stop, toggle, prewarm, getDiagnosticTraces };
 }

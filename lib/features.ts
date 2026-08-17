@@ -88,8 +88,44 @@ export const features = {
    * enables this mode for that page load regardless of the flag below, so
    * on/off can be compared without editing and redeploying. See
    * `isLivePresentationV2Enabled`.
+   *
+   * ACTIVATED 2026-08-17 (docs/VALIDATED-STACK-PRODUCTION-ACTIVATION-V1.md):
+   * validated against the deterministic camera/replay corpus and a fresh
+   * natural session; this is now the default Standard Mode experience for
+   * every user, not a flag under test. `?v2=1` is now a no-op — the
+   * resolver returns `true` from the committed flag before it ever reads
+   * the query string, in every environment. There is no forced-off debug
+   * override; reverting requires flipping this literal back to `false`.
    */
-  livePresentationV2: false,
+  livePresentationV2: true,
+  /**
+   * Visual Re-entry V1 — controlled reintroduction of visual intelligence
+   * DOWNSTREAM of Live Speech Presentation V2's settled-thought output. Only
+   * two visual families exist in V1: `enumeration` and `quantitative_change`
+   * (see lib/visualReentry/). `none` is a first-class, expected result — the
+   * hypothesis being tested is that most settled thoughts should produce no
+   * additional visual at all. See docs/VISUAL-REENTRY-V1.md.
+   *
+   * Meaningless without V2: `isVisualReentryV1Enabled()` returns false
+   * whenever `isLivePresentationV2Enabled()` is false, regardless of this
+   * flag or the dev override below. Off means the pipeline never runs — no
+   * extra LLM call, no extra canvas write, zero behavior change, same
+   * pattern as `reflex` / `livePresentationV2`.
+   *
+   * Dev-only override: with `NODE_ENV !== "production"`, `?vr=1` in the URL
+   * enables this mode for that page load (still requires V2 to also be on,
+   * via the `livePresentationV2` flag or `?v2=1`), so on/off can be compared
+   * without editing and redeploying — e.g. `/try?v2=1&vr=1`. Production
+   * always ignores the query param and reads only the committed flag value,
+   * same reasoning as every other flag in this file.
+   *
+   * ACTIVATED 2026-08-17 (docs/VALIDATED-STACK-PRODUCTION-ACTIVATION-V1.md):
+   * same activation as `livePresentationV2` above, for the same reason —
+   * `?vr=1` is now a no-op in every environment. Reverting requires flipping
+   * this literal back to `false` (and/or `livePresentationV2`, since this
+   * flag is inert without it regardless).
+   */
+  visualReentryV1: true,
 } as const;
 
 export type FeatureFlags = typeof features;
@@ -105,4 +141,19 @@ export function isLivePresentationV2Enabled(): boolean {
   if (process.env.NODE_ENV === "production") return false;
   if (typeof window === "undefined") return false;
   return new URLSearchParams(window.location.search).get("v2") === "1";
+}
+
+/**
+ * Resolves `features.visualReentryV1` plus its dev-only `?vr=1` override.
+ * Always false when `isLivePresentationV2Enabled()` is false — Visual
+ * Re-entry has no meaning without V2's settled-thought output to consume.
+ * See the flag's doc comment above for why env/query overrides aren't
+ * trusted for anything user-facing in this codebase.
+ */
+export function isVisualReentryV1Enabled(): boolean {
+  if (!isLivePresentationV2Enabled()) return false;
+  if (features.visualReentryV1) return true;
+  if (process.env.NODE_ENV === "production") return false;
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("vr") === "1";
 }

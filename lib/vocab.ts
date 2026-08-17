@@ -32,6 +32,8 @@
  */
 export const SEED_TERMS: string[] = [
   "Airline",
+  "Aline",
+  "MLBB",
   "AI agents",
   "Affiliate Capital",
   "InPublic",
@@ -224,6 +226,15 @@ export interface Correction {
 const explicitNamedTerms = (): Set<string> =>
   new Set([...SEED_TERMS, ...envTerms()].map((term) => term.toLowerCase()));
 
+/**
+ * Terms that are useful provider hints but are unsafe fuzzy rewrite targets.
+ *
+ * Same-audio benchmarks show that Aline and MLBB are fixed at the provider.
+ * Post-correcting them would add no benefit and could turn ordinary nearby
+ * speech into a domain term. Keep that ambiguity at the provider boundary.
+ */
+const PROVIDER_ONLY_TERMS = new Set(["aline", "mlbb"]);
+
 export const MIN_CONFIDENCE = 0.86;
 
 /**
@@ -264,7 +275,7 @@ export function correctTranscript(
   // of one-off forbidden replacements.
   const named = explicitNamedTerms();
   const terms = [...new Set(active.map((t) => t.trim()).filter((t) =>
-    t.length >= 4 && named.has(t.toLowerCase()),
+    t.length >= 4 && named.has(t.toLowerCase()) && !PROVIDER_ONLY_TERMS.has(t.toLowerCase()),
   ))]
     .sort((a, b) => b.split(/\s+/).length - a.split(/\s+/).length);
   if (terms.length === 0) return { text: out, corrections };

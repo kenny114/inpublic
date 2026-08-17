@@ -8,8 +8,9 @@ import { resolveEntitlement } from "./entitlement";
 import { routeLimits, spendLimits } from "./limits";
 import { audioReservationSeconds } from "@/lib/providerCost";
 import { anonIdFromRequest } from "./anonId";
+import { consumeDevelopmentReplayAuthorization } from "./developmentReplayAuthorization";
 
-export type CostFeature = "deepgram" | "gemini" | "scribe" | "beat" | "artist" | "story" | "math" | "audio";
+export type CostFeature = "deepgram" | "gemini" | "scribe" | "beat" | "artist" | "story" | "math" | "audio" | "visual-reentry";
 export interface GuardSpec {
   feature: CostFeature;
   provider: "anthropic" | "google" | "deepgram";
@@ -17,6 +18,8 @@ export interface GuardSpec {
   requestBytes?: number;
   maxOutputTokens?: number;
   audioSeconds?: number;
+  /** Only the Deepgram credential route opts into the local replay seam. */
+  allowDevelopmentReplay?: boolean;
 }
 
 /**
@@ -30,6 +33,7 @@ export interface GuardSpec {
  * route need to know or care whether the caller was anonymous.
  */
 const ANONYMOUS_RESERVATION_SENTINEL = "anonymous";
+const DEVELOPMENT_REPLAY_RESERVATION_SENTINEL = "development-replay";
 
 export interface GuardContext {
   userId: string | null;
@@ -132,6 +136,23 @@ async function guardAnonymousRequest(request: Request, spec: GuardSpec): Promise
 }
 
 export async function guardProviderRequest(request: Request, spec: GuardSpec): Promise<GuardContext | Response> {
+  // This is a server-validated, one-use local-dev capability, not a client
+  // flag. In production consumeDevelopmentReplayAuthorization always fails.
+  // No usage/session or cost-ledger row is mutated, while the caller still
+  // proceeds to the real provider below the guard.
+  if (spec.allowDevelopmentReplay && consumeDevelopmentReplayAuthorization(request)) {
+    return {
+      userId: null,
+      sessionId: "development-replay",
+      projectId: null,
+      reservationId: DEVELOPMENT_REPLAY_RESERVATION_SENTINEL,
+      reservedCostUsd: 0,
+      estimatedCostUsd: 0,
+      rates: { input: 0, output: 0, audio: 0, cacheCreation: 0, cacheRead: 0 },
+      requestBytes: spec.requestBytes ?? 0,
+      startedAt: Date.now(),
+    };
+  }
   // Which ledger this request belongs to is NOT implied by the auth cookie: a
   // signed-in visitor can open /try, and then holds a valid session while its
   // session id refers to anonymous_trials rather than usage_sessions. Routing
@@ -233,7 +254,7 @@ export interface ProviderUsage {
 }
 
 export async function reconcileProviderCost(context: GuardContext, status: "succeeded" | "failed" | "aborted", usage: ProviderUsage = {}, responseBytes = 0) {
-  if (context.reservationId === ANONYMOUS_RESERVATION_SENTINEL) return;
+  if (context.reservationId === ANONYMOUS_RESERVATION_SENTINEL || context.reservationId === DEVELOPMENT_REPLAY_RESERVATION_SENTINEL) return;
   const actualKnown = usage.actualCostUsd !== undefined || Boolean(usage.inputTokens || usage.outputTokens || usage.audioSeconds);
   const calculated =
     (usage.inputTokens ?? 0) * context.rates.input +

@@ -9,6 +9,7 @@ import { Mic } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { loadSessionById, saveSession } from "@/lib/persist";
 import { attributionProperties, captureAttribution, getAttribution } from "@/lib/attribution";
+import { isReplayLabEnabled } from "@/lib/replayLab";
 
 const Board = dynamic(() => import("@/components/Board"), {
   ssr: false,
@@ -154,7 +155,9 @@ function TryPageBody() {
   const done = params.get("done") === "1";
   const claim = params.get("claim") === "1";
   const sessionId = params.get("session");
-  const [started, setStarted] = useState(false);
+  // The development replay lab has no microphone source by design, so it
+  // enters the board directly. Production ignores the query flag.
+  const [started, setStarted] = useState(() => isReplayLabEnabled(`?${params.toString()}`));
 
   if (started) return <Board guest startFresh />;
   if (claim) return <TryClaimComplete sessionId={sessionId} />;
