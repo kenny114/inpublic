@@ -370,3 +370,24 @@ TIMESTAMP: **session-relative time**<br>
 WHAT HAPPENED: **observable event or reaction**<br>
 WHY IT IS INTERESTING: **surprisingly good visual, clear speech-to-visual
 transformation, genuine user reaction, or strong before/after candidate**
+
+---
+
+# Real User Trial V1 — Frozen Deployment
+
+DEPLOYMENT: **`https://inpublic-3sls1lf1p-kenny114s-projects.vercel.app` (`dpl_6WpJycHaZHx4ocHJJaV5yNpZJQwz`), aliased to `https://inpublic.vercel.app`**<br>
+COMMIT: **`ba4c53218de5426cf4ad1e1da9e8b474b46c9ad0`**<br>
+DATE: **2026-08-17**<br>
+PRODUCT STATE: **Validated V2 + Thought Boundary Safety V3 + Visual Re-entry families + Page Arrival Coalescing + Generic Overview Removal are deployed as the zero-query production defaults. Runtime stack proof passed. Trial recruitment remains blocked because the clean guest recheck exposed repeated `/api/projects` autosave 401s; no new demo video was created.**
+
+---
+
+# Guest 401 Readiness Fix
+
+DEMO VALUE: **LOW / NOT VISUALLY MEANINGFUL**
+
+BEFORE: **Background anonymous requests produced repeated authentication failures.**
+
+AFTER: **Guest `/try` performs only requests valid for a guest session; local session persistence remains intact.**
+
+PUBLIC VIDEO: **NOT REQUIRED**

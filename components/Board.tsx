@@ -426,11 +426,12 @@ export default function Board({
   /**
    * Anonymous /try visitor: no auth, no usage_sessions row, no /dashboard to
    * return to. Everything else about the engine (Deepgram/Gemini pipeline,
-   * Excalidraw, camera, IndexedDB persistence, even the cloud-save attempt —
-   * lib/persist.ts already treats a 401 as "offline" rather than an error) is
-   * identical to the authenticated path; this flag only changes usage-session
-   * accounting (useUsageSession's `anonymous` mode) and where "Finish" sends
-   * the visitor afterward.
+   * Excalidraw, camera and IndexedDB persistence) is identical to the
+   * authenticated path. The flag also prevents protected background writes:
+   * anonymous sessions have no cloud project or authenticated telemetry row,
+   * so sending those requests would make a guaranteed 401 normal control
+   * flow. It additionally changes usage-session accounting
+   * (useUsageSession's `anonymous` mode) and where "Finish" sends the visitor.
    */
   guest?: boolean;
 } = {}) {
@@ -6258,7 +6259,7 @@ export default function Board({
       // Root-cause traces: only useDeepgram (not the dormant Gemini engine)
       // collects these — see hooks/useDeepgram.ts's getDiagnosticTraces.
       const traces = deepgram.getDiagnosticTraces?.() ?? null;
-      recordLatencySummary(summary, stoppedUsageSessionId, traces);
+      recordLatencySummary(summary, stoppedUsageSessionId, traces, !guest);
       latency.reset();
       return;
     }
@@ -6568,14 +6569,14 @@ export default function Board({
       composition: compositionRef.current,
       mode: modeRef.current,
       log: logRef.current,
-    }), 3000, setSaveStatus);
+    }), 3000, setSaveStatus, { syncCloud: !guest });
     const flush = () => void autosaveRef.current?.flushNow();
     window.addEventListener("beforeunload", flush);
     return () => {
       window.removeEventListener("beforeunload", flush);
       flush();
     };
-  }, []);
+  }, [guest]);
 
   useEffect(() => () => {
     visualReentryAbortRef.current?.abort();

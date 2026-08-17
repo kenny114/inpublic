@@ -84,6 +84,15 @@ async function saveLocalSession(session: PersistedSession): Promise<void> {
 
 type CloudSaveState = "saved" | "offline" | "failed";
 
+export interface SaveSessionOptions {
+  /**
+   * Authenticated canvas sessions sync to `/api/projects`; anonymous `/try`
+   * sessions deliberately stay browser-local until the post-signup claim flow
+   * calls `saveSession()` again with its authenticated default.
+   */
+  syncCloud?: boolean;
+}
+
 async function saveCloudSession(session: PersistedSession): Promise<{ state: CloudSaveState; session: PersistedSession }> {
   if (typeof window === "undefined") return { state: "saved", session };
   if (!navigator.onLine) return { state: "offline", session };
@@ -124,8 +133,12 @@ async function saveCloudSession(session: PersistedSession): Promise<{ state: Clo
   }
 }
 
-export async function saveSession(session: PersistedSession): Promise<CloudSaveState> {
+export async function saveSession(
+  session: PersistedSession,
+  { syncCloud = true }: SaveSessionOptions = {},
+): Promise<CloudSaveState> {
   await saveLocalSession(session);
+  if (!syncCloud) return "saved";
   const cloud = await saveCloudSession(session);
   if (cloud.session.cloudUpdatedAt !== session.cloudUpdatedAt) await saveLocalSession(cloud.session);
   return cloud.state;
@@ -313,6 +326,7 @@ export function makeAutosave(
   getSession: () => PersistedSession,
   intervalMs = 3000,
   onStateChange?: (state: "saving" | "saved" | "offline" | "failed") => void,
+  options: SaveSessionOptions = {},
 ) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
@@ -322,7 +336,7 @@ export function makeAutosave(
     inFlight = true;
     onStateChange?.("saving");
     try {
-      onStateChange?.(await saveSession(getSession()));
+      onStateChange?.(await saveSession(getSession(), options));
     } catch {
       /* a failed autosave must never surface on the canvas */
       onStateChange?.("failed");

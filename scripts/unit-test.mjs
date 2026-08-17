@@ -1210,6 +1210,93 @@ section("latency recorder");
   check("...and unmeasured rows are omitted entirely", text.includes("Speech → Speculative mark") === false);
 }
 
+// --------------------------------------- guest/authenticated persistence split
+
+section("guest persistence — local first, remote only when authenticated");
+
+{
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const originalIndexedDb = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  const originalFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+  const localRows = new Map();
+  const remoteCalls = [];
+
+  const database = {
+    objectStoreNames: { contains: () => true },
+    transaction() {
+      const transaction = {
+        oncomplete: null,
+        onerror: null,
+        error: null,
+        objectStore() {
+          return { put(value, key) { localRows.set(key, value); } };
+        },
+      };
+      queueMicrotask(() => transaction.oncomplete?.());
+      return transaction;
+    },
+    close() {},
+  };
+
+  Object.defineProperty(globalThis, "window", { value: {}, configurable: true });
+  Object.defineProperty(globalThis, "navigator", { value: { onLine: true }, configurable: true });
+  Object.defineProperty(globalThis, "indexedDB", {
+    configurable: true,
+    value: {
+      open() {
+        const request = { result: database, error: null, onsuccess: null, onerror: null, onupgradeneeded: null };
+        queueMicrotask(() => request.onsuccess?.());
+        return request;
+      },
+    },
+  });
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (url, init) => {
+      remoteCalls.push({ url, init });
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({ project: { cloudUpdatedAt: "2026-08-17T00:00:00.000Z" } }),
+      };
+    },
+  });
+
+  const { saveSession } = await import("../lib/persist.ts");
+  const session = {
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    savedAt: Date.now(),
+    startedAt: null,
+    page: 0,
+    elements: [],
+    semantic: { concepts: [], relationships: [], sections: [], operations: [] },
+    log: [],
+  };
+
+  await saveSession(session, { syncCloud: false });
+  check(
+    "guest save writes current and session IndexedDB records without /api/projects",
+    remoteCalls.length === 0 && localRows.has("current") && localRows.has(`session:${session.id}`),
+    JSON.stringify({ calls: remoteCalls.length, keys: [...localRows.keys()] }),
+  );
+
+  await saveSession(session);
+  check(
+    "authenticated save keeps the existing /api/projects POST",
+    remoteCalls.length === 1 && remoteCalls[0].url === "/api/projects" && remoteCalls[0].init.method === "POST",
+    JSON.stringify(remoteCalls),
+  );
+
+  const restore = (name, descriptor) => descriptor
+    ? Object.defineProperty(globalThis, name, descriptor)
+    : Reflect.deleteProperty(globalThis, name);
+  restore("window", originalWindow);
+  restore("navigator", originalNavigator);
+  restore("indexedDB", originalIndexedDb);
+  restore("fetch", originalFetch);
+}
+
 // ---------------------------------------------- latency sink — session id
 
 section("latency sink — session id capture");
@@ -1241,7 +1328,7 @@ section("latency sink — session id capture");
     return { ok: true, status: 200, text: async () => "" };
   };
 
-  const { recordLatencySummary, flushLatency } = await import("../lib/latencySink.ts");
+  const { recordLatencySummary, flushLatency, storedLatencySamples } = await import("../lib/latencySink.ts");
   const { LatencyRecorder } = await import("../lib/latency.ts");
   const summary = new LatencyRecorder().summary();
 
@@ -1254,6 +1341,15 @@ section("latency sink — session id capture");
   );
 
   calls.length = 0;
+  const locallyStoredBeforeGuest = storedLatencySamples().length;
+  recordLatencySummary(summary, "anonymous-lease-id", null, false);
+  flushLatency();
+  check(
+    "an anonymous summary remains local but never calls authenticated telemetry",
+    calls.length === 0 && storedLatencySamples().length === locallyStoredBeforeGuest + 1,
+    JSON.stringify({ calls, stored: storedLatencySamples().length }),
+  );
+
   recordLatencySummary(summary, null);
   flushLatency();
   check(

@@ -1,8 +1,8 @@
 # InPublic Real User Trial V1
 
-Status: **NOT STARTED — PRODUCTION READINESS BLOCKED**<br>
-Study build: **unassigned**<br>
-Study owner: **unassigned**<br>
+Status: **NOT STARTED — FROZEN BUILD DEPLOYED; READINESS BLOCKED BY GUEST 401 STORM**<br>
+Study build: **`ba4c53218de5426cf4ad1e1da9e8b474b46c9ad0`**<br>
+Study owner: **operator of the supervised trial browser**<br>
 Target batch: **3–5 people**<br>
 Target speaking time: **3–5 minutes per person; shorter is allowed when natural**
 
@@ -24,20 +24,22 @@ browser session.
 | Granted microphone permission enters the board | PASS | Board opened with speaking controls and a five-minute anonymous allowance. |
 | Developer flags are required | PASS | The ordinary entry route has no required query parameters. |
 | Replay/debug panels appear in production | PASS | No replay lab, latency overlay, or developer export was visible. Production ignored `replay=1`, `v2=1`, and `vr=1`. |
-| Current validated stack is on the public deployment | **FAIL** | Latest production deployment was created 2026-08-13. Its deployed source default is `livePresentationV2: false`; the validated V2/Visual Re-entry defaults are only in the current uncommitted workspace. |
+| Current validated stack is on the public deployment | PASS | Vercel deployment `dpl_6WpJycHaZHx4ocHJJaV5yNpZJQwz` is Ready and reports Git SHA `ba4c53218de5426cf4ad1e1da9e8b474b46c9ad0`; its committed defaults are `livePresentationV2: true` and `visualReentryV1: true`. |
+| Short zero-query speech validation exercises the validated stack | PASS | Generated validation audio produced 27 thought-boundary events, 5 settled thoughts, 41 Visual Re-entry events, 3 sequence commits, 1 page turn, and 1 Page Arrival Coalescing event. No generic overview proposal appeared. This is release evidence, not tester evidence. |
+| Guest network path is free of repeated 401s | **FAIL** | Anonymous autosave repeatedly POSTed `/api/projects` and received 401; 19 such responses were observed, plus one `/api/telemetry/latency` 401 when listening stopped. No `/api/scribe`, `/api/beat`, or `/api/artist` call occurred. |
 
 ### Readiness decision
 
-**DO NOT RECRUIT TESTERS YET.** A real-user batch on the current public alias
-would test the previous presentation system, not the frozen validated stack.
-This is a study-readiness blocker, not a tester-observed P0 and not product
-evidence. Before tester 1, deploy one reviewed, immutable build containing the
-validated defaults, record its deployment URL/ID below, and rerun only the
-read-only checks above. Do not alter product behavior as part of that release.
+**DO NOT RECRUIT TESTERS YET.** The immutable validated build is deployed and
+the runtime stack proof passed, but the clean guest run exposed a repeated 401
+autosave path. This is a release-readiness finding, not a tester-observed P0 and
+not user evidence. Per the frozen-deployment brief, do not silently patch it in
+this release task or mark the batch ready while the required no-401 check is
+failing.
 
-Frozen study deployment URL/ID: **PENDING**<br>
-Frozen study commit: **PENDING**<br>
-Readiness recheck date/operator: **PENDING**
+Frozen study deployment URL/ID: **`https://inpublic-3sls1lf1p-kenny114s-projects.vercel.app` / `dpl_6WpJycHaZHx4ocHJJaV5yNpZJQwz`**<br>
+Frozen study commit: **`ba4c53218de5426cf4ad1e1da9e8b474b46c9ad0`**<br>
+Readiness recheck date/operator: **2026-08-17 / Codex release verification**
 
 ## Frozen product scope
 
@@ -81,8 +83,9 @@ not explain confusion immediately unless they are blocked.
 
 The current session event stream already contains the following evidence. The
 ordinary production UI deliberately does not expose its developer-only raw-log
-download, so the operator must confirm an approved retrieval method before
-tester 1; do not add a debug panel to solve this during the study.
+download. The approved study method is therefore a read-only IndexedDB export
+from the supervised browser profile immediately after each session; do not add
+a debug panel to solve this during the study.
 
 | Requested evidence | Already represented | Current retention note |
 |---|---|---|
@@ -98,9 +101,9 @@ tester 1; do not add a debug panel to solve this during the study.
 | Raw transcript | Yes | `rawTranscript` where provided. |
 | Final/display transcript | Yes | `text`, `normalizedTranscript`, and `displayTranscript`. |
 
-Approved production retrieval method: **PENDING**<br>
-Retention location and access owner: **PENDING**<br>
-Retention period/deletion date: **PENDING**
+Approved production retrieval method: **Read the `current` and matching `session:<session-id>` records from the production origin's `inpublic` IndexedDB `sessions` object store immediately after each supervised session, then save the JSON evidence in the consented study folder. The release recheck successfully retrieved session ID, timestamps, transcripts, thought boundaries, settled thoughts, page turns, Visual Re-entry decisions, camera/composition events, and errors this way.**<br>
+Retention location and access owner: **The tester evidence remains browser-local until export. Exported evidence is held only in the access-controlled study folder owned by the study operator. Detailed anonymous transcripts/events are not retained in Supabase; the backend retains anonymous allowance/lease accounting and Vercel retains ordinary request logs. Remote, unsupervised testers are out of scope unless an immediate local export can be arranged.**<br>
+Retention period/deletion date: **Retain through batch synthesis and final-report acceptance, then delete the exported evidence and clear the production site's browser storage within 30 days after the final report. Delete earlier on consent withdrawal. There is no automatic IndexedDB expiry, so deletion is an operator responsibility.**
 
 ## Session worksheet
 

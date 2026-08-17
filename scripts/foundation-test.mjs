@@ -20,6 +20,8 @@ const replayAuthorizationRoute = read("app/api/dev/replay-authorization/route.ts
 const replayAuthorization = read("lib/server/developmentReplayAuthorization.ts");
 const deepgramHook = read("hooks/useDeepgram.ts");
 const board = read("components/Board.tsx");
+const latencySink = read("lib/latencySink.ts");
+const latencyRoute = read("app/api/telemetry/latency/route.ts");
 
 const checks = [];
 const check = (name, value) => { assert.equal(Boolean(value), true, name); checks.push(name); };
@@ -115,6 +117,13 @@ check("client-supplied project user ID is ignored", projectRoute.includes("user_
 check("cloud saves use updated_at compare-and-swap", projectItemRoute.includes('.eq("updated_at", expected)') && projectItemRoute.includes('status: 409'));
 check("IndexedDB is written before cloud sync", persist.indexOf("await saveLocalSession(session)") < persist.indexOf("saveCloudSession(session)"));
 check("offline failures retain local projects", persist.includes('state: "offline"') && persist.includes("IndexedDB remains the offline source"));
+check("project writes remain authenticated-only", projectRoute.includes("if (!user)") && projectRoute.includes("status: 401"));
+check("guest autosave remains local and skips protected project sync", board.includes("{ syncCloud: !guest }") && persist.indexOf("await saveLocalSession(session)") < persist.indexOf("if (!syncCloud) return"));
+check("authenticated autosave keeps cloud sync as the default", persist.includes("{ syncCloud = true }") && persist.indexOf("if (!syncCloud) return") < persist.indexOf("saveCloudSession(session)"));
+check("anonymous allowance routing is unchanged", board.includes("anonymous: guest"));
+check("latency ingestion remains authenticated-only", latencyRoute.includes("if (!user)") && latencyRoute.includes("status: 401"));
+check("guest latency stays local without calling protected ingestion", board.includes("recordLatencySummary(summary, stoppedUsageSessionId, traces, !guest)") && latencySink.indexOf("storeLocally(summary)") < latencySink.indexOf("if (!sendRemotely) return"));
+check("authenticated latency upload remains the default", latencySink.includes("sendRemotely = true") && latencySink.indexOf("if (!sendRemotely) return") < latencySink.indexOf("queue.push"));
 
 // Caught live: AudioReplayPanel.tsx called /api/audio/upload, /api/math and
 // /api/artist without providerRequestHeaders(), so the server always saw

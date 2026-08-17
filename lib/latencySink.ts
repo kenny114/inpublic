@@ -19,9 +19,10 @@ import type { LatencySummary, DiagnosticTraces } from "./latency";
  *
  * Two destinations, because they answer different questions. localStorage is
  * for the developer sitting in front of the machine right now and works with
- * no infrastructure at all. The API is for aggregating across sessions and
- * machines, and is skipped entirely when there is no usage session to attach
- * the rows to.
+ * no infrastructure at all. The API is for aggregating authenticated sessions
+ * across machines. It is skipped when there is no authenticated session to
+ * attach or when the established guest route tells the recorder to remain
+ * local-only.
  */
 
 const STORAGE_KEY = "inpublic-latency-samples";
@@ -179,9 +180,15 @@ export function recordLatencySummary(
   summary: LatencySummary,
   sessionId: string | null = getActiveUsageSessionId(),
   traces: DiagnosticTraces | null = null,
+  sendRemotely = true,
 ): void {
   try {
     storeLocally(summary);
+    // Anonymous `/try` sessions use a separate allowance lease and have no
+    // authenticated `usage_sessions` row. Keep their summary locally for the
+    // supervised trial export, but do not call an endpoint that intentionally
+    // requires an authenticated user and can only reject the request.
+    if (!sendRemotely) return;
     queue.push({ summary, sessionId, traces });
     if (isDev && !sessionId) {
       console.warn(
