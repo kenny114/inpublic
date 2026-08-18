@@ -326,7 +326,7 @@ export type LogEvent =
       reason: string;
       force?: boolean;
       manualPriorityActive?: boolean;
-      suppressReason?: "live-camera-hold" | "move-in-flight";
+      suppressReason?: "live-camera-hold" | "move-in-flight" | "native-camera-hold";
       target?: CameraView;
       occupiedCanvasRatio?: number;
     }

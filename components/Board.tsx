@@ -131,6 +131,7 @@ import {
   effectiveTextSize,
   initialCompositionState,
   liveLineFitsViewport,
+  nativeCameraHoldIsStale,
   proposeCamera,
   recordingViewport,
   rectUnion,
@@ -278,6 +279,24 @@ const LIVE_CAMERA_OVERVIEW_MS = 1800;
  * board periodically reveals what has actually landed on it.
  */
 const MAX_LIVE_CAMERA_HOLD_MS = 6000;
+/**
+ * Excalidraw's own `scrollToContent` (see the `zoom_to_concept` action) runs
+ * a second, independent camera-writing animation outside `animateCamera`'s
+ * spring. `NATIVE_CAMERA_HOLD_MS` is how long framePage defers to it —
+ * matching the `duration` passed to `scrollToContent` plus a small margin so
+ * `getAppState()` reflects Excalidraw's own settled position, not a
+ * mid-animation frame, when compositionRef is resynced.
+ */
+const ZOOM_TO_CONCEPT_ANIMATION_MS = 400;
+const NATIVE_CAMERA_HOLD_MS = 420;
+/**
+ * Safety net matching the `stuckMoveMs`/live-hold staleness pattern
+ * elsewhere in this file: if the resync timeout is ever missed (a
+ * background-tab-throttled timer, a thrown callback), the hold must not
+ * strand the camera — a ceiling well above the animation's own duration
+ * clears it instead of trusting it indefinitely.
+ */
+const NATIVE_CAMERA_HOLD_CEILING_MS = 2000;
 const VISUAL_REENTRY_RESULT_TTL_MS = 30_000;
 const VISUAL_REENTRY_PENDING_MAX = 3;
 /**
@@ -592,6 +611,17 @@ export default function Board({
   const liveCameraHoldStartedAtRef = useRef(0);
   const liveCameraOverviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
+   * True while Excalidraw's native `scrollToContent` animation (the
+   * `zoom_to_concept` action) is running. framePage defers to this exactly
+   * like `liveCameraHoldRef`, so the spring never writes scrollX/scrollY/zoom
+   * concurrently with Excalidraw's own animation loop — see the
+   * "second, independent camera writer" note on `zoom_to_concept` below.
+   */
+  const nativeCameraHoldRef = useRef(false);
+  /** When the native hold was engaged — see NATIVE_CAMERA_HOLD_CEILING_MS. */
+  const nativeCameraHoldSetAtRef = useRef(0);
+  const nativeCameraHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
    * The single owner of "a reframe is owed but currently can't run."
    *
    * framePage's hold/in-flight guards used to `return` and forget — the
@@ -614,6 +644,7 @@ export default function Board({
   const releasePendingReframeRef = useRef<(() => void) | null>(null);
   useEffect(() => () => {
     if (liveCameraOverviewTimerRef.current) clearTimeout(liveCameraOverviewTimerRef.current);
+    if (nativeCameraHoldTimerRef.current) clearTimeout(nativeCameraHoldTimerRef.current);
     if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
     if (conceptMotionRef.current) cancelAnimationFrame(conceptMotionRef.current.rafId);
   }, []);
@@ -1677,6 +1708,32 @@ export default function Board({
     allowFullZoomChange = false,
     livePageArrivalIdentity: PageArrivalIdentity | null = null,
   ) => {
+    // Excalidraw's native scrollToContent (zoom_to_concept) is a second,
+    // independent camera writer. While it's animating, the spring must not
+    // also write scrollX/scrollY/zoom this frame — both are driving the same
+    // appState concurrently otherwise. Unlike the live-narration hold below,
+    // this is never bypassed by `force` or a live-follow request: either of
+    // those starting a spring here is exactly the race being prevented, not
+    // a case worth carving out. A staleness ceiling (mirroring the pattern
+    // used for liveCameraHoldRef) guards against the resync timeout being
+    // missed and stranding the camera on this guard forever.
+    const nativeHoldExceedsCeiling = nativeCameraHoldIsStale(
+      { active: nativeCameraHoldRef.current, setAt: nativeCameraHoldSetAtRef.current },
+      Date.now(),
+      NATIVE_CAMERA_HOLD_CEILING_MS,
+    );
+    if (nativeHoldExceedsCeiling) {
+      nativeCameraHoldRef.current = false;
+      if (nativeCameraHoldTimerRef.current) {
+        clearTimeout(nativeCameraHoldTimerRef.current);
+        nativeCameraHoldTimerRef.current = null;
+      }
+    }
+    if (nativeCameraHoldRef.current) {
+      pendingReframeRef.current = { reason, mathFocalConceptId, liveFocalElementId, allowFullZoomChange };
+      log({ type: "camera-metric", event: "suppressed", suppressReason: "native-camera-hold", reason });
+      return;
+    }
     // Delayed Scribe/Beat commits may continue while the speaker is talking.
     // They may draw, but the live line owns the shot until its overview timer.
     //
@@ -4104,33 +4161,53 @@ export default function Board({
               // instead of left to fight it: cancel any move already in
               // flight first (so its rAF loop doesn't immediately overwrite
               // this), drop any deferred reframe this explicit zoom
-              // supersedes, and resync compositionRef's bookkeeping once the
-              // animation finishes so the next framePage call — and any undo
-              // snapshot taken before it — sees where the camera actually is
-              // rather than the stale pre-zoom value.
+              // supersedes, then hold framePage off (see nativeCameraHoldRef)
+              // for the animation's duration so nothing starts a competing
+              // spring while it runs, and resync compositionRef's bookkeeping
+              // once the animation finishes so the next framePage call — and
+              // any undo snapshot taken before it — sees where the camera
+              // actually is rather than the stale pre-zoom value.
               if (cameraMotionRef.current) {
                 cancelAnimationFrame(cameraMotionRef.current.rafId);
                 cameraMotionRef.current = null;
               }
               pendingReframeRef.current = null;
+              if (nativeCameraHoldTimerRef.current) {
+                clearTimeout(nativeCameraHoldTimerRef.current);
+                nativeCameraHoldTimerRef.current = null;
+              }
+              nativeCameraHoldRef.current = true;
+              nativeCameraHoldSetAtRef.current = Date.now();
               apiRef.current?.scrollToContent(el as never, {
                 fitToViewport: true,
                 viewportZoomFactor: 0.6,
                 animate: true,
-                duration: 400,
+                duration: ZOOM_TO_CONCEPT_ANIMATION_MS,
               });
-              setTimeout(() => {
+              nativeCameraHoldTimerRef.current = setTimeout(() => {
+                nativeCameraHoldTimerRef.current = null;
+                nativeCameraHoldRef.current = false;
                 const app = apiRef.current?.getAppState?.();
-                if (!app) return;
-                const camera: CameraView = {
-                  scrollX: Number(app.scrollX ?? 0),
-                  scrollY: Number(app.scrollY ?? 0),
-                  zoom: Number(app.zoom?.value ?? app.zoom ?? 1),
-                };
-                compositionRef.current = { ...compositionRef.current, camera, proposedTarget: undefined, movementReason: undefined };
-              }, 420);
+                if (app) {
+                  const camera: CameraView = {
+                    scrollX: Number(app.scrollX ?? 0),
+                    scrollY: Number(app.scrollY ?? 0),
+                    zoom: Number(app.zoom?.value ?? app.zoom ?? 1),
+                  };
+                  compositionRef.current = { ...compositionRef.current, camera, proposedTarget: undefined, movementReason: undefined };
+                }
+                // Replay whatever framePage requests the hold deferred,
+                // through the normal spring path — never silently dropped.
+                releasePendingReframeRef.current?.();
+              }, NATIVE_CAMERA_HOLD_MS);
             } catch {
-              /* cosmetic */
+              // scrollToContent never actually started — don't leave the
+              // hold up for the ceiling to eventually discover.
+              nativeCameraHoldRef.current = false;
+              if (nativeCameraHoldTimerRef.current) {
+                clearTimeout(nativeCameraHoldTimerRef.current);
+                nativeCameraHoldTimerRef.current = null;
+              }
             }
           }
           recordOperation("zoom_to_concept", emptyUndo(), {
@@ -6376,6 +6453,9 @@ export default function Board({
     visualReentryEvidenceRef.current = [];
     if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
     cameraMotionRef.current = null;
+    if (nativeCameraHoldTimerRef.current) clearTimeout(nativeCameraHoldTimerRef.current);
+    nativeCameraHoldTimerRef.current = null;
+    nativeCameraHoldRef.current = false;
     cameraProposalSequenceRef.current = 0;
     cameraAnimationSequenceRef.current = 0;
     cameraPageGenerationRef.current = 0;
