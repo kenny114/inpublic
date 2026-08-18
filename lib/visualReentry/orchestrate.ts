@@ -156,6 +156,7 @@ export async function prepareVisualReentry(
     visualFamily: intent.type,
   });
   if (ctx.experimentMode === "vr_decision") return null;
+  if (intent.type === "note" || intent.type === "relation") return null;
 
   const { decision: grounded, result } = groundDecision(intent, thought);
   if (grounded.type === "none") {

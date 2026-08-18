@@ -175,6 +175,7 @@ import {
   type VisualReentryCandidateJob,
 } from "@/lib/visualReentry/decisionQueue";
 import { claimThought } from "@/lib/visualReentry/ownership";
+import { expressThought } from "@/lib/visualReentry/express";
 import type { SettledThought } from "@/lib/visualReentry/types";
 import {
   activeStoryScene,
@@ -5753,6 +5754,47 @@ export default function Board({
     drainVisualReentryDecisionQueueRef.current?.();
   }, [log, now]);
 
+  const launchExpression = useCallback((thought: SettledThought) => {
+    const experimentMode = replayModeRef.current;
+    if (experimentMode === "v2_only" || experimentMode === "vr_shell") return;
+    if (visualReentryProcessedIdsRef.current.has(thought.id)) return;
+    const expressed = expressThought(thought.text);
+    if (!expressed.spec) {
+      log({
+        type: "visual-reentry",
+        event: "expression-none",
+        thoughtId: thought.id,
+        reason: expressed.reason,
+        sourceExcerpt: thought.text.slice(0, 80),
+        sourceText: thought.text,
+      });
+      return;
+    }
+    if (!claimThought(visualReentryProcessedIdsRef.current, thought.id)) return;
+    log({
+      type: "visual-reentry",
+      event: expressed.spec.type === "note" ? "expression-note" : "expression-relation",
+      thoughtId: thought.id,
+      reason: expressed.reason,
+      visualFamily: expressed.spec.type,
+      sourceExcerpt: thought.text.slice(0, 80),
+      sourceText: thought.text,
+    });
+    visualReentryPendingRef.current.push({
+      prepared: {
+        thought,
+        spec: expressed.spec,
+        decidedAt: now(),
+        decisionLatencyMs: 0,
+        decisionSource: "deterministic_fast_path",
+        candidateCompletedAt: now(),
+      },
+      generation: visualReentryGenerationRef.current,
+      launchLiveSeq: liveSeqRef.current,
+    });
+    void flushVisualReentryRef.current?.();
+  }, [log, now]);
+
   const handleSettledVisualReentry = useCallback((thought: SettledThought) => {
     log({
       type: "visual-reentry",
@@ -5817,10 +5859,11 @@ export default function Board({
         sourceText: thought.text,
         participantThoughtIds: [thought.id],
       });
+      launchExpression(thought);
       return;
     }
     launchVisualReentryCandidate(evidence.candidate, evidence.reason, evidence.sequenceEvidence === "completed", evidence.causeEvidence === "completed", evidence.comparisonEvidence === "completed");
-  }, [launchVisualReentryCandidate, log]);
+  }, [launchExpression, launchVisualReentryCandidate, log]);
 
   /**
    * Guards against a command running twice.

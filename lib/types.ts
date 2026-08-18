@@ -393,6 +393,9 @@ export type LogEvent =
         | "labels-rejected"
         | "source-promoted"
         | "source-hidden"
+        | "expression-note"
+        | "expression-relation"
+        | "expression-none"
         | "render-started"
         | "render-completed"
         | "visual-oversized"
@@ -419,7 +422,7 @@ export type LogEvent =
       /** Original V2 thought IDs when a bounded evidence window owns a combined source. */
       participantThoughtIds?: string[];
       decisionSource?: "deterministic_fast_path" | "model_fallback";
-      visualFamily?: "enumeration" | "quantitative_change" | "sequence" | "cause_effect" | "comparison";
+      visualFamily?: "enumeration" | "quantitative_change" | "sequence" | "cause_effect" | "comparison" | "note" | "relation";
       /** Per-anchor provenance for quantitative deterministic successes; no transcript payload is needed. */
       fromModality?: "exact" | "approximate";
       toModality?: "exact" | "approximate";

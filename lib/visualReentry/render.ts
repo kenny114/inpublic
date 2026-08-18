@@ -14,7 +14,7 @@ import { place } from "../ops";
 import type { SceneElement } from "../scene";
 import { wrapMathTextPreservingLines } from "../math/visuals";
 import { displayLabel } from "./compress";
-import type { CauseEffectIntent, ComparisonIntent, EnumerationIntent, QuantitativeChangeIntent, SequenceIntent, VisualReentrySpec } from "./types";
+import type { CauseEffectIntent, ComparisonIntent, EnumerationIntent, NoteIntent, QuantitativeChangeIntent, RelationIntent, SequenceIntent, VisualReentrySpec } from "./types";
 
 const HAND = 1;
 const INK = "#1e1e1e";
@@ -37,25 +37,6 @@ const ITEM_SIZE = 18;
 const LINE_H = 26;
 /** Numbering column ("01", "02", …) — fixed width, no bullet glyph, matches the "clean visual notes" reference appearance rather than a bulleted card. */
 const NUMBER_COL_W = 34;
-
-export function measureVisual(spec: VisualReentrySpec): { w: number; h: number } {
-  if (spec.type === "enumeration") return measureEnumeration(spec);
-  if (spec.type === "sequence") return measureSequence(spec);
-  if (spec.type === "cause_effect") return measureCauseEffect(spec);
-  if (spec.type === "comparison") return measureComparison(spec);
-  return { w: VISUAL_W, h: spec.fromLabel || spec.toLabel ? QUANT_H_WITH_LABELS : QUANT_H };
-}
-
-function measureEnumeration(spec: EnumerationIntent): { w: number; h: number } {
-  let h = 0;
-  if (spec.title) h += TITLE_SIZE + 16;
-  for (const item of spec.items) {
-    const { lines } = wrapMathTextPreservingLines(item, ITEM_SIZE, VISUAL_W - NUMBER_COL_W);
-    h += Math.max(1, lines.length) * LINE_H;
-  }
-  return { w: VISUAL_W, h: Math.max(60, h) };
-}
-
 const SEQUENCE_ARROW_H = 28;
 const BOX_PAD_X = 14;
 const BOX_PAD_Y = 12;
@@ -63,6 +44,25 @@ const BOX_ICON = 22;
 const BOX_ICON_GAP = 10;
 const CAUSE_NODE_W = 330;
 const CAUSE_ARROW_H = 30;
+
+export function measureVisual(spec: VisualReentrySpec): { w: number; h: number } {
+  if (spec.type === "enumeration") return measureEnumeration(spec);
+  if (spec.type === "sequence") return measureSequence(spec);
+  if (spec.type === "cause_effect") return measureCauseEffect(spec);
+  if (spec.type === "comparison") return measureComparison(spec);
+  if (spec.type === "note") return measureNote(spec);
+  if (spec.type === "relation") return measureBoxedStack([spec.from, spec.to], undefined, CAUSE_NODE_W, CAUSE_ARROW_H);
+  return { w: VISUAL_W, h: spec.fromLabel || spec.toLabel ? QUANT_H_WITH_LABELS : QUANT_H };
+}
+
+function measureEnumeration(spec: EnumerationIntent): { w: number; h: number } {
+  return measureBoxedStack(spec.items, spec.title, VISUAL_W, 10);
+}
+
+function measureNote(spec: NoteIntent): { w: number; h: number } {
+  const { lines } = wrapMathTextPreservingLines(displayLabel(spec.text), 22, 320);
+  return { w: 360, h: Math.max(56, Math.max(1, lines.length) * 28 + BOX_PAD_Y * 2) };
+}
 
 function boxTextWidth(boxW: number, label: string): number {
   return iconForLabel(label) ? boxW - BOX_PAD_X * 2 - BOX_ICON - BOX_ICON_GAP : boxW - BOX_PAD_X * 2;
@@ -127,6 +127,10 @@ export async function buildVisual(spec: VisualReentrySpec, pen: Pen): Promise<Bu
       return { elements: conv(causeEffectSkeleton(spec, p.x, p.y, w, h)), w, h, x: p.x, y: p.y };
     case "comparison":
       return { elements: conv(comparisonSkeleton(spec, p.x, p.y, w, h)), w, h, x: p.x, y: p.y };
+    case "note":
+      return { elements: conv(noteSkeleton(spec, p.x, p.y, w, h)), w, h, x: p.x, y: p.y };
+    case "relation":
+      return { elements: conv(relationSkeleton(spec, p.x, p.y, w, h)), w, h, x: p.x, y: p.y };
     default:
       return null;
   }
@@ -345,12 +349,41 @@ export function sequenceSkeleton(
 
 // --- enumeration -------------------------------------------------------
 
+/** Short lettered mark. Orange stroke when the thought is a claim. */
+export function noteSkeleton(
+  spec: NoteIntent,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): Record<string, unknown>[] {
+  void h;
+  const box = boxedLabel(spec.text, x, y, w, spec.emphasis ? ACCENT : INK);
+  return box.elements;
+}
+
+/** Two marks and a connector. */
+export function relationSkeleton(
+  spec: RelationIntent,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): Record<string, unknown>[] {
+  void h;
+  const nodeX = x + Math.max(0, (w - CAUSE_NODE_W) / 2);
+  const from = boxedLabel(spec.from, nodeX, y, CAUSE_NODE_W, INK);
+  const toY = y + from.height + CAUSE_ARROW_H;
+  const to = boxedLabel(spec.to, nodeX, toY, CAUSE_NODE_W, ACCENT);
+  return [
+    ...from.elements,
+    ...stackConnector(nodeX + CAUSE_NODE_W / 2, y + from.height, toY, ACCENT, spec.label),
+    ...to.elements,
+  ];
+}
+
 /**
- * Clean visual notes, not a card: no bounding rectangle, no bullet glyphs,
- * no fill. A title (if any) in caps, then a plain two-digit-numbered list —
- * "01  Speed / 02  Accuracy / 03  Presentation" — the same restraint V2's
- * own ink asks for elsewhere in this codebase. Geometry only; the model
- * never supplies x/y/width/height/spacing, all of it is computed here.
+ * Boxed items in the same hand as sequence, without implying order.
  */
 export function enumerationSkeleton(
   spec: EnumerationIntent,
@@ -359,47 +392,18 @@ export function enumerationSkeleton(
   w: number,
   h: number,
 ): Record<string, unknown>[] {
-  void h; // footprint already reserved via measureEnumeration; nothing here needs it directly
+  void h;
   const out: Record<string, unknown>[] = [];
   let cy = y;
-
   if (spec.title) {
-    out.push({
-      type: "text",
-      x,
-      y: cy,
-      text: displayLabel(spec.title),
-      fontSize: TITLE_SIZE,
-      fontFamily: HAND,
-      strokeColor: SOFT,
-    });
+    out.push({ type: "text", x, y: cy, text: displayLabel(spec.title), fontSize: TITLE_SIZE, fontFamily: HAND, strokeColor: SOFT });
     cy += TITLE_SIZE + 16;
   }
-
-  const textWidth = w - NUMBER_COL_W;
-  spec.items.forEach((item, i) => {
-    const { lines } = wrapMathTextPreservingLines(displayLabel(item), ITEM_SIZE, textWidth);
-    out.push({
-      type: "text",
-      x,
-      y: cy,
-      text: String(i + 1).padStart(2, "0"),
-      fontSize: ITEM_SIZE,
-      fontFamily: HAND,
-      strokeColor: SOFT,
-    });
-    out.push({
-      type: "text",
-      x: x + NUMBER_COL_W,
-      y: cy,
-      text: lines.join("\n"),
-      fontSize: ITEM_SIZE,
-      fontFamily: HAND,
-      strokeColor: INK,
-    });
-    cy += Math.max(1, lines.length) * LINE_H;
-  });
-
+  for (const item of spec.items) {
+    const box = boxedLabel(item, x, cy, w, FILL);
+    out.push(...box.elements);
+    cy += box.height + 10;
+  }
   return out;
 }
 

@@ -16,10 +16,14 @@ import {
   ComparisonIntentSchema,
   EnumerationIntentSchema,
   NoneIntentSchema,
+  NoteIntentSchema,
   QuantitativeChangeIntentSchema,
+  RelationIntentSchema,
   SequenceIntentSchema,
   VisualReentryIntentSchema,
 } from "../lib/visualReentry/types.ts";
+import { expressThought } from "../lib/visualReentry/express.ts";
+import { parseOpenEnumeration } from "../lib/visualReentry/candidate.ts";
 import { claimThought } from "../lib/visualReentry/ownership.ts";
 import { VisualReentryCandidateQueue } from "../lib/visualReentry/decisionQueue.ts";
 import { evaluateVisualCandidate } from "../lib/visualReentry/candidate.ts";
@@ -68,6 +72,8 @@ section("V1.1 local candidate gate");
 check("rejects an ordinary reflective thought", !evaluateVisualCandidate("I'm still figuring out exactly how I feel about this.").candidate);
 check("accepts an explicitly presented list", evaluateVisualCandidate("There are three things we need to improve: speed, accuracy and presentation.").family === "enumeration");
 check("rejects a casual noun sequence", !evaluateVisualCandidate("I've been thinking about users, pricing and the website all day.").candidate);
+check("admits a there-are list of short items", evaluateVisualCandidate("There are ideas, connection, contrast, important moment.").family === "enumeration");
+check("open list parser keeps only the short head", JSON.stringify(parseOpenEnumeration("There are ideas, connection, contrast, important moment, things building on previous ones.")) === JSON.stringify(["ideas", "connection", "contrast", "important moment"]));
 check("accepts a grounded from/to change", evaluateVisualCandidate("Revenue went from ten to forty this quarter.").family === "quantitative_change");
 check("rejects an unquantified increase", !evaluateVisualCandidate("Users increased dramatically this week.").candidate);
 check("accepts an explicit causal relationship", evaluateVisualCandidate("Marketing brings traffic and traffic creates signups.").family === "cause_effect");
@@ -539,6 +545,8 @@ check(
     quantitative_change: Object.keys(QuantitativeChangeIntentSchema.shape),
     cause_effect: Object.keys(CauseEffectIntentSchema.innerType().shape),
     comparison: Object.keys(ComparisonIntentSchema.innerType().shape),
+    note: Object.keys(NoteIntentSchema.shape),
+    relation: Object.keys(RelationIntentSchema.shape),
   };
   for (const [name, keys] of Object.entries(shapes)) {
     check(
@@ -1009,6 +1017,33 @@ section("rendering (measurement only — buildVisual needs a browser env)");
   const withLabels = measureVisual({ type: "quantitative_change", from: 10, to: 40, fromLabel: "Q1", toLabel: "Q2", evidence: ["10 to 40"] });
   const withoutLabels = measureVisual({ type: "quantitative_change", from: 10, to: 40, evidence: ["10 to 40"] });
   check("quantitative_change reserves extra height only when labels are present", withLabels.h > withoutLabels.h);
+}
+
+section("visual expression — prose becomes a note");
+
+{
+  const none = expressThought("The basic idea is simple.");
+  check("thin leftover after a speech frame stays handwriting", none.spec === null);
+}
+{
+  const result = expressThought("I don't want just subtitles on the speech.");
+  check("don't-want becomes a negated note", result.spec?.type === "note" && /^Not /i.test(result.spec.text));
+}
+{
+  const result = expressThought("The interesting part isn't the transcript.");
+  check("isn't-claim becomes a negated note", result.spec?.type === "note" && /transcript/i.test(result.spec.text));
+}
+{
+  const result = expressThought("Instead of only writing down what I see, it tries to visualize the structure behind what I'm saying.");
+  check("instead-of becomes a relation", result.spec?.type === "relation");
+}
+{
+  const result = expressThought("This is InPublic.");
+  check("this-is letters the payload", result.spec?.type === "note" && /inpublic/i.test(result.spec.text));
+}
+{
+  const result = expressThought("Speaking. This is in public.");
+  check("does not letter a lone Speaking leftover", result.spec?.type === "note" && !/^speaking$/i.test(result.spec.text));
 }
 
 section("label compression");

@@ -1,4 +1,4 @@
-import { evaluateVisualCandidate } from "./candidate";
+import { evaluateVisualCandidate, parseOpenEnumeration } from "./candidate";
 import { parseExplicitCauseEffect } from "./cause";
 import { parseExplicitComparison } from "./comparison";
 import type { QuantitativeChangeIntent, QuantitativeQualifier, SequenceIntent, SettledThought, VisualReentrySpec } from "./types";
@@ -56,6 +56,13 @@ function parseLiteralList(payload: string, expected: number): string[] | null {
 
 function tryEnumeration(thought: SettledThought): DeterministicVisualIntentResult {
   const text = thought.text.trim();
+  const open = parseOpenEnumeration(text);
+  if (open) {
+    return {
+      intent: { type: "enumeration", items: open, evidence: [open.join(" ")] },
+      reason: `open list of ${open.length} short items`,
+    };
+  }
   const cue = COUNTED_LIST.exec(text);
   if (!cue) return { intent: null, reason: "no explicit counted-list cue" };
   if (ENUMERATION_UNCERTAINTY.test(text)) return { intent: null, reason: "uncertainty language cannot be represented exactly" };

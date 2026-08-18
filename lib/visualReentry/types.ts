@@ -162,13 +162,38 @@ export const ComparisonIntentSchema = z
   });
 export type ComparisonIntent = z.infer<typeof ComparisonIntentSchema>;
 
-/** The three branches that actually render — i.e. VisualReentryIntent minus "none". */
+/** Deterministic sketchnote lettering — never emitted by the model. */
+export const NoteIntentSchema = z
+  .object({
+    type: z.literal("note"),
+    text: z.string().min(1),
+    emphasis: z.boolean().optional(),
+    evidence: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+export type NoteIntent = z.infer<typeof NoteIntentSchema>;
+
+/** Two short marks with a labelled connector — never emitted by the model. */
+export const RelationIntentSchema = z
+  .object({
+    type: z.literal("relation"),
+    from: z.string().min(1),
+    to: z.string().min(1),
+    label: z.string().optional(),
+    evidence: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+export type RelationIntent = z.infer<typeof RelationIntentSchema>;
+
+/** The branches that actually render — i.e. VisualReentryIntent minus "none", plus local expression. */
 export const VisualReentrySpecSchema = z.union([
   EnumerationIntentSchema,
   QuantitativeChangeIntentSchema,
   SequenceIntentSchema,
   CauseEffectIntentSchema,
   ComparisonIntentSchema,
+  NoteIntentSchema,
+  RelationIntentSchema,
 ]);
 export type VisualReentrySpec = z.infer<typeof VisualReentrySpecSchema>;
 

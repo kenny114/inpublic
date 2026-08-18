@@ -14,7 +14,9 @@ export type ExistingVisualFamily =
   | "quantitative_change"
   | "sequence"
   | "cause_effect"
-  | "comparison";
+  | "comparison"
+  | "note"
+  | "relation";
 
 export type CorpusRecordingKind = "natural" | "synthetic";
 

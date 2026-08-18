@@ -72,6 +72,13 @@ The deterministic replay report exposes candidate accepted/rejected, durable
 ready/held/committed, decision concurrency, and the original latency metrics
 so launch selectivity and useful-result rate can be measured directly.
 
+## V1.6 expression
+
+Settled thoughts that do not earn a family are no longer stuck as captions.
+A local, model-free letterer may fold them into a short note or a two-mark
+relation. Open `there are` lists of short items become enumerations. If a
+phrase cannot be lettered in six grounded words, the sentence stays.
+
 ## V1.5 fold
 
 When a grounded visual commits, the source thought's handwriting is folded

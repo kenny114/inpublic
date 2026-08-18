@@ -18,6 +18,32 @@ const EXPLICIT_SEQUENCE_PAIR = /(?:\bfirst(?:ly)?\b[\s\S]{0,320}\b(?:then|next|s
 const PROCESS_FRAMING = /\b(?:the\s+process\s+is|there\s+are\s+(?:two|three|four|five|2|3|4|5)\s+steps|the\s+way\s+(?:i|we)\s+(?:usually\s+)?do\s+it|workflow|followed\s+by)\b/i;
 const PROCESS_TRANSITION = /\b(?:next|after\s+that|once\s+(?:that(?:'s|\s+is)|this\s+is)\s+(?:done|finished|complete)|only\s+after\s+that|followed\s+by|finally)\b/gi;
 const TOO_MANY_STEPS = /\b(?:six|seven|eight|nine|ten|[6-9]|10)\s+steps\b/i;
+const OPEN_LIST_CUE = /\b(?:there\s+are|including|such\s+as)\s+/i;
+const HIERARCHY_WORDS = /\b(?:reports?\s+to|managed\s+by|department|division|organi[sz]ation(?:al)?|hierarchy)\b/i;
+
+function cleanListItem(value: string): string {
+  return value.trim().replace(/^[\s:;-]+|[\s.!?;:]+$/g, "");
+}
+
+/** "There are ideas, connection, contrast" — short comma items, no required count. */
+export function parseOpenEnumeration(text: string): string[] | null {
+  if (HIERARCHY_WORDS.test(text)) return null;
+  const cue = OPEN_LIST_CUE.exec(text);
+  if (!cue || cue.index === undefined) return null;
+  const payload = text.slice(cue.index + cue[0].length);
+  const sentence = payload.split(/[.!?]/, 1)[0] ?? "";
+  const pieces = sentence
+    .split(/\s*,\s*|\s+and\s+/i)
+    .map(cleanListItem)
+    .filter(Boolean);
+  const items: string[] = [];
+  for (const piece of pieces) {
+    if (piece.length > 40 || piece.split(/\s+/).length > 4) break;
+    items.push(piece);
+  }
+  if (items.length < 2 || items.length > 5) return null;
+  return items;
+}
 
 /**
  * Cheap, deterministic, deliberately conservative prefilter. It only admits
@@ -57,6 +83,10 @@ export function evaluateVisualCandidate(text: string): VisualCandidateDecision {
 
   if (EXPLICIT_LIST_CUE.test(spoken) || ORDERED_LIST_CUE.test(spoken) || PRESENTATION_CUE.test(spoken)) {
     return { candidate: true, family: "enumeration", reason: "explicit flat-list presentation cue" };
+  }
+
+  if (parseOpenEnumeration(spoken)) {
+    return { candidate: true, family: "enumeration", reason: "there-are/including list of short items" };
   }
 
   const meaningfulRejection = comparison.rejection && comparison.rejection !== "subjects" ? comparison.reason : causal.reason;

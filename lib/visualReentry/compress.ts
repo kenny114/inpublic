@@ -39,7 +39,7 @@ function tokenize(text: string): string[] {
     .trim()
     .replace(/[^a-zA-Z0-9\s-]/g, " ")
     .split(/\s+/)
-    .filter(Boolean);
+    .filter((word) => word.length > 1 || /^\d$/.test(word));
 }
 
 function isNoise(word: string): boolean {
@@ -55,7 +55,7 @@ function contentCount(words: string[]): number {
  * Short grounded phrase, or null if the source cannot be said in five
  * content words without inventing any.
  */
-export function compressLabel(phrase: string): string | null {
+export function compressLabel(phrase: string, maxContentWords = MAX_CONTENT_WORDS): string | null {
   const raw = phrase.trim().replace(/^[\s,;:.-]+|[\s,;:.!?-]+$/g, "");
   if (!raw) return null;
 
@@ -63,14 +63,14 @@ export function compressLabel(phrase: string): string | null {
   if (words.length === 0) return null;
   if (contentCount(words) === 0) return null;
 
-  if (words.length <= MAX_CONTENT_WORDS) {
+  if (words.length <= maxContentWords) {
     const withoutArticles = words.filter((word) => !ARTICLES.has(word.toLowerCase()));
     const kept = withoutArticles.length > 0 && withoutArticles.length < words.length ? withoutArticles : words;
     return displayLabel(kept.join(" "));
   }
 
   const stripped = words.filter((word) => !isNoise(word));
-  if (stripped.length === 0 || stripped.length > MAX_CONTENT_WORDS) return null;
+  if (stripped.length === 0 || stripped.length > maxContentWords) return null;
   return displayLabel(stripped.join(" "));
 }
 
@@ -115,6 +115,20 @@ export function compressSpec(spec: VisualReentrySpec): CompressResult {
     return { ok: true, spec: { ...spec, nodes: nodes as string[], title: title.value } };
   }
 
+  if (spec.type === "note") {
+    const text = compressRequired(spec.text);
+    if (!text) return { ok: false, reason: REASON_LABELS_TOO_LONG };
+    return { ok: true, spec: { ...spec, text } };
+  }
+
+  if (spec.type === "relation") {
+    const from = compressRequired(spec.from);
+    const to = compressRequired(spec.to);
+    const label = compressOptional(spec.label);
+    if (!from || !to || !label.ok) return { ok: false, reason: REASON_LABELS_TOO_LONG };
+    return { ok: true, spec: { ...spec, from, to, label: label.value } };
+  }
+
   if (spec.type === "comparison") {
     const leftLabel = compressRequired(spec.leftLabel);
     const rightLabel = compressRequired(spec.rightLabel);
@@ -139,5 +153,9 @@ export function compressSpec(spec: VisualReentrySpec): CompressResult {
 export function compressedOrNone(intent: VisualReentryIntent): VisualReentryIntent {
   if (intent.type === "none") return intent;
   const result = compressSpec(intent);
-  return result.ok ? result.spec : fallbackNone(result.reason);
+  if (!result.ok) return fallbackNone(result.reason);
+  if (result.spec.type === "note" || result.spec.type === "relation") {
+    return fallbackNone(REASON_LABELS_TOO_LONG);
+  }
+  return result.spec;
 }
