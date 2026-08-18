@@ -23,7 +23,8 @@ import { claimThought } from "../lib/visualReentry/ownership.ts";
 import { evaluateVisualCandidate } from "../lib/visualReentry/candidate.ts";
 import { advanceVisualEvidence, completePendingCauseEvidence, SEQUENCE_EVIDENCE_MAX_AGE_MS, VISUAL_EVIDENCE_MAX_AGE_MS } from "../lib/visualReentry/evidence.ts";
 import { tryDeterministicVisualIntent } from "../lib/visualReentry/fastPath.ts";
-import { newPagePen, place } from "../lib/ops.ts";
+import { commitPreparedVisualReentry } from "../lib/visualReentry/orchestrate.ts";
+import { newPagePen, place, willOverflow } from "../lib/ops.ts";
 
 let pass = 0;
 const failures = [];
@@ -992,6 +993,138 @@ section("pen placement discard-safety (a discarded build must never move the liv
     "committing applies the exact same reservation to the real pen",
     realPen.x === snapshot.x && realPen.y === snapshot.y && realPen.lineH === snapshot.lineH,
   );
+}
+
+// --------------------------------------------------------------- overflow-aware atomic commit
+
+section("overflow-aware atomic commit");
+
+const compactCauseSpec = {
+  type: "cause_effect",
+  nodes: ["Lower prices", "More signups"],
+  edges: [{ from: 0, to: 1, evidence: "Lower prices caused more signups" }],
+  evidence: ["Lower prices caused more signups"],
+};
+
+const preparedVisual = (spec, page = 0) => ({
+  thought: { ...thought("Lower prices caused more signups"), page },
+  spec,
+  decidedAt: 1_000,
+  decisionLatencyMs: 1,
+  decisionSource: "deterministic_fast_path",
+  candidateCompletedAt: 900,
+});
+
+const fakeVisualBuild = async (spec, pen) => {
+  const size = measureVisual(spec);
+  const spot = place(pen, size.w, size.h, true);
+  return {
+    elements: [
+      { id: `visual-a-${spot.x}-${spot.y}` },
+      { id: `visual-b-${spot.x}-${spot.y}` },
+    ],
+    ...size,
+    x: spot.x,
+    y: spot.y,
+  };
+};
+
+function visualCommitHarness(startY, spec = compactCauseSpec) {
+  let currentPage = 0;
+  let allowedPage = 0;
+  let currentPen = newPagePen(0);
+  currentPen.y = startY;
+  let turns = 0;
+  let buildCalls = 0;
+  let revealCalls = 0;
+  const commitCalls = [];
+  const events = [];
+  const order = [];
+  const context = {
+    pen: currentPen,
+    pageIndex: currentPage,
+    isSafe: () => true,
+    isRelevant: (targetPage = allowedPage) => targetPage === allowedPage && currentPage === allowedPage,
+    isPlacementCurrent: (target) => target.pageIndex === currentPage && target.pen === currentPen,
+    turnPageForOverflow: (target) => {
+      if (target.pageIndex !== currentPage || target.pen !== currentPen) return null;
+      turns += 1;
+      order.push("turn");
+      currentPage += 1;
+      allowedPage = currentPage;
+      currentPen = newPagePen(currentPage);
+      return { pageIndex: currentPage, pen: currentPen };
+    },
+    build: async (visualSpec, pen) => {
+      buildCalls += 1;
+      order.push(`build:${currentPage}`);
+      return fakeVisualBuild(visualSpec, pen);
+    },
+    commitVisual: (elements) => {
+      order.push(`commit:${currentPage}`);
+      commitCalls.push(elements);
+    },
+    revealIfNeeded: () => {
+      order.push(`reveal:${currentPage}`);
+      revealCalls += 1;
+    },
+    log: (event) => events.push(event),
+    now: () => 2_000,
+  };
+  return {
+    prepared: preparedVisual(spec),
+    context,
+    state: () => ({ currentPage, currentPen, turns, buildCalls, revealCalls, commitCalls, events, order }),
+    unrelatedTurn: () => {
+      currentPage += 1;
+      currentPen = newPagePen(currentPage);
+    },
+  };
+}
+
+{
+  const harness = visualCommitHarness(606); // 606 + 130px = writable bottom 736 exactly.
+  const result = await commitPreparedVisualReentry(harness.prepared, harness.context);
+  const state = harness.state();
+  check("a Visual Re-entry visual that exactly fits near the writable bottom does not turn the page", result === "committed" && state.turns === 0);
+  check("the near-bottom fit remains inside the writable page area", !willOverflow({ ...newPagePen(0), y: 606 }, 420, 130));
+}
+
+{
+  const harness = visualCommitHarness(607);
+  const result = await commitPreparedVisualReentry(harness.prepared, harness.context);
+  const state = harness.state();
+  check("a visual that would cross the writable bottom hard-turns before build", result === "committed" && state.turns === 1 && state.order[0] === "turn" && state.order[1] === "build:1", JSON.stringify(state.order));
+  check("the complete multi-element visual is appended once and atomically on the new page", state.commitCalls.length === 1 && state.commitCalls[0].length === 2 && state.order.includes("commit:1"));
+  check("the intentional overflow turn rebinds relevance instead of expiring the result", !state.events.some((event) => event.event === "durable-result-expired"));
+  check("camera reveal happens only after page containment, never instead of it", state.revealCalls === 1 && state.order.indexOf("turn") < state.order.indexOf("reveal:1"));
+}
+
+{
+  const harness = visualCommitHarness(100);
+  harness.context.build = async (spec, pen) => {
+    const built = await fakeVisualBuild(spec, pen);
+    harness.unrelatedTurn();
+    return built;
+  };
+  const result = await commitPreparedVisualReentry(harness.prepared, harness.context);
+  const state = harness.state();
+  check("an unrelated page turn during rendering still invalidates stale Visual Re-entry work", result === "dropped" && state.commitCalls.length === 0 && state.events.some((event) => event.event === "durable-result-expired"));
+}
+
+{
+  const oversized = {
+    type: "enumeration",
+    items: Array.from({ length: 5 }, (_, index) => `${index + 1} ${Array.from({ length: 40 }, () => "oversized line").join("\n")}`),
+    evidence: ["oversized line"],
+  };
+  const harness = visualCommitHarness(700, oversized);
+  const result = await commitPreparedVisualReentry(harness.prepared, harness.context);
+  const state = harness.state();
+  const telemetry = state.events.find((event) => event.event === "visual-oversized");
+  check("a visual oversized even on a fresh page turns only once and drops before rendering", result === "dropped" && state.turns === 1 && state.buildCalls === 0 && state.commitCalls.length === 0);
+  check("oversized telemetry includes measured dimensions and the fresh page index", telemetry?.measuredWidth === 420 && telemetry?.measuredHeight > 692 && telemetry?.pageIndex === 1, JSON.stringify(telemetry));
+  check("camera framing is never invoked for an oversized off-page visual", state.revealCalls === 0);
 }
 
 // --------------------------------------------------------------- summary

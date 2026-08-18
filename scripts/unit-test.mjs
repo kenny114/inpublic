@@ -14,7 +14,7 @@ import {
   soundsLike,
 } from "../lib/vocab.ts";
 import { ExactMicAudioRetention } from "../lib/corpusAudio.ts";
-import { decidePageTurn, isThoughtComplete, MAX_DEFER_MS } from "../lib/pagination.ts";
+import { decidePageTurn, isThoughtComplete, MAX_DEFER_MS, suppressPageTurnDuringInitialComposition } from "../lib/pagination.ts";
 import { detectBackReference, resolveReference } from "../lib/reference.ts";
 import { pathBlocked, routeArrow } from "../lib/routing.ts";
 import { matchMark, planActions } from "../lib/organizer.ts";
@@ -494,6 +494,15 @@ section("one evolving composition");
 // ------------------------------------------------------------------- pages
 
 section("page turns");
+
+check(
+  "initial composition never suppresses a hard overflow turn",
+  !suppressPageTurnDuringInitialComposition("overflow", true),
+);
+check(
+  "initial composition still suppresses non-overflow composition turns",
+  ["capacity", "section", "long-utterance"].every((trigger) => suppressPageTurnDuringInitialComposition(trigger, true)),
+);
 
 check("thought complete: full stop", isThoughtComplete("Airline is infrastructure."));
 check("thought complete: trailing preposition is not", !isThoughtComplete("businesses want to use their agents for the"));

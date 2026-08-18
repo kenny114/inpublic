@@ -89,6 +89,7 @@ import { groundEquationInSource } from "@/lib/math/ground";
 import {
   decidePageTurn,
   isThoughtComplete,
+  suppressPageTurnDuringInitialComposition,
   type PageTurnReason,
 } from "@/lib/pagination";
 import { describePlan, planActions, type PageMark, type PlanStep } from "@/lib/organizer";
@@ -2109,10 +2110,7 @@ export default function Board({
     (
       trigger: "overflow" | "capacity" | "section" | "clear" | "long-utterance",
     ): boolean => {
-      if (
-        withinInitialCompositionWindow(now()) &&
-        (trigger === "capacity" || trigger === "overflow" || trigger === "section" || trigger === "long-utterance")
-      ) {
+      if (suppressPageTurnDuringInitialComposition(trigger, withinInitialCompositionWindow(now()))) {
         log({
           type: "attention",
           action: "suppression",
@@ -5498,14 +5496,17 @@ export default function Board({
         // for either continued speech or the ordinary safe reveal window.
         if (commitMode === "blocked") return false;
         const quietCommit = commitMode === "quiet";
+        let placementPage = entry.prepared.thought.page;
         const placementPen = penRef.current;
         const placementSeq = liveSeqRef.current;
-        const isRelevant = () =>
+        const isRelevant = (targetPage = placementPage) =>
           entry.generation === visualReentryGenerationRef.current &&
-          entry.prepared.thought.page === pageRef.current &&
+          targetPage === placementPage &&
+          pageRef.current === placementPage &&
           now() - entry.prepared.decidedAt <= VISUAL_REENTRY_RESULT_TTL_MS;
         const result = await commitPreparedVisualReentry(entry.prepared, {
           pen: placementPen,
+          pageIndex: placementPage,
           isSafe: () => chooseVisualCommitMode({
             hasMutableLiveLine: liveRef.current !== null,
             cameraHold: liveCameraHoldRef.current,
@@ -5513,7 +5514,16 @@ export default function Board({
             currentLiveSeq: liveSeqRef.current,
           }) !== "blocked",
           isRelevant,
-          isPlacementCurrent: () => penRef.current === placementPen && liveSeqRef.current === placementSeq,
+          isPlacementCurrent: (target) =>
+            penRef.current === target.pen &&
+            pageRef.current === target.pageIndex &&
+            liveSeqRef.current === placementSeq,
+          turnPageForOverflow: (target) => {
+            if (penRef.current !== target.pen || pageRef.current !== target.pageIndex) return null;
+            turnPage("overflow", "visual re-entry does not fit on the current sheet");
+            placementPage = pageRef.current;
+            return { pen: penRef.current, pageIndex: placementPage };
+          },
           commitVisual: (elements) => {
             elementsRef.current = [...elementsRef.current, ...(elements as SceneElement[])];
             commit();
@@ -5552,7 +5562,7 @@ export default function Board({
         queueMicrotask(() => void flushVisualReentryRef.current?.());
       }
     }
-  }, [commit, log, now, revealVisualReentry]);
+  }, [commit, log, now, revealVisualReentry, turnPage]);
   flushVisualReentryRef.current = flushVisualReentry;
 
   const launchVisualReentryCandidate = useCallback((candidateThought: SettledThought, reason: string, sequenceCompleted = false, causeCompleted = false, comparisonCompleted = false) => {

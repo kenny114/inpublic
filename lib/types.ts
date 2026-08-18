@@ -388,6 +388,7 @@ export type LogEvent =
         | "grounding-failed"
         | "render-started"
         | "render-completed"
+        | "visual-oversized"
         | "render-suppressed-active-speech"
         | "stale-result-dropped"
         | "durable-result-ready"
@@ -422,6 +423,10 @@ export type LogEvent =
       candidateCompleteToIntentMs?: number;
       candidateCompleteToDurableReadyMs?: number;
       candidateCompleteToCommitMs?: number;
+      /** Measured footprint supplied when a visual cannot fit even on a fresh page. */
+      measuredWidth?: number;
+      measuredHeight?: number;
+      pageIndex?: number;
     }
   | {
       t: number;
