@@ -195,8 +195,10 @@ invalidates that result.
 
 Explicit, not implicit:
 
-- **One in-flight decision request, maximum.** A candidate arriving during
-  an active request is suppressed locally. The active request is not aborted.
+- **One in-flight decision request, maximum.** Candidates arriving during an
+  active request enter a bounded FIFO of three jobs. The active request is not
+  aborted, and queued candidates are claimed only when the decision worker
+  dequeues them after rechecking generation, page, and TTL.
 - **At most one response per settled thought.** Structural, not a runtime
   check — see Visual ownership above.
 - **No duplicate processing of the same thought id.**
@@ -328,7 +330,9 @@ truncation of the thought's own text — never a full model prompt/payload.
 | `thought-received` | A settled thought reached the pipeline. | `sourceExcerpt` |
 | `candidate-accepted` / `candidate-rejected` | The cheap local launch gate admitted or stopped the thought. | `reason` |
 | `evidence-held` / `evidence-combined` | An incomplete supported pattern entered the bounded window, or two settled thoughts completed one candidate. | `reason` |
-| `request-suppressed-in-flight` | A candidate was not launched because one request already owns the decision slot. | `reason` |
+| `candidate-queued` / `candidate-dequeued` | A candidate entered or left the bounded pre-decision FIFO. | `queueDepth` |
+| `candidate-queue-full` | A fourth waiting candidate could not enter the bounded FIFO. | `queueDepth`, `reason` |
+| `candidate-expired` | A queued candidate became invalid because its generation/page/TTL changed, or a reset cleared the queue. | `reason` |
 | `decision-started` | The one decision request was sent. | |
 | `decision-none` | The model genuinely decided no visual fits. | `reason` (model's own), `decisionLatencyMs` |
 | `decision-enumeration` / `decision-quantitative` | The model chose that shape. | `decisionLatencyMs` |

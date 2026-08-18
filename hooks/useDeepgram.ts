@@ -5,7 +5,7 @@ import { noteFinalTranscript, providerRequestHeaders } from "@/lib/usage-client"
 import { latency, latencyNow, type DiagnosticTraceEvent } from "@/lib/latency";
 import { sttDebug } from "@/lib/sttDebug";
 import { exactMicAudio } from "@/lib/corpusAudio";
-import type { ReplayAudioInfo, ReplayChunkDiagnostic, ReplayConnectionDiagnostic, ReplayDisconnectPlan, ReplayProviderDiagnostic, ReplaySpeechDiagnostics } from "@/lib/replayLab";
+import type { ReplayAudioInfo, ReplayChunkDiagnostic, ReplayConnectionDiagnostic, ReplayDisconnectPlan, ReplayPreparedSource, ReplayProviderDiagnostic, ReplaySpeechDiagnostics, ReplayStartOptions } from "@/lib/replayLab";
 import { mayUseReplayScheduler, ReplayAbsoluteScheduler, type ReplayRebase } from "@/lib/replayPacing";
 
 const isDev = process.env.NODE_ENV === "development";
@@ -205,6 +205,7 @@ export function useDeepgram({
   const replaySendAttemptsRef = useRef(0);
   const replayPausedSendsRef = useRef(0);
   const replayRebasesRef = useRef<ReplayRebase[]>([]);
+  const replayStartOptionsRef = useRef<ReplayStartOptions>({});
 
   const replayElapsed = useCallback(() => replayStartedAtRef.current ? performance.now() - replayStartedAtRef.current : 0, []);
   const noteReplayConnection = useCallback((event: ReplayConnectionDiagnostic["event"], detail?: string, audioPositionMs: number | null = null, chunkSequence: number | null = null) => {
@@ -762,22 +763,23 @@ export function useDeepgram({
         replaySenderActiveRef.current = true;
         void (async () => {
           const framesPerChunk = Math.round(capture.sampleRate * 0.08);
-          const startedAt = performance.now();
-          replayAudioStartedAtRef.current = startedAt;
-          const scheduler = new ReplayAbsoluteScheduler(startedAt);
           let chunkCount = 0;
-          let reconnectRebasePending = false;
-          const recordRebase = (rebase: ReplayRebase | null, chunkSequence: number) => {
-            if (!rebase) return;
-            replayRebasesRef.current.push(rebase);
-            noteReplayConnection(
-              "scheduler_rebase",
-              `${rebase.reason}; +${Math.round(rebase.addedIntentionalDelayMs)}ms; total ${Math.round(rebase.totalIntentionalDelayMs)}ms`,
-              rebase.sourceTimeMs,
-              chunkSequence,
-            );
-          };
           try {
+            await replayStartOptionsRef.current.beforeAudioStart?.();
+            const startedAt = performance.now();
+            replayAudioStartedAtRef.current = startedAt;
+            const scheduler = new ReplayAbsoluteScheduler(startedAt);
+            let reconnectRebasePending = false;
+            const recordRebase = (rebase: ReplayRebase | null, chunkSequence: number) => {
+              if (!rebase) return;
+              replayRebasesRef.current.push(rebase);
+              noteReplayConnection(
+                "scheduler_rebase",
+                `${rebase.reason}; +${Math.round(rebase.addedIntentionalDelayMs)}ms; total ${Math.round(rebase.totalIntentionalDelayMs)}ms`,
+                rebase.sourceTimeMs,
+                chunkSequence,
+              );
+            };
             for (let offset = 0; offset < capture.samples.length; offset += framesPerChunk) {
               const end = Math.min(offset + framesPerChunk, capture.samples.length);
               const audioStartMs = offset / capture.sampleRate * 1000;
@@ -887,6 +889,7 @@ export function useDeepgram({
                 }
               }
               chunkCount += 1;
+              replayStartOptionsRef.current.onProgress?.(audioEndMs, chunkCount);
             }
             const pacingDriftMs = Math.round(replayChunksRef.current.at(-1)?.sourceClockDriftMs ?? 0);
             // Give endpointing and the final transcript time to arrive before
@@ -1216,7 +1219,11 @@ export function useDeepgram({
   }, [enabled, openSocket, prepareCapture]);
 
   /** Dev-only source swap: decode/resample a file, then use the same socket. */
-  const startReplay = useCallback(async (file: File, disconnectPlan: ReplayDisconnectPlan = { atAudioMs: [] }): Promise<ReplayAudioInfo> => {
+  const startReplay = useCallback(async (
+    input: File | ReplayPreparedSource,
+    disconnectPlan: ReplayDisconnectPlan = { atAudioMs: [] },
+    options: ReplayStartOptions = {},
+  ): Promise<ReplayAudioInfo> => {
     if (!isDev || !enabled) throw new Error("Replay mode is unavailable");
     if (startedRef.current) throw new Error("A speech source is already active");
     setStatus("connecting");
@@ -1233,25 +1240,37 @@ export function useDeepgram({
     replaySendAttemptsRef.current = 0;
     replayPausedSendsRef.current = 0;
     replayRebasesRef.current = [];
+    replayStartOptionsRef.current = options;
     const context = new AudioContext({ sampleRate: 48000 });
     try {
-      const decoded = await context.decodeAudioData(await file.arrayBuffer());
-      const targetRate = 48000;
-      const frameCount = Math.ceil(decoded.duration * targetRate);
-      const offline = new OfflineAudioContext(1, frameCount, targetRate);
-      const source = offline.createBufferSource();
-      source.buffer = decoded;
-      source.connect(offline.destination);
-      source.start();
-      const rendered = await offline.startRendering();
-      const samples = new Float32Array(rendered.getChannelData(0));
+      let prepared: ReplayPreparedSource;
+      if (input instanceof File) {
+        const decoded = await context.decodeAudioData(await input.arrayBuffer());
+        const targetRate = 48000;
+        const frameCount = Math.ceil(decoded.duration * targetRate);
+        const offline = new OfflineAudioContext(1, frameCount, targetRate);
+        const source = offline.createBufferSource();
+        source.buffer = decoded;
+        source.connect(offline.destination);
+        source.start();
+        const rendered = await offline.startRendering();
+        prepared = {
+          name: input.name,
+          sourceSampleRate: decoded.sampleRate,
+          sampleRate: targetRate,
+          durationMs: decoded.duration * 1000,
+          samples: new Float32Array(rendered.getChannelData(0)),
+        };
+      } else {
+        prepared = input;
+      }
       captureRef.current = {
         kind: "replay-pcm16",
-        samples,
-        sourceSampleRate: decoded.sampleRate,
-        sampleRate: targetRate,
-        fileName: file.name,
-        durationMs: decoded.duration * 1000,
+        samples: prepared.samples,
+        sourceSampleRate: prepared.sourceSampleRate,
+        sampleRate: prepared.sampleRate,
+        fileName: prepared.name,
+        durationMs: prepared.durationMs,
       };
       latency.mark("worklet_ready", latencyNow());
       await loadSdk();
@@ -1265,6 +1284,7 @@ export function useDeepgram({
     } catch (error) {
       startedRef.current = false;
       captureRef.current = null;
+      replayStartOptionsRef.current = {};
       setStatus("error");
       throw error;
     } finally {

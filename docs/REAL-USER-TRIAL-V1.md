@@ -1,7 +1,7 @@
 # InPublic Real User Trial V1
 
-Status: **NOT STARTED — FROZEN BUILD DEPLOYED; READINESS BLOCKED BY GUEST 401 STORM**<br>
-Study build: **`ba4c53218de5426cf4ad1e1da9e8b474b46c9ad0`**<br>
+Status: **READY FOR TESTER 1 — FROZEN BUILD**<br>
+Study build: **`ac37f04826ea43abecde7d8ae04c845b7d432cae`**<br>
 Study owner: **operator of the supervised trial browser**<br>
 Target batch: **3–5 people**<br>
 Target speaking time: **3–5 minutes per person; shorter is allowed when natural**
@@ -22,23 +22,22 @@ browser session.
 | Tester sees a small, non-technical entry screen | PASS | “Talk. Watch your words become visual.”, “No signup required.”, and “Start Speaking”. |
 | Microphone denial is recoverable | PASS | A plain-language permission error and retry path appeared. |
 | Granted microphone permission enters the board | PASS | Board opened with speaking controls and a five-minute anonymous allowance. |
-| Developer flags are required | PASS | The ordinary entry route has no required query parameters. |
-| Replay/debug panels appear in production | PASS | No replay lab, latency overlay, or developer export was visible. Production ignored `replay=1`, `v2=1`, and `vr=1`. |
-| Current validated stack is on the public deployment | PASS | Vercel deployment `dpl_6WpJycHaZHx4ocHJJaV5yNpZJQwz` is Ready and reports Git SHA `ba4c53218de5426cf4ad1e1da9e8b474b46c9ad0`; its committed defaults are `livePresentationV2: true` and `visualReentryV1: true`. |
-| Short zero-query speech validation exercises the validated stack | PASS | Generated validation audio produced 27 thought-boundary events, 5 settled thoughts, 41 Visual Re-entry events, 3 sequence commits, 1 page turn, and 1 Page Arrival Coalescing event. No generic overview proposal appeared. This is release evidence, not tester evidence. |
-| Guest network path is free of repeated 401s | **FAIL** | Anonymous autosave repeatedly POSTed `/api/projects` and received 401; 19 such responses were observed, plus one `/api/telemetry/latency` 401 when listening stopped. No `/api/scribe`, `/api/beat`, or `/api/artist` call occurred. |
+| Developer flags are not required | PASS | The ordinary entry route has no required query parameters. |
+| Replay/debug panels are absent in production | PASS | No replay lab, latency overlay, or developer export was visible. Production ignored `replay=1`, `v2=1`, and `vr=1`. |
+| Current validated stack is on the public deployment | PASS | Vercel deployment `dpl_F81qj3ijLqChZSDz3RjcYNdGWwZr` is Ready/Promoted and reports Git SHA `ac37f04826ea43abecde7d8ae04c845b7d432cae`; its committed defaults are `livePresentationV2: true` and `visualReentryV1: true`. |
+| Short zero-query speech validation exercises the validated stack | PASS | Generated validation audio produced 43 thought-boundary events, 7 settled thoughts, 92 V2 events, 7 Visual Re-entry thought receipts, 5 durable visual commits, 2 page turns, and 2 Page Arrival Coalescing events. No generic overview event appeared. This is release evidence, not tester evidence. |
+| Guest network path is free of repeated 401s | PASS | All 52 observed production requests were 2xx. Anonymous `/api/projects` calls: 0; `/api/telemetry/latency` calls: 0; `/api/scribe`, `/api/beat`, and `/api/artist` calls: 0; all other 4xx/5xx: 0. The local latency summary and full session evidence remained in IndexedDB. |
 
 ### Readiness decision
 
-**DO NOT RECRUIT TESTERS YET.** The immutable validated build is deployed and
-the runtime stack proof passed, but the clean guest run exposed a repeated 401
-autosave path. This is a release-readiness finding, not a tester-observed P0 and
-not user evidence. Per the frozen-deployment brief, do not silently patch it in
-this release task or mark the batch ready while the required no-401 check is
-failing.
+**READY FOR TESTER 1 — FROZEN BUILD.** The new immutable candidate is deployed,
+the validated runtime stack remains active, and the clean guest recheck produced
+no invalid authenticated-only request and no 4xx/5xx response. The release
+validation is operational evidence only and has not been entered as tester
+evidence. No tester was recruited automatically.
 
-Frozen study deployment URL/ID: **`https://inpublic-3sls1lf1p-kenny114s-projects.vercel.app` / `dpl_6WpJycHaZHx4ocHJJaV5yNpZJQwz`**<br>
-Frozen study commit: **`ba4c53218de5426cf4ad1e1da9e8b474b46c9ad0`**<br>
+Frozen study deployment URL/ID: **`https://inpublic-mhmswnyjn-kenny114s-projects.vercel.app` / `dpl_F81qj3ijLqChZSDz3RjcYNdGWwZr`**<br>
+Frozen study commit: **`ac37f04826ea43abecde7d8ae04c845b7d432cae`**<br>
 Readiness recheck date/operator: **2026-08-17 / Codex release verification**
 
 ## Frozen product scope

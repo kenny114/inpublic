@@ -11,6 +11,23 @@ export interface ReplayDisconnectPlan {
   atAudioMs: number[];
 }
 
+/** Fully decoded, mono source used by development replay and Demo Studio. */
+export interface ReplayPreparedSource {
+  name: string;
+  sourceSampleRate: number;
+  sampleRate: number;
+  durationMs: number;
+  samples: Float32Array;
+}
+
+/** Optional synchronization/heartbeat hooks around the existing replay sender. */
+export interface ReplayStartOptions {
+  /** Runs after the real Deepgram socket opens and before source sample zero. */
+  beforeAudioStart?: () => void | Promise<void>;
+  /** Runs after each successful 80 ms PCM send. */
+  onProgress?: (audioEndMs: number, chunkSequence: number) => void;
+}
+
 export interface ReplayChunkDiagnostic {
   chunkSequence: number;
   sampleStart: number;
