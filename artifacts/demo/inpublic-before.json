@@ -1,0 +1,20 @@
+{
+  "file": "artifacts/demo/inpublic-before.mp4",
+  "sourceAudio": "A WhatsApp voice note from the local corpus (~88 s natural talk about growing a following and a friendly challenge), the same file used for inpublic-after.mp4",
+  "audioRange": "0:00-1:28 (full clip, real time)",
+  "route": "/try?replay=1 (zero v2/vr query params)",
+  "featureState": {
+    "livePresentationV2": false,
+    "visualReentryV1": false,
+    "note": "Temporarily reverted in lib/features.ts for this capture only, then restored to true/true immediately after. Never committed in the false state — verified via git diff before/after."
+  },
+  "captureMethod": "Real dev server + real Deepgram replay session. Video is not a screen recording — this environment's Browser-pane screenshot tool never composites a capturable frame (confirmed repeatedly across this whole validation series) and the Claude-in-Chrome extension was not connected. Instead: the page's own Excalidraw canvases (static + interactive layers) were captured in-browser via canvas.drawImage into an offscreen canvas once per second for the duration of the real replay session, exported as JPEG, retrieved, and assembled into an MP4. First pass used OpenCV's mp4v codec, which OpenCV itself can read back but most real players (browsers, phones, QuickTime, Windows' default player) cannot decode — that produced an unplayable file. Re-encoded from the same source JPEG frames with a real ffmpeg binary (libx264, yuv420p, +faststart) for universal playback. Every frame is a real render of the actual running app, not a mockup.",
+  "durationSeconds": 134,
+  "fps": 1,
+  "resolution": "552x522",
+  "codec": "h264 (avc1, High profile), yuv420p, faststart",
+  "frameCount": 134,
+  "recordedAt": "2026-08-17",
+  "notes": "Legacy pre-activation pipeline (Reflex/Scribe/Beat/Artist). Content plateaus at frame 21 (~21s) at isolated, disconnected keyword fragments (e.g. \"Interesting Day\", \"Aspects\", \"Inpublic\", \"Understood\") rather than settled prose — this is the real, observed behavior of the old pipeline for this audio, not a staged worst case.",
+  "knownLimitation": "CONFIRMED CAUSE (not the replay-lab end-of-file stall previously suspected): this capture tab ran with document.hidden=true / document.visibilityState=\"hidden\" the entire time (the Browser pane never actually displays/focuses a tab in this environment). Chrome fully suspends requestAnimationFrame for hidden tabs, and Excalidraw's canvas render loop runs on rAF, so the canvas stops repainting once the tab is treated as backgrounded — independently of app logic, which keeps running (confirmed: in a later capture of this same audio, page-turn events were still logged at 60.6s and 82.3s, well after the canvas had already frozen at 48s). This means: the video's early portion (up to the freeze point) is a real, accurate render, but nothing after that point reflects real app behavior, and NEITHER before nor after video in this set shows real camera movement or page turns — both froze before any occurred. Do not use this file as evidence of camera/page-turn behavior; it only demonstrates the early text-settling difference."
+}

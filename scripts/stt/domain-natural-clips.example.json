@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "audioMetadata": "exact-mic-audio.json",
+  "clips": [
+    {
+      "id": "mlbb-positive-1",
+      "file": "exact-mic-audio.wav",
+      "startSample": 0,
+      "endSample": 48000,
+      "target": "MLBB",
+      "kind": "positive",
+      "expectedTerm": "MLBB",
+      "expectedTranscript": "speaker-confirmed literal transcript for this exact region"
+    },
+    {
+      "id": "mlb-negative-1",
+      "file": "exact-mic-audio.wav",
+      "startSample": 48000,
+      "endSample": 96000,
+      "target": "MLBB",
+      "kind": "negative",
+      "expectedTerm": "MLB",
+      "expectedTranscript": "speaker-confirmed literal transcript for this exact region"
+    },
+    {
+      "id": "roamer-positive-1",
+      "file": "exact-mic-audio.wav",
+      "startSample": 96000,
+      "endSample": 144000,
+      "target": "roamer",
+      "kind": "positive",
+      "expectedTerm": "roamer",
+      "expectedTranscript": "speaker-confirmed literal transcript for this exact region"
+    },
+    {
+      "id": "room-negative-1",
+      "file": "exact-mic-audio.wav",
+      "startSample": 144000,
+      "endSample": 192000,
+      "target": "roamer",
+      "kind": "negative",
+      "expectedTerm": "room",
+      "expectedTranscript": "speaker-confirmed literal transcript for this exact region"
+    }
+  ]
+}

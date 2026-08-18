@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-16T08:48:39.0545307-04:00",
+  "naturalFrequencyEligibleCount": 1,
+  "entries": [
+    {
+      "sessionId": "015bf696-0b34-4b48-a5fd-3ae73af0c481",
+      "date": "2026-08-16T00:17:03.635Z",
+      "durationMs": 87960,
+      "kind": "natural",
+      "topicDescription": "Unscripted reflection on growing an InPublic audience and the speaker's day",
+      "audioArtifact": null,
+      "audioReference": "WhatsApp Ptt 2026-08-14 at 4.50.36 PM.ogg",
+      "transcriptArtifact": "artifacts/visual-reentry-comparison-v1/natural-replay-export.json",
+      "thoughtArtifact": null,
+      "sceneArtifact": null,
+      "screenshots": [],
+      "telemetryArtifact": "artifacts/visual-reentry-comparison-v1/natural-replay-export.json",
+      "notes": [
+        "Qualifies for natural-frequency analysis.",
+        "Legacy replay: exact settled-thought, final-scene, and screenshot artifacts were not retained."
+      ]
+    },
+    {
+      "sessionId": "a940b60f-60f1-4e55-a2d9-6037496a8b53",
+      "date": "2026-08-15T19:15:13.773Z",
+      "durationMs": 18035,
+      "kind": "synthetic",
+      "topicDescription": "Purpose-written sequence capability fixture",
+      "audioArtifact": "artifacts/visual-reentry-sequence-v2/sequence-capability.wav",
+      "audioReference": "sequence-capability.wav",
+      "transcriptArtifact": "artifacts/visual-reentry-sequence-v2/capability-replay.json",
+      "thoughtArtifact": null,
+      "sceneArtifact": null,
+      "screenshots": [
+        "artifacts/visual-reentry-sequence-v2/sequence-capability.png"
+      ],
+      "telemetryArtifact": "artifacts/visual-reentry-sequence-v2/capability-replay.json",
+      "notes": [
+        "Excluded from natural-frequency statistics."
+      ]
+    },
+    {
+      "sessionId": "f41c3db1-b50a-482c-b1ca-cb9006dd4fa9",
+      "date": "2026-08-15T20:29:26.199Z",
+      "durationMs": 27185,
+      "kind": "synthetic",
+      "topicDescription": "Purpose-written cause/effect capability fixture",
+      "audioArtifact": "artifacts/visual-reentry-cause-effect-v1/cause-effect-capability.wav",
+      "audioReference": "cause-effect-capability.wav",
+      "transcriptArtifact": "artifacts/visual-reentry-cause-effect-v1/replay-metrics.json",
+      "thoughtArtifact": null,
+      "sceneArtifact": null,
+      "screenshots": [
+        "output/playwright/cause-effect-capability.png",
+        "output/playwright/cause-effect-capability-fit.png",
+        "output/playwright/cause-effect-capability-wide.png"
+      ],
+      "telemetryArtifact": "artifacts/visual-reentry-cause-effect-v1/replay-metrics.json",
+      "notes": [
+        "Excluded from natural-frequency statistics.",
+        "Legacy screenshots do not visibly establish the final committed visual."
+      ]
+    },
+    {
+      "sessionId": "97609cd9-637d-4d62-b0a7-c8b039d3451a",
+      "date": "2026-08-16T00:14:53.088Z",
+      "durationMs": 18585,
+      "kind": "synthetic",
+      "topicDescription": "Purpose-written comparison capability fixture",
+      "audioArtifact": "artifacts/visual-reentry-comparison-v1/comparison-capability-proof.wav",
+      "audioReference": "comparison-capability-proof.wav",
+      "transcriptArtifact": "artifacts/visual-reentry-comparison-v1/capability-replay-export.json",
+      "thoughtArtifact": null,
+      "sceneArtifact": null,
+      "screenshots": [],
+      "telemetryArtifact": "artifacts/visual-reentry-comparison-v1/capability-replay-export.json",
+      "notes": [
+        "Excluded from natural-frequency statistics."
+      ]
+    }
+  ]
+}

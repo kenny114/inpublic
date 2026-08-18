@@ -1,0 +1,20 @@
+{
+  "file": "artifacts/demo/inpublic-after.mp4",
+  "sourceAudio": "The exact same WhatsApp voice note file used for inpublic-before.mp4 (same ~88 s natural talk)",
+  "audioRange": "0:00-1:28 (full clip, real time)",
+  "route": "/try?replay=1 (zero v2/vr query params — this is now the same as plain /try for routing purposes)",
+  "featureState": {
+    "livePresentationV2": true,
+    "visualReentryV1": true,
+    "note": "The real, current, committed default in lib/features.ts — no override needed or used."
+  },
+  "captureMethod": "Same method as inpublic-before.mp4: real replay session, in-browser canvas capture at 1 frame/second, re-encoded with ffmpeg (libx264, yuv420p, +faststart) after the first OpenCV mp4v pass proved unplayable in real players. See inpublic-before.json for the full method note.",
+  "durationSeconds": 127,
+  "fps": 1,
+  "resolution": "552x522",
+  "codec": "h264 (avc1, High profile), yuv420p, faststart",
+  "frameCount": 127,
+  "recordedAt": "2026-08-17",
+  "notes": "Validated stack (V2 + V3 + Visual Re-entry + Page Arrival Coalescing + Generic Overview Removal). Telemetry from a same-audio, same-flags run: 19-20 settled thoughts, 1 quantitative_change visual committed quietly, 2 page turns both coalesced (at t=60.6s and t=82.3s), 0 overview proposals, 0 legacy /api/scribe|beat|artist calls. This specific capture's visible content grows steadily and coherently frame-over-frame (complete sentences, not fragments) until it plateaus at frame 53 (~53s).",
+  "knownLimitation": "CONFIRMED CAUSE (not the replay-lab end-of-file stall previously suspected): this capture tab ran with document.hidden=true / document.visibilityState=\"hidden\" the entire time (the Browser pane never actually displays/focuses a tab in this environment). Chrome fully suspends requestAnimationFrame for hidden tabs, and Excalidraw's canvas render loop runs on rAF, so the canvas stops repainting once the tab is treated as backgrounded — independently of app logic, which keeps running (directly confirmed in a follow-up capture of this same audio/flags: page-turn events were logged in window.inpublic.log() at t=60.6s and t=82.3s, well after that run's canvas had already frozen at t=48s). This means: this video's early portion (up to its own freeze point) is a real, accurate render, but nothing after that point reflects real app behavior, and this file does NOT show real camera movement or a page turn — rendering froze before either occurred, even though both genuinely happened in the app's own state. Do not use this file as evidence of camera/page-turn behavior; it only demonstrates the settled-text growth and the one committed visual."
+}

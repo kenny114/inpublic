@@ -1,0 +1,338 @@
+{
+  "sessions": [
+    {
+      "sourceFile": ".playwright-cli/inpublic-replay-1786934535869.json",
+      "session": "inpublic-31a909f1-bfd1-4e41-ac3a-02813f82b543.mp4",
+      "durationMs": 166570,
+      "totals": {
+        "proposals": 2,
+        "starts": 2,
+        "completions": 0,
+        "cancellations": 2,
+        "followedByLiveWithin250": 1,
+        "followedByLiveWithin1000": 2,
+        "strongReversals": 0,
+        "partialReversals": 0,
+        "medianCompletedDwellMs": null,
+        "overviewMovementPx": 0,
+        "intendedOverviewMovementPx": 1313.658,
+        "lowDwellReversalWastedPx": 0
+      },
+      "timeToNextLiveUpdate": {
+        "500 ms-1 s": 1,
+        "100-250 ms": 1
+      },
+      "timeToNextLiveProposal": {
+        "500 ms-1 s": 1,
+        "100-250 ms": 1
+      },
+      "effectiveReadingTime": {},
+      "counterfactual": {
+        "currentProductionStarts": 148,
+        "noOverviewStarts": 146,
+        "startsRemoved": 2,
+        "currentProductionCompletions": 0,
+        "noOverviewCompletions": 0,
+        "currentProductionCancellations": 147,
+        "noOverviewCancellations": 145,
+        "directlyRemovedOverviewDistancePx": 0,
+        "currentIntendedMovementPx": 44874.176,
+        "noOverviewIntendedMovementPx": 43560.518,
+        "intendedMovementRemovedPx": 1313.658,
+        "activeLineFitFailures": 0,
+        "pageArrivalPairs": 3
+      },
+      "inventory": [
+        {
+          "id": "camera-proposal-94",
+          "timeMs": 99883,
+          "page": 1,
+          "thought": {
+            "id": "23336877-4461-450e-878b-87f45d80aeb1",
+            "settledAtMs": 98068,
+            "text": "Silly content, and I'm like, okay."
+          },
+          "speech": {
+            "previousLiveUpdateMs": 1814,
+            "nextLiveUpdateMs": 712,
+            "nextLiveProposalMs": 712
+          },
+          "target": {
+            "zoom": 0.8461538461538461,
+            "scrollX": -1256.5297518643465,
+            "scrollY": 38.5272799405185
+          },
+          "from": {
+            "scrollX": -1187.6145896518415,
+            "scrollY": -340.24860220827674,
+            "zoom": 1.0799999999999998
+          },
+          "movementPx": 0,
+          "intendedMovementPx": 456.283,
+          "started": true,
+          "completed": false,
+          "cancelled": true,
+          "terminalMs": 712,
+          "nextCameraStartMs": 712,
+          "nextSettledThoughtMs": 10499,
+          "completionToNextMovementMs": null,
+          "dwellClass": "not completed",
+          "nextCamera": {
+            "id": "camera-proposal-95",
+            "kind": "page_turn",
+            "timeMs": 712
+          },
+          "geometry": {
+            "relationship": "none",
+            "angleDeg": null,
+            "followingMovementPx": 1195.064,
+            "totalMotionPx": 1195.064,
+            "netChangePx": 1195.064,
+            "wastedMotionPx": 0,
+            "returnRatio": 0
+          },
+          "liveWithin250": false,
+          "liveWithin1000": true,
+          "focalBounds": {
+            "x": 1304,
+            "y": 44,
+            "width": 865.877685546875,
+            "height": 666
+          },
+          "textSamples": 7,
+          "contentFits": true,
+          "webcamCollisions": 0,
+          "readabilityViolations": []
+        },
+        {
+          "id": "camera-proposal-150",
+          "timeMs": 152260,
+          "page": 2,
+          "thought": {
+            "id": "f9af2bf7-e95e-42d0-ab18-1ba53f221391",
+            "settledAtMs": 150457,
+            "text": "and anything you sell you have a 6% profit mark up to percent cut on it."
+          },
+          "speech": {
+            "previousLiveUpdateMs": 1802,
+            "nextLiveUpdateMs": 213,
+            "nextLiveProposalMs": 213
+          },
+          "target": {
+            "zoom": 0.8461538461538461,
+            "scrollX": -2521.131711092862,
+            "scrollY": 84.5272799405185
+          },
+          "from": {
+            "scrollX": -2723.6094464836497,
+            "scrollY": -198.67838930297108,
+            "zoom": 1.0799999999999998
+          },
+          "movementPx": 0,
+          "intendedMovementPx": 857.375,
+          "started": true,
+          "completed": false,
+          "cancelled": true,
+          "terminalMs": 213,
+          "nextCameraStartMs": 213,
+          "nextSettledThoughtMs": 15146,
+          "completionToNextMovementMs": null,
+          "dwellClass": "not completed",
+          "nextCamera": {
+            "id": "camera-proposal-151",
+            "kind": "live_follow",
+            "timeMs": 213
+          },
+          "geometry": {
+            "relationship": "none",
+            "angleDeg": null,
+            "followingMovementPx": 531.969,
+            "totalMotionPx": 531.969,
+            "netChangePx": 531.969,
+            "wastedMotionPx": 0,
+            "returnRatio": 0
+          },
+          "liveWithin250": true,
+          "liveWithin1000": true,
+          "focalBounds": {
+            "x": 2564,
+            "y": 44,
+            "width": 875.0816040039062,
+            "height": 574
+          },
+          "textSamples": 5,
+          "contentFits": true,
+          "webcamCollisions": 0,
+          "readabilityViolations": []
+        }
+      ]
+    },
+    {
+      "sourceFile": ".playwright-cli/inpublic-replay-1786934781808.json",
+      "session": "inpublic-4202f918-b850-4d8a-9d81-a55e99ee0bea.mp4",
+      "durationMs": 157952,
+      "totals": {
+        "proposals": 0,
+        "starts": 0,
+        "completions": 0,
+        "cancellations": 0,
+        "followedByLiveWithin250": 0,
+        "followedByLiveWithin1000": 0,
+        "strongReversals": 0,
+        "partialReversals": 0,
+        "medianCompletedDwellMs": null,
+        "overviewMovementPx": 0,
+        "intendedOverviewMovementPx": 0,
+        "lowDwellReversalWastedPx": 0
+      },
+      "timeToNextLiveUpdate": {},
+      "timeToNextLiveProposal": {},
+      "effectiveReadingTime": {},
+      "counterfactual": {
+        "currentProductionStarts": 75,
+        "noOverviewStarts": 75,
+        "startsRemoved": 0,
+        "currentProductionCompletions": 46,
+        "noOverviewCompletions": 46,
+        "currentProductionCancellations": 29,
+        "noOverviewCancellations": 29,
+        "directlyRemovedOverviewDistancePx": 0,
+        "currentIntendedMovementPx": 24775.958,
+        "noOverviewIntendedMovementPx": 24775.958,
+        "intendedMovementRemovedPx": 0,
+        "activeLineFitFailures": 0,
+        "pageArrivalPairs": 3
+      },
+      "inventory": []
+    },
+    {
+      "sourceFile": ".playwright-cli/inpublic-replay-1786935164041.json",
+      "session": "exact-mic-audio (1).wav",
+      "durationMs": 111200,
+      "totals": {
+        "proposals": 1,
+        "starts": 1,
+        "completions": 1,
+        "cancellations": 0,
+        "followedByLiveWithin250": 0,
+        "followedByLiveWithin1000": 0,
+        "strongReversals": 0,
+        "partialReversals": 0,
+        "medianCompletedDwellMs": null,
+        "overviewMovementPx": 736.111,
+        "intendedOverviewMovementPx": 736.111,
+        "lowDwellReversalWastedPx": 0
+      },
+      "timeToNextLiveUpdate": {
+        "none": 1
+      },
+      "timeToNextLiveProposal": {
+        "none": 1
+      },
+      "effectiveReadingTime": {
+        "right-censored": 1
+      },
+      "counterfactual": {
+        "currentProductionStarts": 47,
+        "noOverviewStarts": 46,
+        "startsRemoved": 1,
+        "currentProductionCompletions": 36,
+        "noOverviewCompletions": 35,
+        "currentProductionCancellations": 11,
+        "noOverviewCancellations": 11,
+        "directlyRemovedOverviewDistancePx": 736.111,
+        "currentIntendedMovementPx": 15677.539,
+        "noOverviewIntendedMovementPx": 14941.428,
+        "intendedMovementRemovedPx": 736.111,
+        "activeLineFitFailures": 0,
+        "pageArrivalPairs": 2
+      },
+      "inventory": [
+        {
+          "id": "camera-proposal-108",
+          "timeMs": 115987,
+          "page": 2,
+          "thought": {
+            "id": "d6fdc0c4-5e44-4dcf-a623-c5778409715a",
+            "settledAtMs": 114179,
+            "text": "Some people do it to make a living, like, MLBB is really a nice game."
+          },
+          "speech": {
+            "previousLiveUpdateMs": 1807,
+            "nextLiveUpdateMs": null,
+            "nextLiveProposalMs": null
+          },
+          "target": {
+            "zoom": 0.8461538461538461,
+            "scrollX": -2515.502743807706,
+            "scrollY": 94.0272799405185
+          },
+          "from": {
+            "scrollX": -2615.9848904079863,
+            "scrollY": -146.19443879304112,
+            "zoom": 1.08
+          },
+          "movementPx": 736.111,
+          "intendedMovementPx": 736.111,
+          "started": true,
+          "completed": true,
+          "cancelled": false,
+          "terminalMs": 949,
+          "nextCameraStartMs": null,
+          "nextSettledThoughtMs": null,
+          "completionToNextMovementMs": null,
+          "dwellClass": "right-censored",
+          "nextCamera": null,
+          "geometry": {
+            "relationship": "none",
+            "angleDeg": null,
+            "followingMovementPx": null,
+            "totalMotionPx": null,
+            "netChangePx": null,
+            "wastedMotionPx": null,
+            "returnRatio": 0
+          },
+          "liveWithin250": false,
+          "liveWithin1000": false,
+          "focalBounds": {
+            "x": 2564,
+            "y": 44,
+            "width": 863.8236694335938,
+            "height": 555
+          },
+          "textSamples": 6,
+          "contentFits": true,
+          "webcamCollisions": 0,
+          "readabilityViolations": []
+        }
+      ]
+    }
+  ],
+  "totals": {
+    "sessions": 3,
+    "proposals": 3,
+    "starts": 3,
+    "completions": 1,
+    "cancellations": 2,
+    "followedByLiveWithin250": 1,
+    "followedByLiveWithin1000": 2,
+    "strongReversals": 0,
+    "partialReversals": 0,
+    "medianCompletedDwellMs": null,
+    "overviewMovementPx": 736.111,
+    "wastedReversalMotionPx": 0,
+    "timeToNextLiveUpdate": {
+      "500 ms-1 s": 1,
+      "100-250 ms": 1,
+      "none": 1
+    },
+    "timeToNextLiveProposal": {
+      "500 ms-1 s": 1,
+      "100-250 ms": 1,
+      "none": 1
+    },
+    "effectiveReadingTime": {
+      "right-censored": 1
+    }
+  }
+}

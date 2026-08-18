@@ -373,7 +373,10 @@ export type LogEvent =
         | "comparison-evidence-extended"
         | "comparison-evidence-completed"
         | "evidence-invalidated-page-turn"
-        | "request-suppressed-in-flight"
+        | "candidate-queued"
+        | "candidate-dequeued"
+        | "candidate-queue-full"
+        | "candidate-expired"
         | "decision-started"
         | "decision-ended"
         | "request-aborted"
@@ -423,6 +426,8 @@ export type LogEvent =
       candidateCompleteToIntentMs?: number;
       candidateCompleteToDurableReadyMs?: number;
       candidateCompleteToCommitMs?: number;
+      /** Current candidate-decision queue depth after this event. */
+      queueDepth?: number;
       /** Measured footprint supplied when a visual cannot fit even on a fresh page. */
       measuredWidth?: number;
       measuredHeight?: number;
