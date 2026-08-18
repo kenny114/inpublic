@@ -1,0 +1,836 @@
+{
+  "demoId": "c7f3168a-7bcc-4a9d-9010-2411ccdd978f",
+  "title": "",
+  "topic": "",
+  "sourceFileName": "WhatsApp Ptt 2026-08-17 at 3.52.16 PM.ogg",
+  "sourceMime": "audio/ogg",
+  "sourceBytes": 95506,
+  "sourceDurationMs": 46580,
+  "originalSampleRate": 48000,
+  "originalChannelCount": 1,
+  "normalizedSampleRate": 48000,
+  "normalizedChannels": 1,
+  "pcmChunkCount": 583,
+  "runSessionId": "23db759d-b686-4a5d-879f-fac1db5a3923",
+  "appCommit": "local-working-tree",
+  "featureState": "production vr_full",
+  "videoWidth": 784,
+  "videoHeight": 698,
+  "fps": 30,
+  "codec": "video/webm;codecs=vp9,opus",
+  "videoDurationMs": 50662,
+  "videoBytes": 5980082,
+  "recordingStartToAudioStartMs": 505.60000002384186,
+  "tailDurationMs": 3600,
+  "settledThoughtCount": 8,
+  "pageCount": 1,
+  "pageTurnTimestamps": [],
+  "visualFamilies": [],
+  "cameraEvents": [
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 1.08,
+        "scrollX": 185.81102554886428,
+        "scrollY": 262.712979917173
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-1",
+      "proposalId": "camera-proposal-1",
+      "t": 8719
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 1.08,
+        "scrollX": 185.81102554886428,
+        "scrollY": 262.712979917173
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-1",
+      "proposalId": "camera-proposal-1",
+      "t": 9671
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.9902488573449976,
+        "scrollX": 20.35449789512637,
+        "scrollY": 291.98470920807813
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-2",
+      "proposalId": "camera-proposal-2",
+      "t": 11122
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 0.9902488573449976,
+        "scrollX": 20.35449789512637,
+        "scrollY": 291.98470920807813
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-2",
+      "proposalId": "camera-proposal-2",
+      "t": 12021
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -148.9029735218395,
+        "scrollY": 351.96820345791906
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-3",
+      "proposalId": "camera-proposal-3",
+      "t": 12172
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -148.9029735218395,
+        "scrollY": 351.96820345791906
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-3",
+      "proposalId": "camera-proposal-3",
+      "t": 13070
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 1.0061538461538462,
+        "scrollX": 98.2680391550793,
+        "scrollY": 286.4166848652224
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-4",
+      "proposalId": "camera-proposal-5",
+      "t": 14090
+    },
+    {
+      "type": "camera",
+      "event": "cancelled",
+      "target": {
+        "zoom": 1.0061538461538462,
+        "scrollX": 98.2680391550793,
+        "scrollY": 286.4166848652224
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-4",
+      "proposalId": "camera-proposal-5",
+      "replacementAnimationId": "camera-animation-5",
+      "t": 14093
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.9712000435273258,
+        "scrollX": 21.0675436434812,
+        "scrollY": 220.39333059925673
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-5",
+      "proposalId": "camera-proposal-6",
+      "t": 14093
+    },
+    {
+      "type": "camera",
+      "event": "cancelled",
+      "target": {
+        "zoom": 0.9712000435273258,
+        "scrollX": 21.0675436434812,
+        "scrollY": 220.39333059925673
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-5",
+      "proposalId": "camera-proposal-6",
+      "replacementAnimationId": "camera-animation-6",
+      "t": 14112
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -189.410908092152,
+        "scrollY": 273.46820345791906
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-6",
+      "proposalId": "camera-proposal-7",
+      "t": 14112
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -189.410908092152,
+        "scrollY": 273.46820345791906
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-6",
+      "proposalId": "camera-proposal-7",
+      "t": 14905
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -230.4908641468395,
+        "scrollY": 240.96820345791906
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-7",
+      "proposalId": "camera-proposal-12",
+      "t": 18569
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -230.4908641468395,
+        "scrollY": 240.96820345791906
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-7",
+      "proposalId": "camera-proposal-12",
+      "t": 19304
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 1.0061538461538462,
+        "scrollX": 180.011989045216,
+        "scrollY": 64.41668486522241
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-8",
+      "proposalId": "camera-proposal-14",
+      "t": 20395
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 1.0061538461538462,
+        "scrollX": 180.011989045216,
+        "scrollY": 64.41668486522241
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-8",
+      "proposalId": "camera-proposal-14",
+      "t": 21406
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -111.95906483043325,
+        "scrollY": 240.96820345791906
+      },
+      "reason": "recording viewport changed",
+      "animationId": "camera-animation-9",
+      "proposalId": "camera-proposal-15",
+      "t": 23065
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -111.95906483043325,
+        "scrollY": 240.96820345791906
+      },
+      "reason": "recording viewport changed",
+      "animationId": "camera-animation-9",
+      "proposalId": "camera-proposal-15",
+      "t": 24022
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": 4.120437308132523,
+        "scrollY": 77.40344601437943
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-10",
+      "proposalId": "camera-proposal-16",
+      "t": 24159
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": 4.120437308132523,
+        "scrollY": 77.40344601437943
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-10",
+      "proposalId": "camera-proposal-16",
+      "t": 25055
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -42.5863231312145,
+        "scrollY": 129.96820345791906
+      },
+      "reason": "recording viewport changed",
+      "animationId": "camera-animation-11",
+      "proposalId": "camera-proposal-17",
+      "t": 38123
+    },
+    {
+      "type": "camera",
+      "event": "cancelled",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -42.5863231312145,
+        "scrollY": 129.96820345791906
+      },
+      "reason": "recording viewport changed",
+      "animationId": "camera-animation-11",
+      "proposalId": "camera-proposal-17",
+      "replacementAnimationId": "camera-animation-12",
+      "t": 38405
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 1.038161098924353,
+        "scrollX": 291.3213312622334,
+        "scrollY": -246.77129816659345
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-12",
+      "proposalId": "camera-proposal-18",
+      "t": 38405
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 1.038161098924353,
+        "scrollX": 291.3213312622334,
+        "scrollY": -246.77129816659345
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-12",
+      "proposalId": "camera-proposal-18",
+      "t": 39371
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 1.08,
+        "scrollX": 27.820985016999373,
+        "scrollY": -259.787020082827
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-13",
+      "proposalId": "camera-proposal-19",
+      "t": 40504
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 1.08,
+        "scrollX": 27.820985016999373,
+        "scrollY": -259.787020082827
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-13",
+      "proposalId": "camera-proposal-19",
+      "t": 41455
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": -107.88749726217998,
+        "scrollY": -223.09655398562057
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-14",
+      "proposalId": "camera-proposal-20",
+      "t": 42315
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": -107.88749726217998,
+        "scrollY": -223.09655398562057
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-14",
+      "proposalId": "camera-proposal-20",
+      "t": 43188
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": -162.64347870749248,
+        "scrollY": -239.34655398562057
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-15",
+      "proposalId": "camera-proposal-21",
+      "t": 43360
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": -162.64347870749248,
+        "scrollY": -239.34655398562057
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-15",
+      "proposalId": "camera-proposal-21",
+      "t": 44121
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": -228.89152558249248,
+        "scrollY": -255.59655398562057
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-16",
+      "proposalId": "camera-proposal-24",
+      "t": 45839
+    },
+    {
+      "type": "camera",
+      "event": "cancelled",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": -228.89152558249248,
+        "scrollY": -255.59655398562057
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-16",
+      "proposalId": "camera-proposal-24",
+      "replacementAnimationId": "camera-animation-17",
+      "t": 46159
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": -162.64347870749248,
+        "scrollY": -239.34655398562057
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-17",
+      "proposalId": "camera-proposal-25",
+      "t": 46159
+    },
+    {
+      "type": "camera",
+      "event": "cancelled",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": -162.64347870749248,
+        "scrollY": -239.34655398562057
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-17",
+      "proposalId": "camera-proposal-25",
+      "replacementAnimationId": "camera-animation-18",
+      "t": 46161
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 1.08,
+        "scrollX": 159.44592398184312,
+        "scrollY": -370.787020082827
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-18",
+      "proposalId": "camera-proposal-26",
+      "t": 46161
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 1.08,
+        "scrollX": 159.44592398184312,
+        "scrollY": -370.787020082827
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-18",
+      "proposalId": "camera-proposal-26",
+      "t": 47140
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": -117.19554169577373,
+        "scrollY": -334.0965539856206
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-19",
+      "proposalId": "camera-proposal-27",
+      "t": 48167
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 0.9698225393803162,
+        "scrollX": -117.19554169577373,
+        "scrollY": -334.0965539856206
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-19",
+      "proposalId": "camera-proposal-27",
+      "t": 49121
+    },
+    {
+      "type": "camera",
+      "event": "started",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -42.5863231312145,
+        "scrollY": 18.96820345791906
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-20",
+      "proposalId": "camera-proposal-31",
+      "t": 51834
+    },
+    {
+      "type": "camera",
+      "event": "completed",
+      "target": {
+        "zoom": 0.8461538461538461,
+        "scrollX": -42.5863231312145,
+        "scrollY": 18.96820345791906
+      },
+      "reason": "following live narration",
+      "animationId": "camera-animation-20",
+      "proposalId": "camera-proposal-31",
+      "t": 52823
+    }
+  ],
+  "visibilityHealth": {
+    "passed": true,
+    "changes": 0
+  },
+  "rafHealth": {
+    "passed": true,
+    "maxGapMs": 50.5,
+    "frameCount": 3464
+  },
+  "compositorHealth": {
+    "canvasCount": 2,
+    "drawErrors": 0
+  },
+  "captureValidation": "PASS",
+  "validationMetrics": {
+    "decoded": true,
+    "expectedResolution": true,
+    "measuredFps": 30,
+    "audioTrackPresent": true,
+    "audioPeak": 0.8562906980514526,
+    "durationMs": 50662,
+    "expectedDurationMs": 50685.60000002384,
+    "durationDeltaMs": 23.600000023841858,
+    "sampledFrames": 203,
+    "changingFramePairs": 93,
+    "frozenSuffixMs": 3000,
+    "finalFrameDifference": 0.0007582720588235294,
+    "eventResults": [
+      {
+        "type": "camera",
+        "atMs": 1540,
+        "maxDifference": 0.0027190563725490195,
+        "changedFrames": 3,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 3943,
+        "maxDifference": 0.004358149509803922,
+        "changedFrames": 6,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 4993,
+        "maxDifference": 0.003952205882352941,
+        "changedFrames": 6,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 6910,
+        "maxDifference": 0.008632046568627452,
+        "changedFrames": 3,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 6911,
+        "maxDifference": 0.008632046568627452,
+        "changedFrames": 4,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 6911,
+        "maxDifference": 0.008632046568627452,
+        "changedFrames": 3,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 6914,
+        "maxDifference": 0.008632046568627452,
+        "changedFrames": 4,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 6933,
+        "maxDifference": 0.008632046568627452,
+        "changedFrames": 4,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 12287,
+        "maxDifference": 0.00666360294117647,
+        "changedFrames": 2,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 12288,
+        "maxDifference": 0.00666360294117647,
+        "changedFrames": 2,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 13216,
+        "maxDifference": 0.03458563112745098,
+        "changedFrames": 5,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 15886,
+        "maxDifference": 0.028722426470588234,
+        "changedFrames": 6,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 16980,
+        "maxDifference": 0.029120710784313726,
+        "changedFrames": 6,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 22505,
+        "maxDifference": 0.004040287990196079,
+        "changedFrames": 1,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 22506,
+        "maxDifference": 0.004040287990196079,
+        "changedFrames": 1,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 27489,
+        "maxDifference": 0.004725796568627451,
+        "changedFrames": 1,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 27490,
+        "maxDifference": 0.004725796568627451,
+        "changedFrames": 1,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 29142,
+        "maxDifference": 0.001014859068627451,
+        "changedFrames": 1,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 29143,
+        "maxDifference": 0.001014859068627451,
+        "changedFrames": 1,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 30944,
+        "maxDifference": 0.049057904411764705,
+        "changedFrames": 6,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 31226,
+        "maxDifference": 0.049057904411764705,
+        "changedFrames": 6,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 33325,
+        "maxDifference": 0.03002450980392157,
+        "changedFrames": 5,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 35136,
+        "maxDifference": 0.04206495098039216,
+        "changedFrames": 6,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 38660,
+        "maxDifference": 0.05457261029411765,
+        "changedFrames": 6,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 38980,
+        "maxDifference": 0.05457261029411765,
+        "changedFrames": 3,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 38980,
+        "maxDifference": 0.05457261029411765,
+        "changedFrames": 5,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 38980,
+        "maxDifference": 0.05457261029411765,
+        "changedFrames": 3,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 38982,
+        "maxDifference": 0.05457261029411765,
+        "changedFrames": 5,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 40988,
+        "maxDifference": 0.039284620098039215,
+        "changedFrames": 6,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 43647,
+        "maxDifference": 0.0007199754901960785,
+        "changedFrames": 2,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 43647,
+        "maxDifference": 0.0007199754901960785,
+        "changedFrames": 2,
+        "passed": true
+      },
+      {
+        "type": "camera",
+        "atMs": 44655,
+        "maxDifference": 0.06971890318627451,
+        "changedFrames": 4,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 46910,
+        "maxDifference": 0.010462622549019607,
+        "changedFrames": 1,
+        "passed": true
+      },
+      {
+        "type": "text",
+        "atMs": 46911,
+        "maxDifference": 0.010462622549019607,
+        "changedFrames": 1,
+        "passed": true
+      }
+    ],
+    "failures": [],
+    "warnings": []
+  },
+  "errors": [],
+  "warnings": [],
+  "manual": {
+    "bestMoment": "",
+    "bestTimestamp": "",
+    "postable": null,
+    "landingPageWorthy": null,
+    "tryPageWorthy": null,
+    "privacyCleared": null
+  }
+}

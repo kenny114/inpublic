@@ -23,7 +23,8 @@ import { useGeminiLive } from "@/hooks/useGeminiLive";
 import { useUsageSession } from "@/hooks/useUsageSession";
 import { startListeningSession } from "@/lib/listeningSession";
 import { latency, latencyNow, formatLatencySummary, percentile, type LatencySampleEvent } from "@/lib/latency";
-import { correlateSamples, isReplayLabEnabled, type DecisionWindow, type ReplayDisconnectPlan, type ReplayExperimentMode, type ReplayRunReport } from "@/lib/replayLab";
+import { correlateSamples, isReplayLabEnabled, type DecisionWindow, type ReplayDisconnectPlan, type ReplayExperimentMode, type ReplayPreparedSource, type ReplayRunReport, type ReplayStartOptions } from "@/lib/replayLab";
+import type { DemoBoardApi } from "@/lib/demoStudio";
 import { buildCorpusEvidence, buildCorpusScene } from "@/lib/corpus";
 import { recordLatencySummary, storedLatencySamples } from "@/lib/latencySink";
 import { providerRequestHeaders } from "@/lib/usage-client";
@@ -89,6 +90,7 @@ import { groundEquationInSource } from "@/lib/math/ground";
 import {
   decidePageTurn,
   isThoughtComplete,
+  suppressPageTurnDuringInitialComposition,
   type PageTurnReason,
 } from "@/lib/pagination";
 import { describePlan, planActions, type PageMark, type PlanStep } from "@/lib/organizer";
@@ -129,6 +131,7 @@ import {
   effectiveTextSize,
   initialCompositionState,
   liveLineFitsViewport,
+  nativeCameraHoldIsStale,
   proposeCamera,
   recordingViewport,
   rectUnion,
@@ -168,6 +171,10 @@ import { commitPreparedVisualReentry, prepareVisualReentry, type PreparedVisualR
 import { evaluateVisualCandidate } from "@/lib/visualReentry/candidate";
 import { advanceVisualEvidence, completePendingCauseEvidence, completePendingComparisonEvidence, type VisualEvidenceEntry } from "@/lib/visualReentry/evidence";
 import { chooseVisualCommitMode } from "@/lib/visualReentry/commitPolicy";
+import {
+  VisualReentryCandidateQueue,
+  type VisualReentryCandidateJob,
+} from "@/lib/visualReentry/decisionQueue";
 import { claimThought } from "@/lib/visualReentry/ownership";
 import type { SettledThought } from "@/lib/visualReentry/types";
 import {
@@ -272,6 +279,24 @@ const LIVE_CAMERA_OVERVIEW_MS = 1800;
  * board periodically reveals what has actually landed on it.
  */
 const MAX_LIVE_CAMERA_HOLD_MS = 6000;
+/**
+ * Excalidraw's own `scrollToContent` (see the `zoom_to_concept` action) runs
+ * a second, independent camera-writing animation outside `animateCamera`'s
+ * spring. `NATIVE_CAMERA_HOLD_MS` is how long framePage defers to it —
+ * matching the `duration` passed to `scrollToContent` plus a small margin so
+ * `getAppState()` reflects Excalidraw's own settled position, not a
+ * mid-animation frame, when compositionRef is resynced.
+ */
+const ZOOM_TO_CONCEPT_ANIMATION_MS = 400;
+const NATIVE_CAMERA_HOLD_MS = 420;
+/**
+ * Safety net matching the `stuckMoveMs`/live-hold staleness pattern
+ * elsewhere in this file: if the resync timeout is ever missed (a
+ * background-tab-throttled timer, a thrown callback), the hold must not
+ * strand the camera — a ceiling well above the animation's own duration
+ * clears it instead of trusting it indefinitely.
+ */
+const NATIVE_CAMERA_HOLD_CEILING_MS = 2000;
 const VISUAL_REENTRY_RESULT_TTL_MS = 30_000;
 const VISUAL_REENTRY_PENDING_MAX = 3;
 /**
@@ -418,6 +443,7 @@ export default function Board({
   initialSessionId,
   startFresh,
   guest,
+  demoStudio,
 }: {
   initialMode?: InPublicMode;
   initialSessionId?: string;
@@ -434,6 +460,8 @@ export default function Board({
    * (useUsageSession's `anonymous` mode) and where "Finish" sends the visitor.
    */
   guest?: boolean;
+  /** Internal, development-only capture shell. Disables persistence and product chrome. */
+  demoStudio?: boolean;
 } = {}) {
   const router = useRouter();
   const [recordingTarget, setRecordingTarget] = useState<HTMLDivElement | null>(null);
@@ -583,6 +611,17 @@ export default function Board({
   const liveCameraHoldStartedAtRef = useRef(0);
   const liveCameraOverviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
+   * True while Excalidraw's native `scrollToContent` animation (the
+   * `zoom_to_concept` action) is running. framePage defers to this exactly
+   * like `liveCameraHoldRef`, so the spring never writes scrollX/scrollY/zoom
+   * concurrently with Excalidraw's own animation loop — see the
+   * "second, independent camera writer" note on `zoom_to_concept` below.
+   */
+  const nativeCameraHoldRef = useRef(false);
+  /** When the native hold was engaged — see NATIVE_CAMERA_HOLD_CEILING_MS. */
+  const nativeCameraHoldSetAtRef = useRef(0);
+  const nativeCameraHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
    * The single owner of "a reframe is owed but currently can't run."
    *
    * framePage's hold/in-flight guards used to `return` and forget — the
@@ -605,6 +644,7 @@ export default function Board({
   const releasePendingReframeRef = useRef<(() => void) | null>(null);
   useEffect(() => () => {
     if (liveCameraOverviewTimerRef.current) clearTimeout(liveCameraOverviewTimerRef.current);
+    if (nativeCameraHoldTimerRef.current) clearTimeout(nativeCameraHoldTimerRef.current);
     if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
     if (conceptMotionRef.current) cancelAnimationFrame(conceptMotionRef.current.rafId);
   }, []);
@@ -791,6 +831,8 @@ export default function Board({
   const visualReentryAbortRef = useRef<AbortController | null>(null);
   const visualReentryInFlightRef = useRef(false);
   const visualReentryGenerationRef = useRef(0);
+  const visualReentryCandidateQueueRef = useRef(new VisualReentryCandidateQueue());
+  const drainVisualReentryDecisionQueueRef = useRef<(() => void) | null>(null);
   const visualReentryPendingRef = useRef<Array<{ prepared: PreparedVisualReentry; generation: number; launchLiveSeq: number }>>([]);
   const visualReentryEvidenceRef = useRef<VisualEvidenceEntry[]>([]);
   const causeEvidenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -801,6 +843,12 @@ export default function Board({
   const visualReentryDrainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Part 12's ownership guard: no settled-thought id is ever processed twice. Reset (not trimmed) once it grows large — a long session shouldn't accumulate this forever, and a duplicate id from far in the past is not a realistic case to guard against. */
   const visualReentryProcessedIdsRef = useRef<Set<string>>(new Set());
+  const clearVisualReentryCandidateQueue = useCallback((reason: string) => {
+    const removed = visualReentryCandidateQueueRef.current.clear();
+    for (const job of removed) {
+      log({ type: "visual-reentry", event: "candidate-expired", thoughtId: job.thought.id, reason, queueDepth: 0 });
+    }
+  }, [log]);
 
   /**
    * The board as meaning, for the models. Positions come from the concept's
@@ -942,7 +990,7 @@ export default function Board({
    * once per mount, same reasoning as v2Enabled above.
    */
   const vrEnabled = useMemo(() => isVisualReentryV1Enabled(), []);
-  const replayLabEnabled = useMemo(() => isDev && isReplayLabEnabled(window.location.search), []);
+  const replayLabEnabled = useMemo(() => isDev && (demoStudio || isReplayLabEnabled(window.location.search)), [demoStudio]);
   /**
    * The thought currently being held open across Deepgram finals, under V2
    * only. `pushStructuralSegment`/`flushStructuralThought` (lib/liveSpeech.ts)
@@ -1660,6 +1708,32 @@ export default function Board({
     allowFullZoomChange = false,
     livePageArrivalIdentity: PageArrivalIdentity | null = null,
   ) => {
+    // Excalidraw's native scrollToContent (zoom_to_concept) is a second,
+    // independent camera writer. While it's animating, the spring must not
+    // also write scrollX/scrollY/zoom this frame — both are driving the same
+    // appState concurrently otherwise. Unlike the live-narration hold below,
+    // this is never bypassed by `force` or a live-follow request: either of
+    // those starting a spring here is exactly the race being prevented, not
+    // a case worth carving out. A staleness ceiling (mirroring the pattern
+    // used for liveCameraHoldRef) guards against the resync timeout being
+    // missed and stranding the camera on this guard forever.
+    const nativeHoldExceedsCeiling = nativeCameraHoldIsStale(
+      { active: nativeCameraHoldRef.current, setAt: nativeCameraHoldSetAtRef.current },
+      Date.now(),
+      NATIVE_CAMERA_HOLD_CEILING_MS,
+    );
+    if (nativeHoldExceedsCeiling) {
+      nativeCameraHoldRef.current = false;
+      if (nativeCameraHoldTimerRef.current) {
+        clearTimeout(nativeCameraHoldTimerRef.current);
+        nativeCameraHoldTimerRef.current = null;
+      }
+    }
+    if (nativeCameraHoldRef.current) {
+      pendingReframeRef.current = { reason, mathFocalConceptId, liveFocalElementId, allowFullZoomChange };
+      log({ type: "camera-metric", event: "suppressed", suppressReason: "native-camera-hold", reason });
+      return;
+    }
     // Delayed Scribe/Beat commits may continue while the speaker is talking.
     // They may draw, but the live line owns the shot until its overview timer.
     //
@@ -2109,10 +2183,7 @@ export default function Board({
     (
       trigger: "overflow" | "capacity" | "section" | "clear" | "long-utterance",
     ): boolean => {
-      if (
-        withinInitialCompositionWindow(now()) &&
-        (trigger === "capacity" || trigger === "overflow" || trigger === "section" || trigger === "long-utterance")
-      ) {
+      if (suppressPageTurnDuringInitialComposition(trigger, withinInitialCompositionWindow(now()))) {
         log({
           type: "attention",
           action: "suppression",
@@ -4090,33 +4161,53 @@ export default function Board({
               // instead of left to fight it: cancel any move already in
               // flight first (so its rAF loop doesn't immediately overwrite
               // this), drop any deferred reframe this explicit zoom
-              // supersedes, and resync compositionRef's bookkeeping once the
-              // animation finishes so the next framePage call — and any undo
-              // snapshot taken before it — sees where the camera actually is
-              // rather than the stale pre-zoom value.
+              // supersedes, then hold framePage off (see nativeCameraHoldRef)
+              // for the animation's duration so nothing starts a competing
+              // spring while it runs, and resync compositionRef's bookkeeping
+              // once the animation finishes so the next framePage call — and
+              // any undo snapshot taken before it — sees where the camera
+              // actually is rather than the stale pre-zoom value.
               if (cameraMotionRef.current) {
                 cancelAnimationFrame(cameraMotionRef.current.rafId);
                 cameraMotionRef.current = null;
               }
               pendingReframeRef.current = null;
+              if (nativeCameraHoldTimerRef.current) {
+                clearTimeout(nativeCameraHoldTimerRef.current);
+                nativeCameraHoldTimerRef.current = null;
+              }
+              nativeCameraHoldRef.current = true;
+              nativeCameraHoldSetAtRef.current = Date.now();
               apiRef.current?.scrollToContent(el as never, {
                 fitToViewport: true,
                 viewportZoomFactor: 0.6,
                 animate: true,
-                duration: 400,
+                duration: ZOOM_TO_CONCEPT_ANIMATION_MS,
               });
-              setTimeout(() => {
+              nativeCameraHoldTimerRef.current = setTimeout(() => {
+                nativeCameraHoldTimerRef.current = null;
+                nativeCameraHoldRef.current = false;
                 const app = apiRef.current?.getAppState?.();
-                if (!app) return;
-                const camera: CameraView = {
-                  scrollX: Number(app.scrollX ?? 0),
-                  scrollY: Number(app.scrollY ?? 0),
-                  zoom: Number(app.zoom?.value ?? app.zoom ?? 1),
-                };
-                compositionRef.current = { ...compositionRef.current, camera, proposedTarget: undefined, movementReason: undefined };
-              }, 420);
+                if (app) {
+                  const camera: CameraView = {
+                    scrollX: Number(app.scrollX ?? 0),
+                    scrollY: Number(app.scrollY ?? 0),
+                    zoom: Number(app.zoom?.value ?? app.zoom ?? 1),
+                  };
+                  compositionRef.current = { ...compositionRef.current, camera, proposedTarget: undefined, movementReason: undefined };
+                }
+                // Replay whatever framePage requests the hold deferred,
+                // through the normal spring path — never silently dropped.
+                releasePendingReframeRef.current?.();
+              }, NATIVE_CAMERA_HOLD_MS);
             } catch {
-              /* cosmetic */
+              // scrollToContent never actually started — don't leave the
+              // hold up for the ceiling to eventually discover.
+              nativeCameraHoldRef.current = false;
+              if (nativeCameraHoldTimerRef.current) {
+                clearTimeout(nativeCameraHoldTimerRef.current);
+                nativeCameraHoldTimerRef.current = null;
+              }
             }
           }
           recordOperation("zoom_to_concept", emptyUndo(), {
@@ -5433,6 +5524,7 @@ export default function Board({
       visualReentryAbortRef.current = null;
       visualReentryInFlightRef.current = false;
       visualReentryGenerationRef.current += 1;
+      clearVisualReentryCandidateQueue("visual re-entry generation reset by voice command");
       visualReentryPendingRef.current = [];
       visualReentryEvidenceRef.current = [];
       if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
@@ -5451,7 +5543,7 @@ export default function Board({
         turnPage("explicit-clear", "speaker explicitly requested a new page");
       }
     },
-    [clearStoryCaption, commit, doStoryUndo, doUndo, dropAllSpeculative, dropLiveLine, log, turnPage],
+    [clearStoryCaption, clearVisualReentryCandidateQueue, commit, doStoryUndo, doUndo, dropAllSpeculative, dropLiveLine, log, turnPage],
   );
 
   const revealVisualReentry = useCallback((bounds: { x: number; y: number; w: number; h: number }, thoughtId: string) => {
@@ -5498,14 +5590,17 @@ export default function Board({
         // for either continued speech or the ordinary safe reveal window.
         if (commitMode === "blocked") return false;
         const quietCommit = commitMode === "quiet";
+        let placementPage = entry.prepared.thought.page;
         const placementPen = penRef.current;
         const placementSeq = liveSeqRef.current;
-        const isRelevant = () =>
+        const isRelevant = (targetPage = placementPage) =>
           entry.generation === visualReentryGenerationRef.current &&
-          entry.prepared.thought.page === pageRef.current &&
+          targetPage === placementPage &&
+          pageRef.current === placementPage &&
           now() - entry.prepared.decidedAt <= VISUAL_REENTRY_RESULT_TTL_MS;
         const result = await commitPreparedVisualReentry(entry.prepared, {
           pen: placementPen,
+          pageIndex: placementPage,
           isSafe: () => chooseVisualCommitMode({
             hasMutableLiveLine: liveRef.current !== null,
             cameraHold: liveCameraHoldRef.current,
@@ -5513,7 +5608,16 @@ export default function Board({
             currentLiveSeq: liveSeqRef.current,
           }) !== "blocked",
           isRelevant,
-          isPlacementCurrent: () => penRef.current === placementPen && liveSeqRef.current === placementSeq,
+          isPlacementCurrent: (target) =>
+            penRef.current === target.pen &&
+            pageRef.current === target.pageIndex &&
+            liveSeqRef.current === placementSeq,
+          turnPageForOverflow: (target) => {
+            if (penRef.current !== target.pen || pageRef.current !== target.pageIndex) return null;
+            turnPage("overflow", "visual re-entry does not fit on the current sheet");
+            placementPage = pageRef.current;
+            return { pen: penRef.current, pageIndex: placementPage };
+          },
           commitVisual: (elements) => {
             elementsRef.current = [...elementsRef.current, ...(elements as SceneElement[])];
             commit();
@@ -5552,8 +5656,65 @@ export default function Board({
         queueMicrotask(() => void flushVisualReentryRef.current?.());
       }
     }
-  }, [commit, log, now, revealVisualReentry]);
+  }, [commit, log, now, revealVisualReentry, turnPage]);
   flushVisualReentryRef.current = flushVisualReentry;
+
+  const drainVisualReentryDecisionQueue = useCallback(() => {
+    if (visualReentryInFlightRef.current) return;
+
+    const queue = visualReentryCandidateQueueRef.current;
+    const { job, expired } = queue.dequeue({
+      generation: visualReentryGenerationRef.current,
+      page: pageRef.current,
+      now: now(),
+    });
+    for (const entry of expired) {
+      log({ type: "visual-reentry", event: "candidate-dequeued", thoughtId: entry.job.thought.id, queueDepth: queue.size });
+      log({ type: "visual-reentry", event: "candidate-expired", thoughtId: entry.job.thought.id, reason: entry.reason, queueDepth: queue.size });
+    }
+    if (!job) return;
+
+    log({ type: "visual-reentry", event: "candidate-dequeued", thoughtId: job.thought.id, queueDepth: queue.size });
+    if (visualReentryProcessedIdsRef.current.size > 200) visualReentryProcessedIdsRef.current.clear();
+    if (!claimThought(visualReentryProcessedIdsRef.current, job.thought.id)) {
+      log({ type: "visual-reentry", event: "duplicate-thought-skipped", thoughtId: job.thought.id });
+      queueMicrotask(() => drainVisualReentryDecisionQueueRef.current?.());
+      return;
+    }
+
+    const controller = new AbortController();
+    visualReentryAbortRef.current = controller;
+    visualReentryInFlightRef.current = true;
+    void prepareVisualReentry(job.thought, {
+      signal: controller.signal,
+      log,
+      now,
+      experimentMode: job.experimentMode,
+      candidateCompletedAt: job.candidateCompletedAt,
+    }).then((prepared) => {
+      if (!prepared) return;
+      if (job.generation !== visualReentryGenerationRef.current || prepared.thought.page !== pageRef.current) {
+        log({ type: "visual-reentry", event: "durable-result-expired", thoughtId: job.thought.id, reason: "page/session changed before result became ready" });
+        return;
+      }
+      if (visualReentryPendingRef.current.length >= VISUAL_REENTRY_PENDING_MAX) {
+        const dropped = visualReentryPendingRef.current.shift();
+        if (dropped) log({ type: "visual-reentry", event: "durable-result-expired", thoughtId: dropped.prepared.thought.id, reason: "durable queue capacity reached" });
+      }
+      visualReentryPendingRef.current.push({ prepared, generation: job.generation, launchLiveSeq: job.launchLiveSeq });
+      if (liveCameraHoldRef.current || liveRef.current !== null) {
+        log({ type: "visual-reentry", event: "durable-result-held", thoughtId: job.thought.id, reason: "speech is active" });
+      }
+      void flushVisualReentryRef.current?.();
+    }).finally(() => {
+      if (visualReentryAbortRef.current === controller) {
+        visualReentryAbortRef.current = null;
+        visualReentryInFlightRef.current = false;
+      }
+      queueMicrotask(() => drainVisualReentryDecisionQueueRef.current?.());
+    });
+  }, [log, now]);
+  drainVisualReentryDecisionQueueRef.current = drainVisualReentryDecisionQueue;
 
   const launchVisualReentryCandidate = useCallback((candidateThought: SettledThought, reason: string, sequenceCompleted = false, causeCompleted = false, comparisonCompleted = false) => {
     const experimentMode = replayModeRef.current;
@@ -5584,48 +5745,30 @@ export default function Board({
     });
     if (!candidate.candidate || experimentMode === "vr_shell") return;
 
-    if (visualReentryProcessedIdsRef.current.size > 200) visualReentryProcessedIdsRef.current.clear();
-    if (!claimThought(visualReentryProcessedIdsRef.current, candidateThought.id)) {
+    if (visualReentryProcessedIdsRef.current.has(candidateThought.id)) {
       log({ type: "visual-reentry", event: "duplicate-thought-skipped", thoughtId: candidateThought.id });
       return;
     }
-    if (visualReentryInFlightRef.current) {
-      log({ type: "visual-reentry", event: "request-suppressed-in-flight", thoughtId: candidateThought.id, reason: "one decision is already in flight" });
+    const job: VisualReentryCandidateJob = {
+      thought: candidateThought,
+      experimentMode: experimentMode === "vr_decision" ? "vr_decision" : "vr_full",
+      generation: visualReentryGenerationRef.current,
+      page: candidateThought.page,
+      launchLiveSeq: liveSeqRef.current,
+      candidateCompletedAt,
+      expiresAt: candidateCompletedAt + VISUAL_REENTRY_RESULT_TTL_MS,
+    };
+    const queued = visualReentryCandidateQueueRef.current.enqueue(job);
+    if (queued === "duplicate") {
+      log({ type: "visual-reentry", event: "duplicate-thought-skipped", thoughtId: candidateThought.id });
       return;
     }
-
-    const generation = visualReentryGenerationRef.current;
-    const launchLiveSeq = liveSeqRef.current;
-    const controller = new AbortController();
-    visualReentryAbortRef.current = controller;
-    visualReentryInFlightRef.current = true;
-    void prepareVisualReentry(candidateThought, {
-      signal: controller.signal,
-      log,
-      now,
-      experimentMode: experimentMode === "vr_decision" ? "vr_decision" : "vr_full",
-      candidateCompletedAt,
-    }).then((prepared) => {
-      if (!prepared) return;
-      if (generation !== visualReentryGenerationRef.current || prepared.thought.page !== pageRef.current) {
-        log({ type: "visual-reentry", event: "durable-result-expired", thoughtId: candidateThought.id, reason: "page/session changed before result became ready" });
-        return;
-      }
-      if (visualReentryPendingRef.current.length >= VISUAL_REENTRY_PENDING_MAX) {
-        const dropped = visualReentryPendingRef.current.shift();
-        if (dropped) log({ type: "visual-reentry", event: "durable-result-expired", thoughtId: dropped.prepared.thought.id, reason: "durable queue capacity reached" });
-      }
-      visualReentryPendingRef.current.push({ prepared, generation, launchLiveSeq });
-      if (liveCameraHoldRef.current || liveRef.current !== null) {
-        log({ type: "visual-reentry", event: "durable-result-held", thoughtId: candidateThought.id, reason: "speech is active" });
-      }
-      void flushVisualReentryRef.current?.();
-    }).finally(() => {
-      if (visualReentryAbortRef.current === controller) {
-        visualReentryAbortRef.current = null;
-        visualReentryInFlightRef.current = false;
-      }
-    });
+    if (queued === "full") {
+      log({ type: "visual-reentry", event: "candidate-queue-full", thoughtId: candidateThought.id, reason: "candidate decision queue capacity reached", queueDepth: visualReentryCandidateQueueRef.current.size });
+      return;
+    }
+    log({ type: "visual-reentry", event: "candidate-queued", thoughtId: candidateThought.id, queueDepth: visualReentryCandidateQueueRef.current.size });
+    drainVisualReentryDecisionQueueRef.current?.();
   }, [log, now]);
 
   const handleSettledVisualReentry = useCallback((thought: SettledThought) => {
@@ -6287,9 +6430,10 @@ export default function Board({
 
   const runReplayExperiment = useCallback(async (
     experimentMode: ReplayExperimentMode,
-    file: File,
+    file: File | ReplayPreparedSource,
     round: number,
     disconnectPlan: ReplayDisconnectPlan = { atAudioMs: [] },
+    replayOptions: ReplayStartOptions = {},
   ): Promise<ReplayRunReport> => {
     if (!replayLabEnabled || ENGINE !== "deepgram") throw new Error("The replay lab requires the development Deepgram engine.");
     if (status !== "idle") throw new Error("Stop the active microphone session before replaying audio.");
@@ -6304,10 +6448,14 @@ export default function Board({
     visualReentryAbortRef.current = null;
     visualReentryInFlightRef.current = false;
     visualReentryGenerationRef.current += 1;
+    clearVisualReentryCandidateQueue("visual re-entry generation reset before replay");
     visualReentryPendingRef.current = [];
     visualReentryEvidenceRef.current = [];
     if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
     cameraMotionRef.current = null;
+    if (nativeCameraHoldTimerRef.current) clearTimeout(nativeCameraHoldTimerRef.current);
+    nativeCameraHoldTimerRef.current = null;
+    nativeCameraHoldRef.current = false;
     cameraProposalSequenceRef.current = 0;
     cameraAnimationSequenceRef.current = 0;
     cameraPageGenerationRef.current = 0;
@@ -6367,7 +6515,7 @@ export default function Board({
       // inside useDeepgram. It deliberately does not start/renew/end a product
       // usage session, so regression rounds cannot consume user or trial time.
       latency.mark("lease_ready", latencyNow());
-      const audio = await deepgram.startReplay(file, disconnectPlan);
+      const audio = await deepgram.startReplay(file, disconnectPlan, replayOptions);
       await flushPresentationBoundary();
       // Each benchmark run needs a fresh capability/credential. Reusing a
       // partially aged token can close an 87.96-second second run even though
@@ -6520,7 +6668,26 @@ export default function Board({
       replayModeRef.current = null;
       deepgram.stop(false);
     }
-  }, [commit, deepgram, replayLabEnabled, status]);
+  }, [clearVisualReentryCandidateQueue, commit, deepgram, replayLabEnabled, status]);
+
+  const demoRunRef = useRef(runReplayExperiment);
+  demoRunRef.current = runReplayExperiment;
+  const demoStopRef = useRef(deepgram.stop);
+  demoStopRef.current = deepgram.stop;
+
+  useEffect(() => {
+    if (!demoStudio) return;
+    const api: DemoBoardApi = {
+      run: (source, options) => demoRunRef.current("vr_full", source, 1, { atAudioMs: [] }, options),
+      stop: () => demoStopRef.current(false),
+    };
+    window.__inpublicDemoStudioBoard = api;
+    window.dispatchEvent(new Event("inpublic-demo-board-ready"));
+    return () => {
+      if (window.__inpublicDemoStudioBoard === api) delete window.__inpublicDemoStudioBoard;
+      demoStopRef.current(false);
+    };
+  }, [demoStudio]);
 
   const wasListeningRef = useRef(false);
   useEffect(() => {
@@ -6539,6 +6706,7 @@ export default function Board({
       visualReentryAbortRef.current = null;
       visualReentryInFlightRef.current = false;
       visualReentryGenerationRef.current += 1;
+      clearVisualReentryCandidateQueue("visual re-entry generation reset after listening stopped");
       visualReentryPendingRef.current = [];
       visualReentryEvidenceRef.current = [];
       if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
@@ -6549,13 +6717,14 @@ export default function Board({
       visualReentryDrainTimerRef.current = null;
     }
     wasListeningRef.current = listening;
-  }, [status]);
+  }, [clearVisualReentryCandidateQueue, status]);
 
   // ---- manual dry-run handle ----------------------------------------------
   // Lets me rehearse pacing from the console without talking:
   //   inpublic.draw("flowchart LR\n A[Mic] --> B[Beat] --> C[Artist]")
   // ---- persistence ---------------------------------------------------------
   useEffect(() => {
+    if (demoStudio) return;
     autosaveRef.current = makeAutosave(() => ({
       id: sessionIdRef.current,
       cloudUpdatedAt: cloudUpdatedAtRef.current,
@@ -6576,10 +6745,11 @@ export default function Board({
       window.removeEventListener("beforeunload", flush);
       flush();
     };
-  }, [guest]);
+  }, [demoStudio, guest]);
 
   useEffect(() => () => {
     visualReentryAbortRef.current?.abort();
+    clearVisualReentryCandidateQueue("visual re-entry component unmounted");
     visualReentryPendingRef.current = [];
     visualReentryEvidenceRef.current = [];
     if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
@@ -6588,7 +6758,7 @@ export default function Board({
     comparisonEvidenceTimerRef.current = null;
     if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
     visualReentryDrainTimerRef.current = null;
-  }, []);
+  }, [clearVisualReentryCandidateQueue]);
 
   /** Put a saved session back on the canvas. */
   const restoreSession = useCallback(
@@ -6859,6 +7029,7 @@ export default function Board({
         visualReentryAbortRef.current = null;
         visualReentryInFlightRef.current = false;
         visualReentryGenerationRef.current += 1;
+        clearVisualReentryCandidateQueue("visual re-entry generation reset by mode change");
         visualReentryPendingRef.current = [];
         visualReentryEvidenceRef.current = [];
         if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
@@ -6897,7 +7068,7 @@ export default function Board({
       log({ type: "mode", from: previous, to: next });
       autosaveRef.current?.schedule();
     },
-    [clearStoryCaption, log, turnPage],
+    [clearStoryCaption, clearVisualReentryCandidateQueue, log, turnPage],
   );
 
   // ---- main-thread contention -----------------------------------------------
@@ -7000,12 +7171,13 @@ export default function Board({
     <div
       ref={setRecordingTarget}
       className={`canvas-shell relative h-dvh w-dvw bg-white ${recordingFocus ? "recording-focus" : ""}`}
+      data-demo-board-host={demoStudio ? "true" : undefined}
       data-recording-focus={recordingFocus ? "true" : "false"}
       onPointerDown={markPointerInput}
       onWheel={markPointerInput}
       onKeyDownCapture={markUserInput}
     >
-      <CanvasTopBar title={sessionTitle} saveState={saveStatus} remainingSeconds={usage.remainingSeconds} unlimitedMinutes={usage.entitlement?.unlimitedMinutes} onTitleChange={handleTitleChange} onExport={handleExport} onDownloadLog={handleDownloadLog} guest={guest} />
+      {!demoStudio && <CanvasTopBar title={sessionTitle} saveState={saveStatus} remainingSeconds={usage.remainingSeconds} unlimitedMinutes={usage.entitlement?.unlimitedMinutes} onTitleChange={handleTitleChange} onExport={handleExport} onDownloadLog={handleDownloadLog} guest={guest} />}
 
       <Excalidraw
         excalidrawAPI={(instance: unknown) => setApi(instance)}
@@ -7045,30 +7217,30 @@ export default function Board({
         </div>
       )}
 
-      {showTranscript ? (
+      {!demoStudio && showTranscript ? (
         <TranscriptStrip text={interim} />
       ) : (
         <span data-recording-transcript={interim} className="hidden" />
       )}
 
-      {isDev && showLatencyOverlay && (
+      {!demoStudio && isDev && showLatencyOverlay && (
         <LatencyOverlay onMarkStall={markPerceivedStall} />
       )}
 
-      {replayLabEnabled && <DevReplayLab run={runReplayExperiment} />}
+      {!demoStudio && replayLabEnabled && <DevReplayLab run={runReplayExperiment} />}
 
-      <ErrorBanner text={errorText} onDismiss={() => setErrorText(null)} onRetry={toggle} />
+      {!demoStudio && <ErrorBanner text={errorText} onDismiss={() => setErrorText(null)} onRetry={toggle} />}
 
-      <ControlBar
+      {!demoStudio && <ControlBar
         status={status}
         busy={busy}
         mode={mode}
         onModeChange={handleModeChange}
         onToggleMic={toggle}
         onFinish={finishSession}
-      />
+      />}
 
-      <RecordingPanel
+      {!demoStudio && <RecordingPanel
         target={recordingTarget}
         mode={mode}
         onTranscriptVisibilityChange={setShowTranscript}
@@ -7088,9 +7260,9 @@ export default function Board({
             composition: compositionRef.current,
           };
         }}
-      />
+      />}
 
-      {AUDIO_REPLAY_ENABLED && !showAudioReplay && (
+      {!demoStudio && AUDIO_REPLAY_ENABLED && !showAudioReplay && (
         <button
           onClick={() => setShowAudioReplay(true)}
           className="fixed top-24 right-4 z-40 rounded-full border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/80 hover:bg-black/90"
@@ -7098,7 +7270,7 @@ export default function Board({
           Audio Replay
         </button>
       )}
-      {AUDIO_REPLAY_ENABLED && showAudioReplay && (
+      {!demoStudio && AUDIO_REPLAY_ENABLED && showAudioReplay && (
         <AudioReplayPanel
           applyActions={applyActions}
           semanticScene={semanticScene}

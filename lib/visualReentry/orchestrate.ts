@@ -7,13 +7,13 @@
  * after the caller reports a safe speech gap.
  */
 
-import type { Pen } from "../ops";
+import { willOverflow, type Pen } from "../ops";
 import type { LogEventInput } from "../types";
 import type { ReplayExperimentMode } from "../replayLab";
 import { evaluateVisualCandidate } from "./candidate";
 import { requestVisualIntent } from "./client";
 import { groundDecision } from "./ground";
-import { buildVisual } from "./render";
+import { buildVisual, measureVisual } from "./render";
 import { tryDeterministicVisualIntent, type VisualDecisionSource } from "./fastPath";
 import type { SettledThought, VisualReentrySpec } from "./types";
 import { REASON_MODEL_UNAVAILABLE, REASON_PARSE_FAILED, REASON_REQUEST_REJECTED } from "./types";
@@ -45,15 +45,25 @@ export interface PrepareVisualReentryContext {
 
 export interface CommitPreparedVisualContext {
   pen: Pen;
+  /** Page currently owned by `pen`; defaults to the source thought's page for compatibility callers. */
+  pageIndex?: number;
   isSafe: () => boolean;
-  isRelevant: () => boolean;
+  /** The target page is explicit so an intentional overflow turn can rebind this one result without weakening unrelated-page invalidation. */
+  isRelevant: (targetPageIndex?: number) => boolean;
   /** Guards the exact pen revision used by the async renderer. */
-  isPlacementCurrent?: () => boolean;
+  isPlacementCurrent?: (target: VisualPlacementTarget) => boolean;
+  /** Performs at most one hard overflow turn and returns the fresh page/pen target. */
+  turnPageForOverflow?: (target: VisualPlacementTarget) => VisualPlacementTarget | null;
   commitVisual: (elements: unknown[]) => void;
   revealIfNeeded: (bounds: { x: number; y: number; w: number; h: number }) => void;
   log: (event: LogEventInput) => void;
   now?: () => number;
   build?: typeof buildVisual;
+}
+
+export interface VisualPlacementTarget {
+  pen: Pen;
+  pageIndex: number;
 }
 
 /** Real request + parse + grounding. Never builds geometry or mutates a pen. */
@@ -162,20 +172,51 @@ export async function commitPreparedVisualReentry(
 ): Promise<"committed" | "held" | "dropped"> {
   const now = ctx.now ?? Date.now;
   const thoughtId = prepared.thought.id;
-  if (!ctx.isRelevant()) {
+  let target: VisualPlacementTarget = {
+    pen: ctx.pen,
+    pageIndex: ctx.pageIndex ?? prepared.thought.page,
+  };
+  if (!ctx.isRelevant(target.pageIndex)) {
     ctx.log({ type: "visual-reentry", event: "durable-result-expired", thoughtId, reason: "thought no longer belongs to the active page/session" });
     return "dropped";
   }
   if (!ctx.isSafe()) return "held";
 
+  // Resolve page containment before the asynchronous renderer touches even a
+  // disposable pen. An intentional hard turn may rebind this one prepared
+  // result to the fresh page; every later relevance/revision check is scoped
+  // to that exact returned page and pen, so unrelated turns remain stale.
+  const measured = measureVisual(prepared.spec);
+  if (willOverflow(target.pen, measured.w, measured.h)) {
+    const rebound = ctx.turnPageForOverflow?.(target);
+    if (!rebound) return "dropped";
+    target = rebound;
+    if (willOverflow(target.pen, measured.w, measured.h)) {
+      ctx.log({
+        type: "visual-reentry",
+        event: "visual-oversized",
+        thoughtId,
+        measuredWidth: measured.w,
+        measuredHeight: measured.h,
+        pageIndex: target.pageIndex,
+        reason: "visual does not fit on a fresh writable page",
+      });
+      return "dropped";
+    }
+    if (!ctx.isRelevant(target.pageIndex)) {
+      ctx.log({ type: "visual-reentry", event: "durable-result-expired", thoughtId, reason: "page/session changed during overflow page turn" });
+      return "dropped";
+    }
+  }
+
   const renderStartedAt = now();
   ctx.log({ type: "visual-reentry", event: "render-started", thoughtId });
-  const penSnapshot: Pen = { ...ctx.pen };
+  const penSnapshot: Pen = { ...target.pen };
   const built = await (ctx.build ?? buildVisual)(prepared.spec, penSnapshot);
   const renderLatencyMs = now() - renderStartedAt;
   if (!built) return "dropped";
 
-  if (!ctx.isRelevant()) {
+  if (!ctx.isRelevant(target.pageIndex)) {
     ctx.log({ type: "visual-reentry", event: "durable-result-expired", thoughtId, renderLatencyMs, reason: "page/session changed while rendering" });
     return "dropped";
   }
@@ -183,12 +224,12 @@ export async function commitPreparedVisualReentry(
     ctx.log({ type: "visual-reentry", event: "durable-result-held", thoughtId, renderLatencyMs, reason: "speech resumed while rendering" });
     return "held";
   }
-  if (ctx.isPlacementCurrent && !ctx.isPlacementCurrent()) {
+  if (ctx.isPlacementCurrent && !ctx.isPlacementCurrent(target)) {
     ctx.log({ type: "visual-reentry", event: "durable-result-held", thoughtId, renderLatencyMs, reason: "placement changed while rendering" });
     return "held";
   }
 
-  Object.assign(ctx.pen, penSnapshot);
+  Object.assign(target.pen, penSnapshot);
   ctx.commitVisual(built.elements);
   ctx.log({ type: "visual-reentry", event: "render-completed", thoughtId, renderLatencyMs });
   ctx.log({ type: "visual-reentry", event: "durable-result-committed", thoughtId, decisionSource: prepared.decisionSource, visualFamily: prepared.spec.type, candidateCompleteToCommitMs: now() - prepared.candidateCompletedAt });

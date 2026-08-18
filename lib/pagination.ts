@@ -109,6 +109,18 @@ export interface PageTurnInput {
   deferredForMs: number;
 }
 
+/**
+ * The first-minute composition hold may delay aesthetic/semantic turns,
+ * never a hard containment turn.
+ */
+export function suppressPageTurnDuringInitialComposition(
+  trigger: PageTurnInput["trigger"],
+  withinInitialWindow: boolean,
+): boolean {
+  return withinInitialWindow &&
+    (trigger === "capacity" || trigger === "section" || trigger === "long-utterance");
+}
+
 /** How long a soft page turn may wait for the speaker to finish a thought. */
 export const MAX_DEFER_MS = 6000;
 /**

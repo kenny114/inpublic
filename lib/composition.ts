@@ -365,6 +365,32 @@ export function liveLineFitsViewport(
   return rectInside(line, visible, 0);
 }
 
+/** Tracks whether Excalidraw's own scrollToContent animation is currently running — see `nativeCameraHoldIsStale`. */
+export interface NativeCameraHoldState {
+  active: boolean;
+  setAt: number;
+}
+
+export function initialNativeCameraHoldState(): NativeCameraHoldState {
+  return { active: false, setAt: 0 };
+}
+
+/**
+ * `zoom_to_concept` drives Excalidraw's native `scrollToContent` animation, a
+ * second, independent camera writer alongside `animateCamera`'s spring (see
+ * components/Board.tsx). While that animation is running, framePage must
+ * defer rather than start a competing spring — otherwise both write
+ * scrollX/scrollY/zoom concurrently. Extracted here (rather than left
+ * inline), purely so the guard's staleness rule is unit-testable without
+ * mounting Board, the same reasoning as `liveLineFitsViewport` above: a hold
+ * whose resync timeout is ever missed (a thrown callback, a
+ * background-tab-throttled timer) must not block the camera forever, so past
+ * `ceilingMs` it is treated as stale rather than trusted indefinitely.
+ */
+export function nativeCameraHoldIsStale(state: NativeCameraHoldState, now: number, ceilingMs: number): boolean {
+  return state.active && now - state.setAt > ceilingMs;
+}
+
 export function effectiveTextSize(fontSize: number, zoom: number, outputScale = 1): number {
   return Math.round(fontSize * zoom * outputScale * 10) / 10;
 }

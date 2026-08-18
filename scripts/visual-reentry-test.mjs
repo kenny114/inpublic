@@ -20,10 +20,12 @@ import {
   VisualReentryIntentSchema,
 } from "../lib/visualReentry/types.ts";
 import { claimThought } from "../lib/visualReentry/ownership.ts";
+import { VisualReentryCandidateQueue } from "../lib/visualReentry/decisionQueue.ts";
 import { evaluateVisualCandidate } from "../lib/visualReentry/candidate.ts";
 import { advanceVisualEvidence, completePendingCauseEvidence, SEQUENCE_EVIDENCE_MAX_AGE_MS, VISUAL_EVIDENCE_MAX_AGE_MS } from "../lib/visualReentry/evidence.ts";
 import { tryDeterministicVisualIntent } from "../lib/visualReentry/fastPath.ts";
-import { newPagePen, place } from "../lib/ops.ts";
+import { commitPreparedVisualReentry } from "../lib/visualReentry/orchestrate.ts";
+import { newPagePen, place, willOverflow } from "../lib/ops.ts";
 
 let pass = 0;
 const failures = [];
@@ -46,6 +48,16 @@ const thought = (text, sourceSegments = [text]) => ({
   sourceSegments,
   page: 0,
   settledAt: 0,
+});
+
+const candidateJob = (id, overrides = {}) => ({
+  thought: { ...thought(`candidate ${id}`), id, page: overrides.page ?? 0 },
+  experimentMode: "vr_full",
+  generation: overrides.generation ?? 1,
+  page: overrides.page ?? 0,
+  launchLiveSeq: 1,
+  candidateCompletedAt: overrides.candidateCompletedAt ?? 1_000,
+  expiresAt: overrides.expiresAt ?? 31_000,
 });
 
 // --------------------------------------------------------------- V1.1 candidate gate
@@ -832,6 +844,107 @@ section("ownership — a thought id cannot be claimed (processed) twice (Part 12
   check("the refused duplicate did not get re-recorded oddly", processed.size === 2);
 }
 
+// --------------------------------------------------------------- candidate decision queue
+
+section("candidate decision queue — serialized bounded FIFO before ownership claim");
+
+{
+  const queue = new VisualReentryCandidateQueue();
+  const processed = new Set();
+  queue.enqueue(candidateJob("delayed-a"));
+  const active = queue.dequeue({ generation: 1, page: 0, now: 1_000 }).job;
+  check("the first candidate becomes the one delayed active decision", active?.thought.id === "delayed-a");
+  if (active) claimThought(processed, active.thought.id);
+
+  check("a second candidate queues while the delayed decision is active", queue.enqueue(candidateJob("delayed-b")) === "queued");
+  check("a queued candidate is not claimed before the worker takes it", !processed.has("delayed-b"));
+  const next = queue.dequeue({ generation: 1, page: 0, now: 1_100 }).job;
+  check("the second candidate survives until the decision worker is free", next?.thought.id === "delayed-b");
+  if (next) claimThought(processed, next.thought.id);
+  check("the second candidate is claimed only after dequeue", processed.has("delayed-b"));
+}
+
+{
+  const queue = new VisualReentryCandidateQueue();
+  for (const id of ["fifo-a", "fifo-b", "fifo-c"]) queue.enqueue(candidateJob(id));
+  const order = [0, 1, 2].map(() => queue.dequeue({ generation: 1, page: 0, now: 1_000 }).job?.thought.id);
+  check("candidate decisions drain in FIFO order", JSON.stringify(order) === JSON.stringify(["fifo-a", "fifo-b", "fifo-c"]));
+}
+
+{
+  const queue = new VisualReentryCandidateQueue();
+  queue.enqueue(candidateJob("active-request"));
+  const active = queue.dequeue({ generation: 1, page: 0, now: 1_000 }).job;
+  check("the simulated model request owns the active slot", active?.thought.id === "active-request");
+  check("a timer-completed candidate queues behind an active request", queue.enqueue(candidateJob("timer-completed")) === "queued");
+  check("the timer-completed candidate is retained until the active request ends", queue.dequeue({ generation: 1, page: 0, now: 6_000 }).job?.thought.id === "timer-completed");
+}
+
+{
+  const queue = new VisualReentryCandidateQueue();
+  queue.enqueue(candidateJob("reset-a"));
+  queue.enqueue(candidateJob("reset-b"));
+  const removed = queue.clear();
+  check("reset returns every queued candidate for candidate-expired telemetry", JSON.stringify(removed.map((job) => job.thought.id)) === JSON.stringify(["reset-a", "reset-b"]));
+  check("reset leaves the candidate queue empty", queue.size === 0 && queue.dequeue({ generation: 2, page: 0, now: 1_000 }).job === null);
+  check("IDs removed by reset may be queued in the next generation", queue.enqueue(candidateJob("reset-a", { generation: 2 })) === "queued");
+}
+
+{
+  const queue = new VisualReentryCandidateQueue();
+  queue.enqueue(candidateJob("old-page", { page: 0 }));
+  const result = queue.dequeue({ generation: 1, page: 1, now: 1_000 });
+  check("a page change expires a waiting candidate before decision", result.job === null && result.expired[0]?.reason === "page");
+}
+
+{
+  const queue = new VisualReentryCandidateQueue();
+  queue.enqueue(candidateJob("old-generation", { generation: 1 }));
+  const generation = queue.dequeue({ generation: 2, page: 0, now: 1_000 });
+  check("a session-generation change expires a waiting candidate before decision", generation.job === null && generation.expired[0]?.reason === "generation");
+
+  queue.enqueue(candidateJob("old-ttl", { generation: 2, expiresAt: 1_500 }));
+  const ttl = queue.dequeue({ generation: 2, page: 0, now: 1_501 });
+  check("candidate TTL is rechecked when the worker dequeues it", ttl.job === null && ttl.expired[0]?.reason === "ttl");
+}
+
+{
+  const queue = new VisualReentryCandidateQueue();
+  check("the candidate queue capacity is exactly three", ["cap-a", "cap-b", "cap-c"].every((id) => queue.enqueue(candidateJob(id)) === "queued"));
+  check("a fourth candidate receives an explicit queue-full result", queue.enqueue(candidateJob("cap-d")) === "full");
+  check("duplicate queued IDs are refused without consuming capacity", queue.enqueue(candidateJob("cap-c")) === "duplicate" && queue.size === 3);
+}
+
+{
+  const accepted = new Set(["terminal-decision", "terminal-page", "terminal-ttl", "terminal-reset", "terminal-full"]);
+  const terminalCounts = new Map([...accepted].map((id) => [id, 0]));
+  const terminal = (id) => terminalCounts.set(id, (terminalCounts.get(id) ?? 0) + 1);
+
+  const activeQueue = new VisualReentryCandidateQueue();
+  activeQueue.enqueue(candidateJob("terminal-decision"));
+  const decided = activeQueue.dequeue({ generation: 1, page: 0, now: 1_000 }).job;
+  if (decided) terminal(decided.thought.id); // decision-none/grounding/durable-ready
+
+  const staleQueue = new VisualReentryCandidateQueue();
+  staleQueue.enqueue(candidateJob("terminal-page", { page: 0 }));
+  staleQueue.enqueue(candidateJob("terminal-ttl", { expiresAt: 1_500 }));
+  for (const entry of staleQueue.dequeue({ generation: 1, page: 1, now: 2_000 }).expired) terminal(entry.job.thought.id);
+
+  const resetQueue = new VisualReentryCandidateQueue();
+  resetQueue.enqueue(candidateJob("terminal-reset"));
+  for (const job of resetQueue.clear()) terminal(job.thought.id);
+
+  const fullQueue = new VisualReentryCandidateQueue();
+  for (const id of ["filler-a", "filler-b", "filler-c"]) fullQueue.enqueue(candidateJob(id));
+  if (fullQueue.enqueue(candidateJob("terminal-full")) === "full") terminal("terminal-full");
+
+  check(
+    "every accepted candidate in the lifecycle matrix reaches exactly one terminal outcome",
+    [...accepted].every((id) => terminalCounts.get(id) === 1),
+    JSON.stringify(Object.fromEntries(terminalCounts)),
+  );
+}
+
 // --------------------------------------------------------------- rendering
 
 // buildVisual() itself (dynamic `@excalidraw/excalidraw` import) needs a
@@ -992,6 +1105,138 @@ section("pen placement discard-safety (a discarded build must never move the liv
     "committing applies the exact same reservation to the real pen",
     realPen.x === snapshot.x && realPen.y === snapshot.y && realPen.lineH === snapshot.lineH,
   );
+}
+
+// --------------------------------------------------------------- overflow-aware atomic commit
+
+section("overflow-aware atomic commit");
+
+const compactCauseSpec = {
+  type: "cause_effect",
+  nodes: ["Lower prices", "More signups"],
+  edges: [{ from: 0, to: 1, evidence: "Lower prices caused more signups" }],
+  evidence: ["Lower prices caused more signups"],
+};
+
+const preparedVisual = (spec, page = 0) => ({
+  thought: { ...thought("Lower prices caused more signups"), page },
+  spec,
+  decidedAt: 1_000,
+  decisionLatencyMs: 1,
+  decisionSource: "deterministic_fast_path",
+  candidateCompletedAt: 900,
+});
+
+const fakeVisualBuild = async (spec, pen) => {
+  const size = measureVisual(spec);
+  const spot = place(pen, size.w, size.h, true);
+  return {
+    elements: [
+      { id: `visual-a-${spot.x}-${spot.y}` },
+      { id: `visual-b-${spot.x}-${spot.y}` },
+    ],
+    ...size,
+    x: spot.x,
+    y: spot.y,
+  };
+};
+
+function visualCommitHarness(startY, spec = compactCauseSpec) {
+  let currentPage = 0;
+  let allowedPage = 0;
+  let currentPen = newPagePen(0);
+  currentPen.y = startY;
+  let turns = 0;
+  let buildCalls = 0;
+  let revealCalls = 0;
+  const commitCalls = [];
+  const events = [];
+  const order = [];
+  const context = {
+    pen: currentPen,
+    pageIndex: currentPage,
+    isSafe: () => true,
+    isRelevant: (targetPage = allowedPage) => targetPage === allowedPage && currentPage === allowedPage,
+    isPlacementCurrent: (target) => target.pageIndex === currentPage && target.pen === currentPen,
+    turnPageForOverflow: (target) => {
+      if (target.pageIndex !== currentPage || target.pen !== currentPen) return null;
+      turns += 1;
+      order.push("turn");
+      currentPage += 1;
+      allowedPage = currentPage;
+      currentPen = newPagePen(currentPage);
+      return { pageIndex: currentPage, pen: currentPen };
+    },
+    build: async (visualSpec, pen) => {
+      buildCalls += 1;
+      order.push(`build:${currentPage}`);
+      return fakeVisualBuild(visualSpec, pen);
+    },
+    commitVisual: (elements) => {
+      order.push(`commit:${currentPage}`);
+      commitCalls.push(elements);
+    },
+    revealIfNeeded: () => {
+      order.push(`reveal:${currentPage}`);
+      revealCalls += 1;
+    },
+    log: (event) => events.push(event),
+    now: () => 2_000,
+  };
+  return {
+    prepared: preparedVisual(spec),
+    context,
+    state: () => ({ currentPage, currentPen, turns, buildCalls, revealCalls, commitCalls, events, order }),
+    unrelatedTurn: () => {
+      currentPage += 1;
+      currentPen = newPagePen(currentPage);
+    },
+  };
+}
+
+{
+  const harness = visualCommitHarness(606); // 606 + 130px = writable bottom 736 exactly.
+  const result = await commitPreparedVisualReentry(harness.prepared, harness.context);
+  const state = harness.state();
+  check("a Visual Re-entry visual that exactly fits near the writable bottom does not turn the page", result === "committed" && state.turns === 0);
+  check("the near-bottom fit remains inside the writable page area", !willOverflow({ ...newPagePen(0), y: 606 }, 420, 130));
+}
+
+{
+  const harness = visualCommitHarness(607);
+  const result = await commitPreparedVisualReentry(harness.prepared, harness.context);
+  const state = harness.state();
+  check("a visual that would cross the writable bottom hard-turns before build", result === "committed" && state.turns === 1 && state.order[0] === "turn" && state.order[1] === "build:1", JSON.stringify(state.order));
+  check("the complete multi-element visual is appended once and atomically on the new page", state.commitCalls.length === 1 && state.commitCalls[0].length === 2 && state.order.includes("commit:1"));
+  check("the intentional overflow turn rebinds relevance instead of expiring the result", !state.events.some((event) => event.event === "durable-result-expired"));
+  check("camera reveal happens only after page containment, never instead of it", state.revealCalls === 1 && state.order.indexOf("turn") < state.order.indexOf("reveal:1"));
+}
+
+{
+  const harness = visualCommitHarness(100);
+  harness.context.build = async (spec, pen) => {
+    const built = await fakeVisualBuild(spec, pen);
+    harness.unrelatedTurn();
+    return built;
+  };
+  const result = await commitPreparedVisualReentry(harness.prepared, harness.context);
+  const state = harness.state();
+  check("an unrelated page turn during rendering still invalidates stale Visual Re-entry work", result === "dropped" && state.commitCalls.length === 0 && state.events.some((event) => event.event === "durable-result-expired"));
+}
+
+{
+  const oversized = {
+    type: "enumeration",
+    items: Array.from({ length: 5 }, (_, index) => `${index + 1} ${Array.from({ length: 40 }, () => "oversized line").join("\n")}`),
+    evidence: ["oversized line"],
+  };
+  const harness = visualCommitHarness(700, oversized);
+  const result = await commitPreparedVisualReentry(harness.prepared, harness.context);
+  const state = harness.state();
+  const telemetry = state.events.find((event) => event.event === "visual-oversized");
+  check("a visual oversized even on a fresh page turns only once and drops before rendering", result === "dropped" && state.turns === 1 && state.buildCalls === 0 && state.commitCalls.length === 0);
+  check("oversized telemetry includes measured dimensions and the fresh page index", telemetry?.measuredWidth === 420 && telemetry?.measuredHeight > 692 && telemetry?.pageIndex === 1, JSON.stringify(telemetry));
+  check("camera framing is never invoked for an oversized off-page visual", state.revealCalls === 0);
 }
 
 // --------------------------------------------------------------- summary
