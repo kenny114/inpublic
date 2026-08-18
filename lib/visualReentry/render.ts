@@ -8,10 +8,12 @@
  * so a re-entry visual reads as part of the same sketchnote.
  */
 
+import { resolveIcon } from "../icons";
 import type { Pen } from "../ops";
 import { place } from "../ops";
 import type { SceneElement } from "../scene";
 import { wrapMathTextPreservingLines } from "../math/visuals";
+import { displayLabel } from "./compress";
 import type { CauseEffectIntent, ComparisonIntent, EnumerationIntent, QuantitativeChangeIntent, SequenceIntent, VisualReentrySpec } from "./types";
 
 const HAND = 1;
@@ -54,19 +56,30 @@ function measureEnumeration(spec: EnumerationIntent): { w: number; h: number } {
   return { w: VISUAL_W, h: Math.max(60, h) };
 }
 
-const SEQUENCE_ARROW_H = 22;
+const SEQUENCE_ARROW_H = 28;
+const BOX_PAD_X = 14;
+const BOX_PAD_Y = 12;
+const BOX_ICON = 22;
+const BOX_ICON_GAP = 10;
 const CAUSE_NODE_W = 330;
-const CAUSE_NODE_PAD_Y = 10;
-const CAUSE_ARROW_H = 38;
+const CAUSE_ARROW_H = 30;
+
+function boxTextWidth(boxW: number, label: string): number {
+  return iconForLabel(label) ? boxW - BOX_PAD_X * 2 - BOX_ICON - BOX_ICON_GAP : boxW - BOX_PAD_X * 2;
+}
+
+function measureBoxedStack(labels: string[], title: string | undefined, boxW: number, arrowH: number): { w: number; h: number } {
+  let h = title ? TITLE_SIZE + 16 : 0;
+  for (const label of labels) {
+    const { lines } = wrapMathTextPreservingLines(displayLabel(label), ITEM_SIZE, boxTextWidth(boxW, label));
+    h += Math.max(1, lines.length) * LINE_H + BOX_PAD_Y * 2;
+  }
+  h += Math.max(0, labels.length - 1) * arrowH;
+  return { w: VISUAL_W, h: Math.max(130, h) };
+}
 
 function measureCauseEffect(spec: CauseEffectIntent): { w: number; h: number } {
-  let h = spec.title ? TITLE_SIZE + 16 : 0;
-  for (const node of spec.nodes) {
-    const { lines } = wrapMathTextPreservingLines(node.toUpperCase(), ITEM_SIZE, CAUSE_NODE_W - 28);
-    h += Math.max(1, lines.length) * LINE_H + CAUSE_NODE_PAD_Y * 2;
-  }
-  h += Math.max(0, spec.nodes.length - 1) * CAUSE_ARROW_H;
-  return { w: VISUAL_W, h: Math.max(130, h) };
+  return measureBoxedStack(spec.nodes, spec.title, CAUSE_NODE_W, CAUSE_ARROW_H);
 }
 
 const COMPARISON_GAP = 34;
@@ -84,13 +97,7 @@ function measureComparison(spec: ComparisonIntent): { w: number; h: number } {
 }
 
 function measureSequence(spec: SequenceIntent): { w: number; h: number } {
-  let h = spec.title ? TITLE_SIZE + 16 : 0;
-  for (const step of spec.steps) {
-    const { lines } = wrapMathTextPreservingLines(step, ITEM_SIZE, VISUAL_W - NUMBER_COL_W);
-    h += Math.max(1, lines.length) * LINE_H;
-  }
-  h += Math.max(0, spec.steps.length - 1) * SEQUENCE_ARROW_H;
-  return { w: VISUAL_W, h: Math.max(86, h) };
+  return measureBoxedStack(spec.steps, spec.title, VISUAL_W, SEQUENCE_ARROW_H);
 }
 
 /**
@@ -125,6 +132,123 @@ export async function buildVisual(spec: VisualReentrySpec, pen: Pen): Promise<Bu
   }
 }
 
+function iconForLabel(label: string) {
+  for (const word of label.split(/\s+/)) {
+    const art = resolveIcon(word);
+    if (art) return art;
+  }
+  return resolveIcon(label);
+}
+
+function iconSkeleton(art: NonNullable<ReturnType<typeof resolveIcon>>, x: number, y: number, size: number): Record<string, unknown>[] {
+  const sx = (value: number) => x + (value / 100) * size;
+  const sy = (value: number) => y + (value / 100) * size;
+  const out: Record<string, unknown>[] = [];
+  for (const stroke of art.strokes) {
+    const [hx, hy] = stroke[0];
+    out.push({
+      type: "line",
+      x: sx(hx),
+      y: sy(hy),
+      points: stroke.map(([px, py]) => [sx(px) - sx(hx), sy(py) - sy(hy)]),
+      strokeColor: SOFT,
+      strokeWidth: 1,
+      roughness: 2,
+    });
+  }
+  for (const [cx, cy, rx, ry] of art.ellipses) {
+    out.push({
+      type: "ellipse",
+      x: sx(cx - rx),
+      y: sy(cy - ry),
+      width: (rx * 2 / 100) * size,
+      height: (ry * 2 / 100) * size,
+      strokeColor: SOFT,
+      backgroundColor: "transparent",
+      strokeWidth: 1,
+      roughness: 2,
+    });
+  }
+  return out;
+}
+
+function boxedLabel(
+  label: string,
+  x: number,
+  y: number,
+  w: number,
+  stroke: string,
+): { elements: Record<string, unknown>[]; height: number } {
+  const shown = displayLabel(label);
+  const art = iconForLabel(shown);
+  const textW = boxTextWidth(w, shown);
+  const { lines } = wrapMathTextPreservingLines(shown, ITEM_SIZE, textW);
+  const height = Math.max(1, lines.length) * LINE_H + BOX_PAD_Y * 2;
+  const textX = art ? x + BOX_PAD_X + BOX_ICON + BOX_ICON_GAP : x + BOX_PAD_X;
+  const elements: Record<string, unknown>[] = [
+    {
+      type: "rectangle",
+      x,
+      y,
+      width: w,
+      height,
+      strokeColor: stroke,
+      backgroundColor: "transparent",
+      strokeWidth: 1,
+      roughness: 1,
+      roundness: { type: 3 },
+    },
+    {
+      type: "text",
+      x: textX,
+      y: y + BOX_PAD_Y,
+      text: lines.join("\n"),
+      fontSize: ITEM_SIZE,
+      fontFamily: HAND,
+      strokeColor: INK,
+    },
+  ];
+  if (art) {
+    const iconY = y + Math.max(BOX_PAD_Y, (height - BOX_ICON) / 2);
+    elements.push(...iconSkeleton(art, x + BOX_PAD_X, iconY, BOX_ICON));
+  }
+  return { elements, height };
+}
+
+function stackConnector(
+  fromX: number,
+  fromBottom: number,
+  toTop: number,
+  color: string,
+  label?: string,
+): Record<string, unknown>[] {
+  const midX = fromX;
+  const out: Record<string, unknown>[] = [
+    {
+      type: "line",
+      x: midX,
+      y: fromBottom,
+      points: [[0, 0], [0, toTop - fromBottom]],
+      strokeColor: color,
+      strokeWidth: 2,
+      roughness: 1,
+      endArrowhead: "arrow",
+    },
+  ];
+  if (label) {
+    out.push({
+      type: "text",
+      x: midX + 10,
+      y: (fromBottom + toTop) / 2 - 8,
+      text: label,
+      fontSize: 11,
+      fontFamily: HAND,
+      strokeColor: color,
+    });
+  }
+  return out;
+}
+
 // --- comparison --------------------------------------------------------
 
 /** Neutral two-column contrast: no scores, checks, inferred dimensions, winner colors, or forced filler. */
@@ -138,8 +262,8 @@ export function comparisonSkeleton(
   const out: Record<string, unknown>[] = [];
   const colW = (w - COMPARISON_GAP) / 2;
   const rightX = x + colW + COMPARISON_GAP;
-  out.push({ type: "text", x, y, text: spec.leftLabel.toUpperCase(), fontSize: TITLE_SIZE, fontFamily: HAND, strokeColor: INK });
-  out.push({ type: "text", x: rightX, y, text: spec.rightLabel.toUpperCase(), fontSize: TITLE_SIZE, fontFamily: HAND, strokeColor: INK });
+  out.push({ type: "text", x, y, text: displayLabel(spec.leftLabel), fontSize: TITLE_SIZE, fontFamily: HAND, strokeColor: INK });
+  out.push({ type: "text", x: rightX, y, text: displayLabel(spec.rightLabel), fontSize: TITLE_SIZE, fontFamily: HAND, strokeColor: INK });
   out.push({ type: "line", x, y: y + 28, points: [[0, 0], [w, 0]], strokeColor: SOFT, strokeWidth: 1, roughness: 0 });
   out.push({ type: "line", x: x + colW + COMPARISON_GAP / 2, y: y + 4, points: [[0, 0], [0, h - 4]], strokeColor: SOFT, strokeWidth: 1, roughness: 0 });
   let cy = y + COMPARISON_HEADER_H;
@@ -155,7 +279,7 @@ export function comparisonSkeleton(
 
 // --- cause/effect ------------------------------------------------------
 
-/** Unnumbered causal propositions with labelled warm connectors, visually distinct from process order. */
+/** Noun boxes on a warm spine. No stamp, no caps — a sketchnote, not a schema. */
 export function causeEffectSkeleton(
   spec: CauseEffectIntent,
   x: number,
@@ -168,34 +292,31 @@ export function causeEffectSkeleton(
   const nodeX = x + (w - CAUSE_NODE_W) / 2;
   let cy = y;
   if (spec.title) {
-    out.push({ type: "text", x, y: cy, text: spec.title.toUpperCase(), fontSize: TITLE_SIZE, fontFamily: HAND, strokeColor: SOFT });
+    out.push({ type: "text", x, y: cy, text: displayLabel(spec.title), fontSize: TITLE_SIZE, fontFamily: HAND, strokeColor: SOFT });
     cy += TITLE_SIZE + 16;
   }
-  const centers: Array<{ x: number; top: number; bottom: number }> = [];
+  const bands: Array<{ x: number; top: number; bottom: number }> = [];
   for (const node of spec.nodes) {
-    const { lines } = wrapMathTextPreservingLines(node.toUpperCase(), ITEM_SIZE, CAUSE_NODE_W - 28);
-    const nodeH = Math.max(1, lines.length) * LINE_H + CAUSE_NODE_PAD_Y * 2;
-    out.push({ type: "rectangle", x: nodeX, y: cy, width: CAUSE_NODE_W, height: nodeH, strokeColor: INK, backgroundColor: "transparent", strokeWidth: 1, roughness: 1, roundness: { type: 3 } });
-    out.push({ type: "text", x: nodeX + 14, y: cy + CAUSE_NODE_PAD_Y, text: lines.join("\n"), fontSize: ITEM_SIZE, fontFamily: HAND, strokeColor: INK });
-    centers.push({ x: nodeX + CAUSE_NODE_W / 2, top: cy, bottom: cy + nodeH });
-    cy += nodeH + CAUSE_ARROW_H;
+    const box = boxedLabel(node, nodeX, cy, CAUSE_NODE_W, INK);
+    out.push(...box.elements);
+    bands.push({ x: nodeX + CAUSE_NODE_W / 2, top: cy, bottom: cy + box.height });
+    cy += box.height + CAUSE_ARROW_H;
   }
   for (const edge of spec.edges) {
-    const from = centers[edge.from];
-    const to = centers[edge.to];
+    const from = bands[edge.from];
+    const to = bands[edge.to];
     if (!from || !to) continue;
     const downward = to.top >= from.bottom;
     const startY = downward ? from.bottom : from.top;
     const endY = downward ? to.top : to.bottom;
-    out.push({ type: "line", x: from.x, y: startY, points: [[0, 0], [to.x - from.x, endY - startY]], strokeColor: ACCENT, strokeWidth: 3, roughness: 1, endArrowhead: "arrow" });
-    out.push({ type: "text", x: from.x + 10, y: (startY + endY) / 2 - 8, text: "CAUSE", fontSize: 11, fontFamily: HAND, strokeColor: ACCENT });
+    out.push(...stackConnector(from.x, startY, endY, ACCENT));
   }
   return out;
 }
 
 // --- sequence ----------------------------------------------------------
 
-/** Stable compact vertical process: numbered text with restrained arrows. */
+/** Boxed steps on a cool spine. Short labels, a then-arrow, the hand not a numbered essay. */
 export function sequenceSkeleton(
   spec: SequenceIntent,
   x: number,
@@ -207,28 +328,16 @@ export function sequenceSkeleton(
   const out: Record<string, unknown>[] = [];
   let cy = y;
   if (spec.title) {
-    out.push({ type: "text", x, y: cy, text: spec.title.toUpperCase(), fontSize: TITLE_SIZE, fontFamily: HAND, strokeColor: SOFT });
+    out.push({ type: "text", x, y: cy, text: displayLabel(spec.title), fontSize: TITLE_SIZE, fontFamily: HAND, strokeColor: SOFT });
     cy += TITLE_SIZE + 16;
   }
-  const textWidth = w - NUMBER_COL_W;
   spec.steps.forEach((step, index) => {
-    const { lines } = wrapMathTextPreservingLines(step, ITEM_SIZE, textWidth);
-    const rowHeight = Math.max(1, lines.length) * LINE_H;
-    out.push({ type: "text", x, y: cy, text: String(index + 1).padStart(2, "0"), fontSize: ITEM_SIZE, fontFamily: HAND, strokeColor: SOFT });
-    out.push({ type: "text", x: x + NUMBER_COL_W, y: cy, text: lines.join("\n"), fontSize: ITEM_SIZE, fontFamily: HAND, strokeColor: INK });
-    cy += rowHeight;
+    const box = boxedLabel(step, x, cy, w, FILL);
+    out.push(...box.elements);
+    const bottom = cy + box.height;
+    cy = bottom + SEQUENCE_ARROW_H;
     if (index < spec.steps.length - 1) {
-      out.push({
-        type: "line",
-        x: x + 10,
-        y: cy,
-        points: [[0, 0], [0, SEQUENCE_ARROW_H - 6]],
-        strokeColor: FILL,
-        strokeWidth: 2,
-        roughness: 1,
-        endArrowhead: "arrow",
-      });
-      cy += SEQUENCE_ARROW_H;
+      out.push(...stackConnector(x + w / 2, bottom, cy, FILL, "then"));
     }
   });
   return out;
@@ -259,7 +368,7 @@ export function enumerationSkeleton(
       type: "text",
       x,
       y: cy,
-      text: spec.title.toUpperCase(),
+      text: displayLabel(spec.title),
       fontSize: TITLE_SIZE,
       fontFamily: HAND,
       strokeColor: SOFT,
@@ -269,7 +378,7 @@ export function enumerationSkeleton(
 
   const textWidth = w - NUMBER_COL_W;
   spec.items.forEach((item, i) => {
-    const { lines } = wrapMathTextPreservingLines(item, ITEM_SIZE, textWidth);
+    const { lines } = wrapMathTextPreservingLines(displayLabel(item), ITEM_SIZE, textWidth);
     out.push({
       type: "text",
       x,
@@ -328,10 +437,10 @@ export function quantitativeChangeSkeleton(
   let cy = y;
   if (spec.fromLabel || spec.toLabel) {
     if (spec.fromLabel) {
-      out.push({ type: "text", x: leftX, y: cy, text: spec.fromLabel.toUpperCase(), fontSize: LABEL_SIZE, fontFamily: HAND, strokeColor: SOFT });
+      out.push({ type: "text", x: leftX, y: cy, text: displayLabel(spec.fromLabel), fontSize: LABEL_SIZE, fontFamily: HAND, strokeColor: SOFT });
     }
     if (spec.toLabel) {
-      out.push({ type: "text", x: rightX, y: cy, text: spec.toLabel.toUpperCase(), fontSize: LABEL_SIZE, fontFamily: HAND, strokeColor: SOFT });
+      out.push({ type: "text", x: rightX, y: cy, text: displayLabel(spec.toLabel), fontSize: LABEL_SIZE, fontFamily: HAND, strokeColor: SOFT });
     }
     cy += LABEL_SIZE + 12;
   }

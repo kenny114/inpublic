@@ -812,6 +812,7 @@ export default function Board({
   const visualReentryDrainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Part 12's ownership guard: no settled-thought id is ever processed twice. Reset (not trimmed) once it grows large — a long session shouldn't accumulate this forever, and a duplicate id from far in the past is not a realistic case to guard against. */
   const visualReentryProcessedIdsRef = useRef<Set<string>>(new Set());
+  const thoughtInkRef = useRef(new Map<string, { ids: string[]; base: Pen; after: Pen; page: number }>());
   const clearVisualReentryCandidateQueue = useCallback((reason: string) => {
     const removed = visualReentryCandidateQueueRef.current.clear();
     for (const job of removed) {
@@ -5469,6 +5470,34 @@ export default function Board({
     [clearStoryCaption, clearVisualReentryCandidateQueue, commit, doStoryUndo, doUndo, dropAllSpeculative, dropLiveLine, log, turnPage],
   );
 
+  const stampThoughtInk = useCallback((thoughtId: string) => {
+    const settled = settledLiveRef.current;
+    if (!settled?.ids.length) return;
+    thoughtInkRef.current.set(thoughtId, {
+      ids: [...settled.ids],
+      base: { ...settled.base },
+      after: { ...settled.after },
+      page: pageRef.current,
+    });
+    const idSet = new Set(settled.ids);
+    elementsRef.current = elementsRef.current.map((el) => {
+      if (!idSet.has(el.id)) return el;
+      const customData = {
+        ...((el.customData as Record<string, unknown> | undefined) ?? {}),
+        inpublicThoughtId: thoughtId,
+      };
+      return patch(el, { customData } as Partial<SceneElement>);
+    });
+  }, []);
+
+  const inkForThought = useCallback((thought: SettledThought) => {
+    const ids = thought.participantThoughtIds?.length ? thought.participantThoughtIds : [thought.id];
+    return ids.flatMap((id) => {
+      const ink = thoughtInkRef.current.get(id);
+      return ink ? [ink] : [];
+    });
+  }, []);
+
   const revealVisualReentry = useCallback((bounds: { x: number; y: number; w: number; h: number }, thoughtId: string) => {
     const app = apiRef.current?.getAppState?.();
     const fits = liveLineFitsViewport(
@@ -5502,11 +5531,20 @@ export default function Board({
     try {
       while (visualReentryPendingRef.current.length) {
         const entry = visualReentryPendingRef.current[0];
+        const sourceInk = inkForThought(entry.prepared.thought);
+        const lastInk = sourceInk[sourceInk.length - 1];
+        const firstInk = sourceInk[0];
+        const canReplace =
+          Boolean(firstInk && lastInk) &&
+          lastInk.page === pageRef.current &&
+          samePen(penRef.current, lastInk.after) &&
+          liveRef.current === null;
         const commitMode = chooseVisualCommitMode({
           hasMutableLiveLine: liveRef.current !== null,
           cameraHold: liveCameraHoldRef.current,
           launchLiveSeq: entry.launchLiveSeq,
           currentLiveSeq: liveSeqRef.current,
+          sameTurnFold: canReplace,
         });
         // During speech, only a result whose source thought predates the
         // latest live update may enter quietly. A just-settled result waits
@@ -5529,6 +5567,7 @@ export default function Board({
             cameraHold: liveCameraHoldRef.current,
             launchLiveSeq: entry.launchLiveSeq,
             currentLiveSeq: liveSeqRef.current,
+            sameTurnFold: canReplace,
           }) !== "blocked",
           isRelevant,
           isPlacementCurrent: (target) =>
@@ -5541,8 +5580,28 @@ export default function Board({
             placementPage = pageRef.current;
             return { pen: penRef.current, pageIndex: placementPage };
           },
-          commitVisual: (elements) => {
-            elementsRef.current = [...elementsRef.current, ...(elements as SceneElement[])];
+          choosePromoteTarget: () => {
+            const hideIds = sourceInk.flatMap((ink) => ink.ids);
+            if (!hideIds.length) return null;
+            if (canReplace && firstInk) {
+              Object.assign(penRef.current, firstInk.base);
+              return { pen: penRef.current, pageIndex: pageRef.current, hideIds, mode: "replace" as const };
+            }
+            return { pen: penRef.current, pageIndex: pageRef.current, hideIds, mode: "hide" as const };
+          },
+          commitVisual: (elements, promote) => {
+            const hideIds = new Set(promote?.hideIds ?? []);
+            const removed = hideIds.size
+              ? elementsRef.current.filter((el) => hideIds.has(el.id))
+              : [];
+            elementsRef.current = [
+              ...elementsRef.current.filter((el) => !hideIds.has(el.id)),
+              ...(elements as SceneElement[]),
+            ];
+            const undo = emptyUndo();
+            undo.addedElementIds = (elements as SceneElement[]).map((el) => el.id);
+            undo.removedElements = removed;
+            recordOperation("visual_reentry", undo, { sourceText: entry.prepared.thought.text });
             commit();
           },
           revealIfNeeded: (bounds) => {
@@ -5579,7 +5638,7 @@ export default function Board({
         queueMicrotask(() => void flushVisualReentryRef.current?.());
       }
     }
-  }, [commit, log, now, revealVisualReentry, turnPage]);
+  }, [commit, inkForThought, log, now, recordOperation, revealVisualReentry, turnPage]);
   flushVisualReentryRef.current = flushVisualReentry;
 
   const drainVisualReentryDecisionQueue = useCallback(() => {
@@ -5916,6 +5975,7 @@ export default function Board({
             const thought = v3SettledThoughts[i];
             const isLastVisibleWrite = i === v3SettledThoughts.length - 1 && !v3PendingText;
             await writeLive(thought.text, true, isLastVisibleWrite ? finalTiming : undefined);
+            stampThoughtInk(thought.id);
             log({ type: "v2", event: "pop-suppressed" });
             if (vrEnabled || (replayModeRef.current !== null && replayModeRef.current !== "v2_only")) {
               handleSettledVisualReentry(thought);
@@ -5964,7 +6024,7 @@ export default function Board({
       // unconditionally here; downstream visual intelligence must consume
       // settled thought state, not compete with the active one.
     },
-    [correct, handleSettledVisualReentry, handleStoryFinal, log, now, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleSpeculative, v2Enabled, vrEnabled, writeLive, writeStoryCaption],
+    [correct, handleSettledVisualReentry, handleStoryFinal, log, now, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleSpeculative, stampThoughtInk, v2Enabled, vrEnabled, writeLive, writeStoryCaption],
   );
 
   const flushPresentationBoundary = useCallback(async () => {
@@ -6011,12 +6071,13 @@ export default function Board({
         sourceRegion,
       });
       await writeLive(thought.text, true);
+      stampThoughtInk(thought.id);
       log({ type: "v2", event: "pop-suppressed" });
       if (vrEnabled || (replayModeRef.current !== null && replayModeRef.current !== "v2_only")) {
         handleSettledVisualReentry(thought);
       }
     }
-  }, [handleSettledVisualReentry, log, now, v2Enabled, vrEnabled, writeLive]);
+  }, [handleSettledVisualReentry, log, now, stampThoughtInk, v2Enabled, vrEnabled, writeLive]);
 
   const handleInterim = useCallback(
     (text: string, audioEndMs: number, streamEpoch: number, confidence = 0, timing?: DeepgramResultTiming) => {
@@ -6408,6 +6469,7 @@ export default function Board({
     liveUtteranceRef.current = "";
     liveRef.current = null;
     settledLiveRef.current = null;
+    thoughtInkRef.current.clear();
     liveLineIdsRef.current = new Set();
     liveSeqRef.current += 1;
     v2ThoughtRef.current = EMPTY_PRESENTATION_THOUGHT;

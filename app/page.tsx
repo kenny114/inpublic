@@ -1,6 +1,5 @@
 import { SiteHeader } from "@/components/SiteHeader";
 import {
-  Comparison,
   DemoShowcase,
   FAQ,
   FinalCta,
@@ -9,6 +8,7 @@ import {
   HowItWorks,
   LandingFooter,
   Pricing,
+  Transformation,
   UseCases,
 } from "@/components/landing/LandingSections";
 
@@ -18,8 +18,8 @@ export default function Page() {
       <SiteHeader />
       <Hero />
       <HeroDemo />
+      <Transformation />
       <DemoShowcase />
-      <Comparison />
       <HowItWorks />
       <UseCases />
       <Pricing />

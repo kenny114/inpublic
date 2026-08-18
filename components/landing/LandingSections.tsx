@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowRight, Check, Play, Share2 } from "lucide-react";
 import { ButtonLink, Logo, PageContainer } from "@/components/ProductUI";
 import { VisualDemo, VisualDemoTabs } from "@/components/VisualDemo";
-import { VISUAL_DEMOS } from "@/lib/demos";
+import { VISUAL_DEMOS, visualDemo } from "@/lib/demos";
 import { PLAN_DEFINITIONS, minutesOf } from "@/lib/plans";
 
 const FREE_MINUTES = minutesOf(PLAN_DEFINITIONS.free.allowanceSeconds);
@@ -13,9 +13,9 @@ export function Hero() {
   return (
     <section className="cohesive-hero">
       <PageContainer>
-        <p className="cohesive-eyebrow">Live visual communication</p>
-        <h1>Turn speaking into a live visual experience.</h1>
-        <p>InPublic listens while you talk and builds the explanation as you go — the words, the ideas, and how they connect.</p>
+        <p className="cohesive-eyebrow">For creators who explain on camera</p>
+        <h1>You explain. The board carries the video.</h1>
+        <p>Talk through the idea. When a thought has a shape — a process, a because, a from-to — the sentence becomes the drawing, while you&apos;re still talking.</p>
         <ButtonLink href="/create?new=1">Start speaking <ArrowRight size={15} /></ButtonLink>
       </PageContainer>
     </section>
@@ -38,15 +38,26 @@ export function HeroDemo() {
   );
 }
 
-export function Comparison() {
+/**
+ * The static-vs-live argument, made with a real recording rather than a
+ * fabricated side-by-side mockup: this session is InPublic talking about
+ * exactly this contrast while the visual layer forms around the words.
+ */
+export function Transformation() {
+  const demo = visualDemo("demo-transform");
   return (
-    <section className="cohesive-comparison">
+    <section className="cohesive-section transform-section">
       <PageContainer>
-        <p className="cohesive-eyebrow">A different outcome from voice</p>
-        <h2>InPublic begins where Wispr Flow ends.</h2>
-        <div className="comparison-promises">
-          <blockquote><span>Wispr Flow</span><p>“Say it, and I&apos;ll type it.”</p></blockquote>
-          <blockquote><span>InPublic</span><p>“Say it, and I&apos;ll express it.”</p></blockquote>
+        <div className="transform-split">
+          <div className="transform-copy">
+            <p className="cohesive-eyebrow">What changes</p>
+            <h2>Your explanation is already good. It&apos;s just a talking head.</h2>
+            <p>
+              The usual move is adding diagrams afterward — if you add them at all. InPublic
+              builds that layer while you speak, from what you actually say.
+            </p>
+          </div>
+          <VisualDemo id={demo.id} caption={demo.caption} className="transform-video" />
         </div>
       </PageContainer>
     </section>
@@ -101,8 +112,23 @@ export function HowItWorks() {
 }
 
 export function UseCases() {
+  const demo = visualDemo("demo-forwho");
   return (
-    <section className="cohesive-section use-case-strip"><PageContainer><p className="cohesive-eyebrow">Made for explaining</p><h2>For creators, founders, teachers and people who think out loud.</h2><p>Use InPublic when a talking head is not enough, a slide deck is too slow, or the idea becomes clearer when people can watch it form.</p></PageContainer></section>
+    <section className="cohesive-section use-case-strip">
+      <PageContainer>
+        <div className="use-case-split">
+          <div className="use-case-copy">
+            <p className="cohesive-eyebrow">Made for explaining</p>
+            <h2>For people who record explanations and are tired of their face being the only visual.</h2>
+            <p>Use InPublic when a talking head is not enough and a slide deck is too slow. Mute the video. You should still be able to follow the idea.</p>
+            <blockquote className="use-case-quote">
+              &ldquo;The problem is not that the ideas are boring. The problem is that the visual layer is missing.&rdquo;
+            </blockquote>
+          </div>
+          <VisualDemo id={demo.id} caption={null} className="use-case-video" />
+        </div>
+      </PageContainer>
+    </section>
   );
 }
 
@@ -134,6 +160,7 @@ const questions = [
   ["Can I edit what InPublic creates?", "Yes. The canvas is made from native editable elements, so you can move, rename, resize and reconnect the result."],
   ["What is a visual-speech minute?", "A minute of live listening. It is only counted while InPublic is actually listening to you speak — editing, reviewing and exporting cost nothing."],
   ["What can I export?", "The current canvas supports PNG, SVG, Excalidraw and JSON. Recordings can be exported as video, and the session log can be downloaded."],
+  ["What does InPublic actually draw?", "Structure: headings, emphasis, boxes, arrows and labels that track what you're saying and how the ideas connect — not cinematic animation. Every demo on this page is an unedited recording of that."],
 ];
 
 export function FAQ() {

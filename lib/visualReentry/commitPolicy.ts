@@ -10,8 +10,11 @@ export function chooseVisualCommitMode(input: {
   cameraHold: boolean;
   launchLiveSeq: number;
   currentLiveSeq: number;
+  /** The visual can take the just-settled line's slot this turn. */
+  sameTurnFold?: boolean;
 }): VisualCommitMode {
   if (input.hasMutableLiveLine) return "blocked";
+  if (input.sameTurnFold) return "normal";
   if (!input.cameraHold) return "normal";
   return input.launchLiveSeq < input.currentLiveSeq ? "quiet" : "blocked";
 }

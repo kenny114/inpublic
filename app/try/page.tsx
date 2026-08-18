@@ -11,6 +11,13 @@ import { loadSessionById, saveSession } from "@/lib/persist";
 import { attributionProperties, captureAttribution, getAttribution } from "@/lib/attribution";
 import { isReplayLabEnabled } from "@/lib/replayLab";
 
+/** Openings that actually fold into a drawing — a process, a because, a from-to. */
+const TRY_SAYING = [
+  "First we finish payments, then we cut latency, then we bring in testers.",
+  "Marketing creates traffic, and traffic creates signups.",
+  "We went from 60 followers to about 400.",
+];
+
 const Board = dynamic(() => import("@/components/Board"), {
   ssr: false,
   loading: () => <div className="h-dvh w-dvw bg-white" />,
@@ -61,13 +68,34 @@ function TryLanding({ onStart }: { onStart: () => void }) {
     <div className="try-landing">
       <div className="try-landing-copy">
         <h1>Talk. Watch your words become visual.</h1>
-        <p>No signup required.</p>
+        <p>Try a process, a because, or a from-to. No signup required.</p>
         <button type="button" className="try-landing-cta" onClick={() => void start()} disabled={requesting}>
           <Mic size={18} />
           {requesting ? "Requesting microphone…" : "Start Speaking"}
         </button>
         {deniedError ? <p className="try-landing-error" role="alert">{deniedError}</p> : null}
         <Link href="/login" className="try-landing-signin">Already have an account? Sign in</Link>
+      </div>
+      <div className="try-landing-preview">
+        <video
+          className="try-landing-preview-video"
+          src="/demos/demo-a.webm"
+          poster="/demos/demo-a.png"
+          autoPlay
+          muted
+          loop
+          playsInline
+          disablePictureInPicture
+          aria-hidden="true"
+        />
+        <div className="try-landing-preview-copy">
+          <p className="try-landing-preview-label">This is what happens while you talk</p>
+          <ul>
+            {TRY_SAYING.map((line) => (
+              <li key={line}>&ldquo;{line}&rdquo;</li>
+            ))}
+          </ul>
+        </div>
       </div>
     </div>
   );

@@ -90,7 +90,9 @@ export type OperationType =
   /** Two existing concepts reorganized into a side-by-side comparison. See lib/director.ts. */
   | "form_comparison"
   /** 3-6 existing concepts reorganized into an ordered chain. See lib/directorState.ts. */
-  | "form_process";
+  | "form_process"
+  /** A Visual Re-entry drawing that folded a settled thought. */
+  | "visual_reentry";
 
 /**
  * Everything needed to reverse one operation. Elements are captured whole

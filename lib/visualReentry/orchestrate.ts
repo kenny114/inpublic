@@ -14,6 +14,7 @@ import { evaluateVisualCandidate } from "./candidate";
 import { requestVisualIntent } from "./client";
 import { groundDecision } from "./ground";
 import { buildVisual, measureVisual } from "./render";
+import { compressedOrNone } from "./compress";
 import { tryDeterministicVisualIntent, type VisualDecisionSource } from "./fastPath";
 import type { SettledThought, VisualReentrySpec } from "./types";
 import { REASON_MODEL_UNAVAILABLE, REASON_PARSE_FAILED, REASON_REQUEST_REJECTED } from "./types";
@@ -54,7 +55,17 @@ export interface CommitPreparedVisualContext {
   isPlacementCurrent?: (target: VisualPlacementTarget) => boolean;
   /** Performs at most one hard overflow turn and returns the fresh page/pen target. */
   turnPageForOverflow?: (target: VisualPlacementTarget) => VisualPlacementTarget | null;
-  commitVisual: (elements: unknown[]) => void;
+  commitVisual: (elements: unknown[], promote?: { hideIds: string[] }) => void;
+  /**
+   * When the source thought's ink is still the last thing on the pen, rewind
+   * so the visual takes that slot. hideIds are the live-line elements to fold.
+   */
+  choosePromoteTarget?: (thought: SettledThought) => {
+    pen: Pen;
+    pageIndex: number;
+    hideIds: string[];
+    mode: "replace" | "hide";
+  } | null;
   revealIfNeeded: (bounds: { x: number; y: number; w: number; h: number }) => void;
   log: (event: LogEventInput) => void;
   now?: () => number;
@@ -153,9 +164,16 @@ export async function prepareVisualReentry(
   }
   ctx.log({ type: "visual-reentry", event: "grounding-passed", thoughtId: thought.id, decisionSource, visualFamily: grounded.type });
 
+  const compressed = compressedOrNone(grounded);
+  if (compressed.type === "none") {
+    ctx.log({ type: "visual-reentry", event: "labels-rejected", thoughtId: thought.id, reason: compressed.reason, decisionSource, visualFamily: grounded.type });
+    return null;
+  }
+  ctx.log({ type: "visual-reentry", event: "labels-compressed", thoughtId: thought.id, decisionSource, visualFamily: compressed.type });
+
   const prepared = {
     thought,
-    spec: grounded,
+    spec: compressed,
     decidedAt: now(),
     decisionLatencyMs,
     decisionSource,
@@ -172,10 +190,13 @@ export async function commitPreparedVisualReentry(
 ): Promise<"committed" | "held" | "dropped"> {
   const now = ctx.now ?? Date.now;
   const thoughtId = prepared.thought.id;
-  let target: VisualPlacementTarget = {
-    pen: ctx.pen,
-    pageIndex: ctx.pageIndex ?? prepared.thought.page,
-  };
+  const promote = ctx.choosePromoteTarget?.(prepared.thought) ?? null;
+  let target: VisualPlacementTarget = promote
+    ? { pen: promote.pen, pageIndex: promote.pageIndex }
+    : {
+        pen: ctx.pen,
+        pageIndex: ctx.pageIndex ?? prepared.thought.page,
+      };
   if (!ctx.isRelevant(target.pageIndex)) {
     ctx.log({ type: "visual-reentry", event: "durable-result-expired", thoughtId, reason: "thought no longer belongs to the active page/session" });
     return "dropped";
@@ -230,8 +251,16 @@ export async function commitPreparedVisualReentry(
   }
 
   Object.assign(target.pen, penSnapshot);
-  ctx.commitVisual(built.elements);
+  ctx.commitVisual(built.elements, promote ? { hideIds: promote.hideIds } : undefined);
   ctx.log({ type: "visual-reentry", event: "render-completed", thoughtId, renderLatencyMs });
+  if (promote?.hideIds.length) {
+    ctx.log({
+      type: "visual-reentry",
+      event: promote.mode === "replace" ? "source-promoted" : "source-hidden",
+      thoughtId,
+      visualFamily: prepared.spec.type,
+    });
+  }
   ctx.log({ type: "visual-reentry", event: "durable-result-committed", thoughtId, decisionSource: prepared.decisionSource, visualFamily: prepared.spec.type, candidateCompleteToCommitMs: now() - prepared.candidateCompletedAt });
   ctx.revealIfNeeded({ x: built.x, y: built.y, w: built.w, h: built.h });
   return "committed";

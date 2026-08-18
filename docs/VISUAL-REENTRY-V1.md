@@ -72,6 +72,13 @@ The deterministic replay report exposes candidate accepted/rejected, durable
 ready/held/committed, decision concurrency, and the original latency metrics
 so launch selectivity and useful-result rate can be measured directly.
 
+## V1.5 fold
+
+When a grounded visual commits, the source thought's handwriting is folded
+into the drawing. Deterministic cases take the just-settled line's slot.
+Slower model cases hide the sentence and leave the drawing. Ordinary prose
+never folds. Labels that cannot be said in five content words become `none`.
+
 ## Hypothesis
 
 > A clean V2 settled thought should sometimes become more visually

@@ -2,7 +2,7 @@
 
 import { Pause, Play, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { VISUAL_DEMOS, visualDemo, type VisualDemoSource } from "@/lib/demos";
+import { tabbedDemos, visualDemo, type VisualDemoSource } from "@/lib/demos";
 
 /**
  * A recorded InPublic canvas, embedded as a miniature of the real thing.
@@ -122,14 +122,15 @@ export function VisualDemo({
  * tabs swaps which real recording plays.
  */
 export function VisualDemoTabs({ heading }: { heading?: string }) {
-  const [active, setActive] = useState<VisualDemoSource["id"]>("demo-a");
+  const demos = tabbedDemos();
+  const [active, setActive] = useState<VisualDemoSource["id"]>(demos[0].id);
   const current = visualDemo(active);
 
   return (
     <div className="visual-demo-tabs">
       {heading ? <p className="cohesive-eyebrow">{heading}</p> : null}
       <div className="visual-demo-switch" role="tablist" aria-label="Choose a demonstration">
-        {VISUAL_DEMOS.map((demo) => (
+        {demos.map((demo) => (
           <button
             key={demo.id}
             type="button"

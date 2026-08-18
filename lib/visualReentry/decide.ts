@@ -63,7 +63,7 @@ You may choose exactly one of these six shapes and NOTHING else:
 
 {"type":"enumeration","title":"optional short title","items":["item one","item two"],"evidence":["a phrase from the thought that supports this list"]}
   - Use only when the speaker genuinely presents a list: several named items under one idea, several reasons, or explicit numbered/grouped items — not merely a sentence that happens to contain multiple nouns.
-  - "items": 2 to 5 short strings, verbatim or near-verbatim from what was said. Never invent an item that wasn't said. If there are more than 5 meaningful items and you cannot faithfully represent all of them, answer "none" rather than dropping any.
+  - "items": 2 to 5 short noun phrases (3–5 words), using only words that were said. Never invent an item. If a faithful item cannot be said that short, or there are more than 5 items, answer "none".
   - "evidence": one or more short phrases, quoted verbatim (or nearly so) from the thought, that justify the items you extracted.
 
 {"type":"quantitative_change","from":10,"to":40,"fromQualifier":"about|around|roughly|approximately (optional)","toQualifier":"about|around|roughly|approximately (optional)","unit":"optional unit","fromLabel":"optional label for the starting value","toLabel":"optional label for the ending value","evidence":["a phrase from the thought that supports this change"]}
@@ -79,13 +79,13 @@ You may choose exactly one of these six shapes and NOTHING else:
 
 {"type":"sequence","title":"optional short title","steps":["first spoken step","second spoken step"],"evidence":["source phrase supporting the ordered process"]}
   - Use only for a genuinely ordered process with explicit ordering/process semantics. Do not use for causality, flat lists, numeric before/after comparisons, or ordinary chronological storytelling.
-  - "steps": 2 to 5 short strings, verbatim or near-verbatim from what was said, in spoken order. Never add an intermediate step, infer a prerequisite, merge away a spoken step, or truncate a process longer than 5 steps.
+  - "steps": 2 to 5 short noun phrases (3–5 words), in spoken order, using only words that were said. Never add, infer, merge, or truncate a process longer than 5 steps. If a step cannot be said that short, answer "none".
   - If uncertainty such as maybe/could/might applies to the process, answer "none" because this schema cannot preserve that modality safely.
   - "evidence": one or more source phrases supporting the steps and ordered-process interpretation.
 
 {"type":"cause_effect","title":"optional short title","nodes":["literal cause","literal effect"],"edges":[{"from":0,"to":1,"evidence":"literal clause containing source, target, and causal cue"}],"evidence":["literal causal clause"]}
   - Use only for an ASSERTED causal relationship whose direction is explicit in the words. Temporal order, correlation, association, co-occurrence, or two nearby ideas are not causality.
-  - "nodes": 2 to 4 short source concepts, verbatim or near-verbatim. Never invent an intermediate concept.
+  - "nodes": 2 to 4 short noun phrases (3–5 words) from the source. Never invent an intermediate concept. If a node cannot be said that short, answer "none".
   - "edges": 1 to 3 directed, acyclic relationships. Every edge must retain its own literal evidence containing the source concept, target concept, and causal cue in the claimed direction.
   - Reverse grammar correctly: "Y because X" means X -> Y. Do not use text order alone.
   - Answer "none" for maybe/might/could/possibly/probably/I think, negated causal cues, or correction/revision discourse such as "I thought X caused Y, but actually...".

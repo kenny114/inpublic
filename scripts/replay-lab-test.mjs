@@ -101,6 +101,7 @@ assert.equal(retainedScene.elements.length, 1);
 assert.equal(chooseVisualCommitMode({ hasMutableLiveLine: true, cameraHold: true, launchLiveSeq: 1, currentLiveSeq: 2 }), "blocked", "mutable live speech always blocks visual placement");
 assert.equal(chooseVisualCommitMode({ hasMutableLiveLine: false, cameraHold: true, launchLiveSeq: 1, currentLiveSeq: 2 }), "quiet", "a previous settled thought may commit under the camera hold");
 assert.equal(chooseVisualCommitMode({ hasMutableLiveLine: false, cameraHold: true, launchLiveSeq: 2, currentLiveSeq: 2 }), "blocked", "the current thought cannot immediately self-commit during its hold");
+assert.equal(chooseVisualCommitMode({ hasMutableLiveLine: false, cameraHold: true, launchLiveSeq: 2, currentLiveSeq: 2, sameTurnFold: true }), "normal", "a just-settled line may fold into its visual this turn");
 assert.equal(chooseVisualCommitMode({ hasMutableLiveLine: false, cameraHold: false, launchLiveSeq: 2, currentLiveSeq: 2 }), "normal", "a speech gap permits the ordinary reveal path");
 
 const thought = { id: "t", text: "There are two things: alpha and beta", sourceSegments: ["There are two things: alpha and beta"], page: 0, settledAt: 0 };
@@ -184,7 +185,7 @@ const explicitSequencePrepared = await prepareVisualReentry(explicitSequenceThou
 });
 assert.equal(fetches, sequenceFetchesBefore, "explicit sequence fast path requires zero Haiku calls");
 assert.equal(explicitSequencePrepared?.spec.type, "sequence");
-assert.deepEqual(explicitSequencePrepared?.spec.type === "sequence" ? explicitSequencePrepared.spec.steps : [], ["Collect the data", "Clean it", "Train the model"]);
+assert.deepEqual(explicitSequencePrepared?.spec.type === "sequence" ? explicitSequencePrepared.spec.steps : [], ["Collect data", "Clean it", "Train model"]);
 
 const ambiguousSequenceThought = {
   ...thought,

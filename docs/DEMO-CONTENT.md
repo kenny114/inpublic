@@ -655,3 +655,16 @@ PUBLIC/CAMERA/SCRIPT REVIEW: NOT PERFORMED
 PUBLIC/CAMERA/SCRIPT REVIEW: NOT PERFORMED
 
 WAVE RESULT: one validated class-C restraint video, two failed captures, no landing/`/try`/social selection, and no camera-pattern candidate because only one video was reviewable.
+
+---
+
+# Recapture targets — mute test (not yet captured)
+
+Do not replace `public/demos/*` until a take passes: mute the video, you can still follow the idea. Intended spoken scripts:
+
+- Sequence / hero: "First we finish payments. Then we cut latency. Then we bring in ten testers."
+- Cause: "Marketing creates traffic, and traffic creates signups."
+- Quant: "We went from 60 followers to about 400."
+- List: "There are three things we need to improve: speed, accuracy, and presentation."
+
+Existing posters stay until those takes exist. `/try` already prompts the first three.

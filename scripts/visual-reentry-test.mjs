@@ -8,6 +8,7 @@
  * keys for the parts of the pipeline that must be deterministic.
  */
 
+import { compressLabel, compressSpec } from "../lib/visualReentry/compress.ts";
 import { groundDecision } from "../lib/visualReentry/ground.ts";
 import { causeEffectSkeleton, comparisonSkeleton, enumerationSkeleton, measureVisual, quantitativeChangeSkeleton, sequenceSkeleton } from "../lib/visualReentry/render.ts";
 import {
@@ -76,6 +77,14 @@ check("keeps a flat counted list as enumeration", evaluateVisualCandidate("There
 check("owns explicit causality as cause_effect, never sequence", evaluateVisualCandidate("Marketing creates traffic, which creates signups.").family === "cause_effect");
 check("keeps temporal numeric change quantitative", evaluateVisualCandidate("We had 10 users last week and 20 this week.").family === "quantitative_change");
 check("does not promote ordinary chronological narrative", !evaluateVisualCandidate("I woke up, went outside and talked to my friend.").candidate);
+check("bring-in testers is a sequence, not a causal bring", evaluateVisualCandidate("First we finish payments, then we cut latency, then we bring in testers.").family === "sequence");
+{
+  const spoken = "First we finish payments, then we cut latency, then we bring in testers.";
+  const result = tryDeterministicVisualIntent(thought(spoken));
+  check("launch process extracts three sequence steps", result.intent?.type === "sequence" && result.intent.steps.length === 3);
+  check("launch process still grounds", Boolean(result.intent && groundDecision(result.intent, thought(spoken)).result.grounded));
+}
+check("marketing brings traffic stays causal", evaluateVisualCandidate("Marketing brings traffic and traffic creates signups.").family === "cause_effect");
 check("rejects a declared eight-step process before model fallback", !evaluateVisualCandidate("Here are eight steps for launching the product.").candidate);
 check("does not misclassify an incomplete three-step opener as enumeration", evaluateVisualCandidate("There are three steps to the process.").family !== "enumeration");
 
@@ -1002,6 +1011,30 @@ section("rendering (measurement only — buildVisual needs a browser env)");
   check("quantitative_change reserves extra height only when labels are present", withLabels.h > withoutLabels.h);
 }
 
+section("label compression");
+
+check("drops a relative clause to five content words", compressLabel("new customers who cancelled after their first month") === "New customers cancelled first month");
+check("strips articles from an already-short step", compressLabel("Collect the data") === "Collect data");
+check("keeps a short infinitive phrase intact", compressLabel("Easier to use") === "Easier to use");
+check("fails closed when a label cannot be said in five content words", compressLabel("the complete architectural migration of the entire billing subsystem toward usage based pricing") === null);
+{
+  const result = compressSpec({
+    type: "sequence",
+    steps: ["Collect the data", "Then we clean the data", "Finally we train the model"],
+    evidence: ["first collect the data"],
+  });
+  check("compresses sequence steps and keeps the spec", result.ok && JSON.stringify(result.spec.steps) === JSON.stringify(["Collect data", "Then clean data", "Finally train model"]));
+}
+{
+  const result = compressSpec({
+    type: "cause_effect",
+    nodes: ["new customers who cancelled after their first month and also requested a refund on the invoice"],
+    edges: [{ from: 0, to: 1, evidence: "x" }],
+    evidence: ["x"],
+  });
+  check("rejects an uncompressible cause node", !result.ok);
+}
+
 // Part 15: "Enumeration geometry is deterministic" / "Quantitative geometry
 // is deterministic". buildVisual() itself needs a browser env (see above),
 // but the skeleton builders it calls — the actual geometry logic — are pure
@@ -1030,8 +1063,11 @@ section("renderer determinism (same spec + placement -> byte-identical geometry,
   const a = JSON.stringify(sequenceSkeleton(spec, 10, 20, 420, 150));
   const b = JSON.stringify(sequenceSkeleton(spec, 10, 20, 420, 150));
   check("sequenceSkeleton is deterministic for identical inputs", a === b);
-  const arrows = sequenceSkeleton(spec, 10, 20, 420, 150).filter((element) => element.endArrowhead === "arrow");
+  const drawn = sequenceSkeleton(spec, 10, 20, 420, 150);
+  const arrows = drawn.filter((element) => element.endArrowhead === "arrow");
   check("sequence renderer connects adjacent steps with exactly two arrows", arrows.length === 2);
+  check("sequence renderer uses boxed steps, not a numbered essay", drawn.filter((element) => element.type === "rectangle").length === 3 && !drawn.some((element) => element.text === "01"));
+  check("sequence renderer labels the spine then", drawn.filter((element) => element.text === "then").length === 2);
 }
 
 {
@@ -1040,7 +1076,8 @@ section("renderer determinism (same spec + placement -> byte-identical geometry,
   const b = JSON.stringify(causeEffectSkeleton(spec, 10, 20, 420, 250));
   check("causeEffectSkeleton is deterministic for identical inputs", a === b);
   const skeleton = causeEffectSkeleton(spec, 10, 20, 420, 250);
-  check("cause renderer uses causal connector labels rather than sequence numbering", skeleton.filter((element) => element.text === "CAUSE").length === 2 && !skeleton.some((element) => element.text === "01"));
+  check("cause renderer draws noun boxes without a CAUSE stamp", skeleton.filter((element) => element.type === "rectangle").length === 3 && !skeleton.some((element) => element.text === "CAUSE"));
+  check("cause renderer does not force ALL CAPS", skeleton.some((element) => element.text === "Marketing") && !skeleton.some((element) => element.text === "MARKETING"));
 }
 
 {
@@ -1235,6 +1272,26 @@ function visualCommitHarness(startY, spec = compactCauseSpec) {
   const state = harness.state();
   const telemetry = state.events.find((event) => event.event === "visual-oversized");
   check("a visual oversized even on a fresh page turns only once and drops before rendering", result === "dropped" && state.turns === 1 && state.buildCalls === 0 && state.commitCalls.length === 0);
+
+{
+  const harness = visualCommitHarness(100);
+  const hidden = [];
+  const inner = harness.context.commitVisual;
+  harness.context.choosePromoteTarget = () => ({
+    pen: harness.context.pen,
+    pageIndex: 0,
+    hideIds: ["live-1"],
+    mode: "replace",
+  });
+  harness.context.commitVisual = (elements, promote) => {
+    hidden.push(...(promote?.hideIds ?? []));
+    inner(elements, promote);
+  };
+  const result = await commitPreparedVisualReentry(harness.prepared, harness.context);
+  const state = harness.state();
+  check("promote commit folds the source line ids", result === "committed" && hidden.join() === "live-1");
+  check("promote commit logs source-promoted", state.events.some((event) => event.event === "source-promoted"));
+}
   check("oversized telemetry includes measured dimensions and the fresh page index", telemetry?.measuredWidth === 420 && telemetry?.measuredHeight > 692 && telemetry?.pageIndex === 1, JSON.stringify(telemetry));
   check("camera framing is never invoked for an oversized off-page visual", state.revealCalls === 0);
 }

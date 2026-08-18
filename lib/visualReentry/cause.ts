@@ -7,7 +7,9 @@ export const TEMPORAL_ONLY = /\b(?:after|before|then|first|next|subsequently)\b/
 export const CORRELATION_ONLY = /\b(?:correlat(?:e|ed|ion)|connected|associated|retain\s+better|relationship|coincid(?:e|ed))\b/i;
 export const DEPENDENCY_ONLY = /\b(?:depends?\s+on|requires?|relies?\s+on|is\s+constrained\s+by|are\s+constrained\s+by|is\s+based\s+on|are\s+based\s+on|needs?)\b/i;
 
-const DIRECT_CUE = "causes?|caused|causing|leads?\\s+to|led\\s+to|results?\\s+in|resulted\\s+in|creates?|created|produces?|produced|brings?|brought";
+/** `bring in/out/up` is ordinary English, not "brings traffic". */
+const BRING_CAUSAL = "brings?(?!\\s+(?:in|out|up|back|over|along|forward)\\b)|brought(?!\\s+(?:in|out|up|back)\\b)";
+const DIRECT_CUE = `causes?|caused|causing|leads?\\s+to|led\\s+to|results?\\s+in|resulted\\s+in|creates?|created|produces?|produced|${BRING_CAUSAL}`;
 export const EXPLICIT_CAUSAL_CUE = new RegExp(`\\b(?:${DIRECT_CUE}|because|therefore|due\\s+to)\\b`, "i");
 
 const QUESTION_STEM = /^(?:what|why|how|when|where|who|whom|whose|which|should|could|would|can|do|does|did|will)\b/i;
@@ -43,7 +45,7 @@ function display(value: string): string {
 
 function splitClauses(text: string): string[] {
   return text
-    .split(/(?<=[.!?])\s+|\s*,\s+and\s+(?=[^,.!?]{1,100}\b(?:causes?|caused|leads?\s+to|led\s+to|results?\s+in|resulted\s+in|creates?|created|produces?|produced|brings?|brought)\b)/i)
+    .split(new RegExp(`(?<=[.!?])\\s+|\\s*,\\s+and\\s+(?=[^,.!?]{1,100}\\b(?:${DIRECT_CUE})\\b)`, "i"))
     .map(clean)
     .filter(Boolean);
 }
@@ -157,7 +159,7 @@ export function parseExplicitCauseEffect(text: string): ParsedCauseEffect {
   if (CAUSE_UNCERTAINTY.test(spoken)) return { intent: null, reason: "uncertain causal modality is not representable", rejection: "uncertain" };
   if (CAUSE_NEGATION.test(spoken) && EXPLICIT_CAUSAL_CUE.test(spoken)) return { intent: null, reason: "negation near causal language fails closed", rejection: "negated" };
   if (DEPENDENCY_ONLY.test(spoken)) return { intent: null, reason: "dependency/constraint is not causality", rejection: "dependency" };
-  if (/\bfirst(?:ly)?\b[\s\S]{0,240}\b(?:then|next|finally)\b/i.test(spoken) && !/\b(?:causes?|caused|leads?\s+to|led\s+to|results?\s+in|resulted\s+in|because|due\s+to|produces?|produced|brings?|brought)\b/i.test(spoken)) {
+  if (/\bfirst(?:ly)?\b[\s\S]{0,240}\b(?:then|next|finally)\b/i.test(spoken) && !new RegExp(`\\b(?:causes?|caused|leads?\\s+to|led\\s+to|results?\\s+in|resulted\\s+in|because|due\\s+to|produces?|produced|${BRING_CAUSAL})\\b`, "i").test(spoken)) {
     return { intent: null, reason: "temporal order is not causality", rejection: "temporal" };
   }
 
