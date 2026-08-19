@@ -360,32 +360,25 @@ export type LogEvent =
         | "fast-path-attempted"
         | "fast-path-succeeded"
         | "fast-path-rejected"
-        | "model-fallback-started"
         | "evidence-held"
         | "evidence-combined"
-        | "sequence-evidence-opened"
-        | "sequence-evidence-extended"
-        | "sequence-evidence-completed"
         | "cause-evidence-opened"
         | "cause-evidence-extended"
         | "cause-evidence-completed"
-        | "comparison-evidence-opened"
-        | "comparison-evidence-extended"
-        | "comparison-evidence-completed"
+        | "cause-incremental-opened"
+        | "cause-incremental-completed"
+        | "cause-incremental-blocked"
+        | "cause-incremental-skipped"
+        | "cause-incremental-mismatch"
+        | "cause-incremental-finalized"
         | "evidence-invalidated-page-turn"
         | "candidate-queued"
         | "candidate-dequeued"
         | "candidate-queue-full"
         | "candidate-expired"
-        | "decision-started"
-        | "decision-ended"
         | "request-aborted"
         | "decision-none"
-        | "decision-enumeration"
-        | "decision-quantitative"
-        | "decision-sequence"
         | "decision-cause-effect"
-        | "decision-comparison"
         | "parse-failed"
         | "grounding-passed"
         | "grounding-failed"
@@ -393,9 +386,6 @@ export type LogEvent =
         | "labels-rejected"
         | "source-promoted"
         | "source-hidden"
-        | "expression-note"
-        | "expression-relation"
-        | "expression-none"
         | "render-started"
         | "render-completed"
         | "visual-oversized"
@@ -411,7 +401,7 @@ export type LogEvent =
         | "duplicate-thought-skipped";
       thoughtId?: string;
       reason?: string;
-      /** ms from decision-started to the decision resolving (none/enumeration/quantitative/parse-failed) — averageDecisionLatency's raw samples. */
+      /** ms from fast-path-attempted to the decision resolving (none/cause-effect/parse-failed) — averageDecisionLatency's raw samples. */
       decisionLatencyMs?: number;
       /** ms from render-started to render-completed. */
       renderLatencyMs?: number;
@@ -421,13 +411,8 @@ export type LogEvent =
       sourceText?: string;
       /** Original V2 thought IDs when a bounded evidence window owns a combined source. */
       participantThoughtIds?: string[];
-      decisionSource?: "deterministic_fast_path" | "model_fallback";
-      visualFamily?: "enumeration" | "quantitative_change" | "sequence" | "cause_effect" | "comparison" | "note" | "relation";
-      /** Per-anchor provenance for quantitative deterministic successes; no transcript payload is needed. */
-      fromModality?: "exact" | "approximate";
-      toModality?: "exact" | "approximate";
-      /** True when a rejected fast path contained one of V1.4's supported literal qualifiers. */
-      approximationPresent?: boolean;
+      decisionSource?: "deterministic_fast_path";
+      visualFamily?: "cause_effect";
       /** Replay-clock timestamp captured at the exact local-gate completion boundary. */
       candidateCompletedAtMs?: number;
       candidateCompleteToIntentMs?: number;

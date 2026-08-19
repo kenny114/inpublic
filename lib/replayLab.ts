@@ -176,34 +176,17 @@ export interface VrRunMetrics {
   fastPathAttemptCount: number;
   fastPathSuccessCount: number;
   fastPathRejectedCount: number;
-  modelFallbackCount: number;
-  fastPathEnumerationCount: number;
-  fastPathQuantitativeCount: number;
-  exactFastPathCount: number;
-  approximateFastPathCount: number;
-  approximateFallbackCount: number;
   fastPathGroundingPassCount: number;
   fastPathGroundingFailCount: number;
   fastPathCommittedCount: number;
-  modelCommittedCount: number;
   modelCallsAvoidedByCandidateGate: number;
   modelCallsAvoidedByFastPath: number;
   overallModelCallRate: number;
-  sequenceEvidenceOpened: number;
-  sequenceEvidenceExtended: number;
-  sequenceEvidenceCompleted: number;
-  sequenceCandidateCount: number;
-  sequenceFastPathCount: number;
-  sequenceModelFallbackCount: number;
-  sequenceGroundingPass: number;
-  sequenceGroundingFail: number;
-  sequenceCommittedCount: number;
   causeEvidenceOpened: number;
   causeEvidenceExtended: number;
   causeEvidenceCompleted: number;
   causeCandidateCount: number;
   causeFastPathCount: number;
-  causeModelFallbackCount: number;
   causeGroundingPassCount: number;
   causeGroundingFailCount: number;
   causeCommittedCount: number;
@@ -211,18 +194,6 @@ export interface VrRunMetrics {
   causeRejectedNegated: number;
   causeRejectedTemporal: number;
   causeRejectedCorrelation: number;
-  comparisonEvidenceOpened: number;
-  comparisonEvidenceExtended: number;
-  comparisonEvidenceCompleted: number;
-  comparisonCandidateCount: number;
-  comparisonFastPathCount: number;
-  comparisonModelFallbackCount: number;
-  comparisonGroundingPassCount: number;
-  comparisonGroundingFailCount: number;
-  comparisonCommittedCount: number;
-  comparisonRejectedCooccurrence: number;
-  comparisonRejectedUncertain: number;
-  comparisonRejectedNegated: number;
   pageTurnInvalidationCount: number;
   candidateToDurableReady: DecisionSourceLatencyMetrics;
   candidateToCommit: DecisionSourceLatencyMetrics;
@@ -231,7 +202,6 @@ export interface VrRunMetrics {
 export interface SourceLatencySummary { count: number; p50: number | null; p95: number | null }
 export interface DecisionSourceLatencyMetrics {
   deterministic_fast_path: SourceLatencySummary;
-  model_fallback: SourceLatencySummary;
 }
 
 export interface ReplayCorrelation {
@@ -256,9 +226,7 @@ export interface ReplayRunReport {
     commitAtMs: number | null;
     quietCommitAtMs: number | null;
     groundingPassedAtMs: number | null;
-    decisionSource: "deterministic_fast_path" | "model_fallback" | null;
-    fromModality: "exact" | "approximate" | null;
-    toModality: "exact" | "approximate" | null;
+    decisionSource: "deterministic_fast_path" | null;
     cameraRequested: boolean;
     cameraSuppressed: boolean;
   }>;
@@ -317,22 +285,11 @@ export function buildReplayComparison(runs: ReplayRunReport[]) {
       evidenceCombinedCount: selected.reduce((sum, run) => sum + run.vr.evidenceCombinedCount, 0),
       quietCommittedCount: selected.reduce((sum, run) => sum + run.vr.quietCommittedCount, 0),
       fastPathSuccessCount: selected.reduce((sum, run) => sum + run.vr.fastPathSuccessCount, 0),
-      exactFastPathCount: selected.reduce((sum, run) => sum + run.vr.exactFastPathCount, 0),
-      approximateFastPathCount: selected.reduce((sum, run) => sum + run.vr.approximateFastPathCount, 0),
-      approximateFallbackCount: selected.reduce((sum, run) => sum + run.vr.approximateFallbackCount, 0),
-      modelFallbackCount: selected.reduce((sum, run) => sum + run.vr.modelFallbackCount, 0),
       fastPathCommittedCount: selected.reduce((sum, run) => sum + run.vr.fastPathCommittedCount, 0),
-      modelCommittedCount: selected.reduce((sum, run) => sum + run.vr.modelCommittedCount, 0),
       modelCallsAvoidedByFastPath: selected.reduce((sum, run) => sum + run.vr.modelCallsAvoidedByFastPath, 0),
-      sequenceCandidateCount: selected.reduce((sum, run) => sum + (run.vr.sequenceCandidateCount ?? 0), 0),
-      sequenceFastPathCount: selected.reduce((sum, run) => sum + (run.vr.sequenceFastPathCount ?? 0), 0),
-      sequenceCommittedCount: selected.reduce((sum, run) => sum + (run.vr.sequenceCommittedCount ?? 0), 0),
       causeCandidateCount: selected.reduce((sum, run) => sum + (run.vr.causeCandidateCount ?? 0), 0),
       causeFastPathCount: selected.reduce((sum, run) => sum + (run.vr.causeFastPathCount ?? 0), 0),
       causeCommittedCount: selected.reduce((sum, run) => sum + (run.vr.causeCommittedCount ?? 0), 0),
-      comparisonCandidateCount: selected.reduce((sum, run) => sum + (run.vr.comparisonCandidateCount ?? 0), 0),
-      comparisonFastPathCount: selected.reduce((sum, run) => sum + (run.vr.comparisonFastPathCount ?? 0), 0),
-      comparisonCommittedCount: selected.reduce((sum, run) => sum + (run.vr.comparisonCommittedCount ?? 0), 0),
     }];
   }));
 }

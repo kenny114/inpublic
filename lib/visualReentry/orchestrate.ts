@@ -11,17 +11,13 @@ import { willOverflow, type Pen } from "../ops";
 import type { LogEventInput } from "../types";
 import type { ReplayExperimentMode } from "../replayLab";
 import { evaluateVisualCandidate } from "./candidate";
-import { requestVisualIntent } from "./client";
 import { groundDecision } from "./ground";
 import { buildVisual, measureVisual } from "./render";
 import { compressedOrNone } from "./compress";
 import { tryDeterministicVisualIntent, type VisualDecisionSource } from "./fastPath";
 import type { SettledThought, VisualReentrySpec } from "./types";
-import { REASON_MODEL_UNAVAILABLE, REASON_PARSE_FAILED, REASON_REQUEST_REJECTED } from "./types";
 
-const FAILURE_REASONS = new Set<string>([REASON_MODEL_UNAVAILABLE, REASON_PARSE_FAILED, REASON_REQUEST_REJECTED]);
 const SOURCE_EXCERPT_MAX = 80;
-const SUPPORTED_APPROXIMATION = /\b(?:about|around|roughly|approximately)\b/i;
 
 function excerpt(text: string): string {
   return text.length > SOURCE_EXCERPT_MAX ? `${text.slice(0, SOURCE_EXCERPT_MAX)}…` : text;
@@ -77,7 +73,7 @@ export interface VisualPlacementTarget {
   pageIndex: number;
 }
 
-/** Real request + parse + grounding. Never builds geometry or mutates a pen. */
+/** Real deterministic parse + grounding. Never builds geometry or mutates a pen. */
 export async function prepareVisualReentry(
   thought: SettledThought,
   ctx: PrepareVisualReentryContext,
@@ -85,46 +81,34 @@ export async function prepareVisualReentry(
   const now = ctx.now ?? Date.now;
   const candidateCompletedAt = ctx.candidateCompletedAt ?? now();
   const fastStartedAt = now();
-  const candidateFamily = evaluateVisualCandidate(thought.text).family;
   ctx.log({ type: "visual-reentry", event: "fast-path-attempted", thoughtId: thought.id });
   const fast = tryDeterministicVisualIntent(thought);
-  let intent: VisualReentrySpec | Awaited<ReturnType<typeof requestVisualIntent>>;
-  let decisionSource: VisualDecisionSource;
-  let decisionLatencyMs: number;
-  if (fast.intent) {
-    intent = fast.intent;
-    decisionSource = "deterministic_fast_path";
-    decisionLatencyMs = now() - fastStartedAt;
+  const decisionSource: VisualDecisionSource = "deterministic_fast_path";
+
+  if (!fast.intent) {
+    ctx.log({ type: "visual-reentry", event: "fast-path-rejected", thoughtId: thought.id, reason: fast.reason });
     ctx.log({
       type: "visual-reentry",
-      event: "fast-path-succeeded",
+      event: "decision-none",
       thoughtId: thought.id,
       reason: fast.reason,
+      decisionLatencyMs: now() - fastStartedAt,
       decisionSource,
-      visualFamily: fast.intent.type,
-      ...(fast.intent.type === "quantitative_change" ? {
-        fromModality: fast.intent.fromQualifier ? "approximate" as const : "exact" as const,
-        toModality: fast.intent.toQualifier ? "approximate" as const : "exact" as const,
-      } : {}),
-      candidateCompleteToIntentMs: now() - candidateCompletedAt,
     });
-  } else {
-    ctx.log({ type: "visual-reentry", event: "fast-path-rejected", thoughtId: thought.id, reason: fast.reason });
-    decisionSource = "model_fallback";
-    ctx.log({
-      type: "visual-reentry",
-      event: "model-fallback-started",
-      thoughtId: thought.id,
-      decisionSource,
-      visualFamily: candidateFamily,
-      approximationPresent: SUPPORTED_APPROXIMATION.test(thought.text),
-    });
-    const decisionStartedAt = now();
-    ctx.log({ type: "visual-reentry", event: "decision-started", thoughtId: thought.id, decisionSource });
-    intent = await requestVisualIntent(thought.text, ctx.signal);
-    decisionLatencyMs = now() - decisionStartedAt;
-    ctx.log({ type: "visual-reentry", event: "decision-ended", thoughtId: thought.id, decisionLatencyMs, decisionSource });
+    return null;
   }
+
+  const intent: VisualReentrySpec = fast.intent;
+  const decisionLatencyMs = now() - fastStartedAt;
+  ctx.log({
+    type: "visual-reentry",
+    event: "fast-path-succeeded",
+    thoughtId: thought.id,
+    reason: fast.reason,
+    decisionSource,
+    visualFamily: intent.type,
+    candidateCompleteToIntentMs: now() - candidateCompletedAt,
+  });
 
   // V1.1 only aborts on reset/teardown. Ordinary continued speech is not a
   // staleness condition; a valid result waits for a safe placement window.
@@ -134,29 +118,15 @@ export async function prepareVisualReentry(
     return null;
   }
 
-  if (intent.type === "none") {
-    const isPipelineFailure = FAILURE_REASONS.has(intent.reason);
-    ctx.log({
-      type: "visual-reentry",
-      event: isPipelineFailure ? "parse-failed" : "decision-none",
-      thoughtId: thought.id,
-      reason: intent.reason,
-      decisionLatencyMs,
-      decisionSource,
-    });
-    return null;
-  }
-
   ctx.log({
     type: "visual-reentry",
-    event: intent.type === "enumeration" ? "decision-enumeration" : intent.type === "quantitative_change" ? "decision-quantitative" : intent.type === "sequence" ? "decision-sequence" : intent.type === "cause_effect" ? "decision-cause-effect" : "decision-comparison",
+    event: "decision-cause-effect",
     thoughtId: thought.id,
     decisionLatencyMs,
     decisionSource,
     visualFamily: intent.type,
   });
   if (ctx.experimentMode === "vr_decision") return null;
-  if (intent.type === "note" || intent.type === "relation") return null;
 
   const { decision: grounded, result } = groundDecision(intent, thought);
   if (grounded.type === "none") {

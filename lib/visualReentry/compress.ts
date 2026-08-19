@@ -91,71 +91,16 @@ export type CompressResult =
 
 /** Compress every display label on a grounded spec. Evidence is left verbatim. */
 export function compressSpec(spec: VisualReentrySpec): CompressResult {
-  if (spec.type === "enumeration") {
-    const items = spec.items.map(compressRequired);
-    if (items.some((item) => !item)) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-    const title = compressOptional(spec.title);
-    if (!title.ok) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-    return { ok: true, spec: { ...spec, items: items as string[], title: title.value } };
-  }
-
-  if (spec.type === "sequence") {
-    const steps = spec.steps.map(compressRequired);
-    if (steps.some((step) => !step)) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-    const title = compressOptional(spec.title);
-    if (!title.ok) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-    return { ok: true, spec: { ...spec, steps: steps as string[], title: title.value } };
-  }
-
-  if (spec.type === "cause_effect") {
-    const nodes = spec.nodes.map(compressRequired);
-    if (nodes.some((node) => !node)) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-    const title = compressOptional(spec.title);
-    if (!title.ok) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-    return { ok: true, spec: { ...spec, nodes: nodes as string[], title: title.value } };
-  }
-
-  if (spec.type === "note") {
-    const text = compressRequired(spec.text);
-    if (!text) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-    return { ok: true, spec: { ...spec, text } };
-  }
-
-  if (spec.type === "relation") {
-    const from = compressRequired(spec.from);
-    const to = compressRequired(spec.to);
-    const label = compressOptional(spec.label);
-    if (!from || !to || !label.ok) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-    return { ok: true, spec: { ...spec, from, to, label: label.value } };
-  }
-
-  if (spec.type === "comparison") {
-    const leftLabel = compressRequired(spec.leftLabel);
-    const rightLabel = compressRequired(spec.rightLabel);
-    if (!leftLabel || !rightLabel) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-    const rows = [];
-    for (const row of spec.rows) {
-      const left = compressOptional(row.left);
-      const right = compressOptional(row.right);
-      if (!left.ok || !right.ok) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-      rows.push({ ...row, left: left.value, right: right.value });
-    }
-    return { ok: true, spec: { ...spec, leftLabel, rightLabel, rows } };
-  }
-
-  const unit = compressOptional(spec.unit);
-  const fromLabel = compressOptional(spec.fromLabel);
-  const toLabel = compressOptional(spec.toLabel);
-  if (!unit.ok || !fromLabel.ok || !toLabel.ok) return { ok: false, reason: REASON_LABELS_TOO_LONG };
-  return { ok: true, spec: { ...spec, unit: unit.value, fromLabel: fromLabel.value, toLabel: toLabel.value } };
+  const nodes = spec.nodes.map(compressRequired);
+  if (nodes.some((node) => !node)) return { ok: false, reason: REASON_LABELS_TOO_LONG };
+  const title = compressOptional(spec.title);
+  if (!title.ok) return { ok: false, reason: REASON_LABELS_TOO_LONG };
+  return { ok: true, spec: { ...spec, nodes: nodes as string[], title: title.value } };
 }
 
 export function compressedOrNone(intent: VisualReentryIntent): VisualReentryIntent {
   if (intent.type === "none") return intent;
   const result = compressSpec(intent);
   if (!result.ok) return fallbackNone(result.reason);
-  if (result.spec.type === "note" || result.spec.type === "relation") {
-    return fallbackNone(REASON_LABELS_TOO_LONG);
-  }
   return result.spec;
 }

@@ -9,14 +9,7 @@ import type { SceneElement } from "./scene";
 import type { LogEvent } from "./types";
 import { PAGE_H, PAGE_W, pageOrigin } from "./ops";
 
-export type ExistingVisualFamily =
-  | "enumeration"
-  | "quantitative_change"
-  | "sequence"
-  | "cause_effect"
-  | "comparison"
-  | "note"
-  | "relation";
+export type ExistingVisualFamily = "cause_effect";
 
 export type CorpusRecordingKind = "natural" | "synthetic";
 
@@ -42,7 +35,7 @@ export interface VisualSourceEvidence {
   family: ExistingVisualFamily | null;
   candidateOutcome: "accepted" | "rejected";
   ownershipReason: string | null;
-  decisionSource: "deterministic_fast_path" | "model_fallback" | null;
+  decisionSource: "deterministic_fast_path" | null;
   groundingResult: "passed" | "failed" | "not_attempted";
   commitResult: "quiet_committed" | "committed" | "held" | "expired" | "not_attempted";
 }

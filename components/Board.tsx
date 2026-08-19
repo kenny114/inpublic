@@ -168,15 +168,22 @@ import {
 import { features, isLivePresentationV2Enabled, isVisualReentryV1Enabled } from "@/lib/features";
 import { commitPreparedVisualReentry, prepareVisualReentry, type PreparedVisualReentry } from "@/lib/visualReentry/orchestrate";
 import { evaluateVisualCandidate } from "@/lib/visualReentry/candidate";
-import { advanceVisualEvidence, completePendingCauseEvidence, completePendingComparisonEvidence, type VisualEvidenceEntry } from "@/lib/visualReentry/evidence";
+import { advanceVisualEvidence, completePendingCauseEvidence, type VisualEvidenceEntry } from "@/lib/visualReentry/evidence";
 import { chooseVisualCommitMode } from "@/lib/visualReentry/commitPolicy";
 import {
   VisualReentryCandidateQueue,
   type VisualReentryCandidateJob,
 } from "@/lib/visualReentry/decisionQueue";
 import { claimThought } from "@/lib/visualReentry/ownership";
-import { expressThought } from "@/lib/visualReentry/express";
 import type { SettledThought } from "@/lib/visualReentry/types";
+import { parseExplicitCauseEffect } from "@/lib/visualReentry/cause";
+import { compressLabel } from "@/lib/visualReentry/compress";
+import {
+  appendCauseEffectNode,
+  convertCauseEffectAppend,
+  measureCauseEffectProgress,
+  nextCauseEffectNodeY,
+} from "@/lib/visualReentry/render";
 import {
   activeStoryScene,
   applyStoryActions,
@@ -504,12 +511,12 @@ export default function Board({
       logRef.current.push({ ...event, t: now() } as LogEvent);
       if (replayModeRef.current && event.type === "visual-reentry") {
         const id = event.thoughtId ?? "unknown";
-        if (event.event === "decision-started") {
+        if (event.event === "fast-path-attempted") {
           const window = { start: performance.now() };
           replayDecisionOpenRef.current.set(id, window);
           replayDecisionWindowsRef.current.push(window);
           replayMaxConcurrencyRef.current = Math.max(replayMaxConcurrencyRef.current, replayDecisionOpenRef.current.size);
-        } else if (event.event === "decision-ended" || event.event === "request-aborted") {
+        } else if (event.event === "decision-none" || event.event === "decision-cause-effect" || event.event === "request-aborted") {
           const window = replayDecisionOpenRef.current.get(id);
           if (window) window.end = performance.now();
           replayDecisionOpenRef.current.delete(id);
@@ -805,8 +812,25 @@ export default function Board({
   const drainVisualReentryDecisionQueueRef = useRef<(() => void) | null>(null);
   const visualReentryPendingRef = useRef<Array<{ prepared: PreparedVisualReentry; generation: number; launchLiveSeq: number }>>([]);
   const visualReentryEvidenceRef = useRef<VisualEvidenceEntry[]>([]);
+  /**
+   * The cause_effect diagram-in-progress: which nodes are already committed
+   * ink, and the pen region reserved for the rest of the chain. Lets
+   * handleSettledVisualReentry draw one node/edge at a time as evidence
+   * accumulates instead of waiting for the whole chain to be judged
+   * complete. Reset on page turn and on rejected evidence — see the
+   * `causeEffectProgressRef.current = null` sites next to the matching
+   * `visualReentryEvidenceRef.current = []` resets.
+   */
+  const causeEffectProgressRef = useRef<{
+    page: number;
+    regionX: number;
+    regionW: number;
+    regionTop: number;
+    nextY: number;
+    anchor?: { bottom: number; centerX: number };
+    nodeLabels: string[];
+  } | null>(null);
   const causeEvidenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const comparisonEvidenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visualReentryCommitBusyRef = useRef(false);
   const visualReentryFlushRequestedRef = useRef(false);
   const flushVisualReentryRef = useRef<(() => Promise<boolean>) | null>(null);
@@ -2045,13 +2069,17 @@ export default function Board({
         : "";
       const midThought = carried !== "" && !isThoughtComplete(carried);
       dropLiveLine();
+      // The diagram-in-progress belongs to the page it was drawn on — a page
+      // turn (even with no pending evidence window, e.g. right after a
+      // chain just completed but before flushVisualReentry finalized the
+      // ref) always invalidates it for further growth. Already-drawn ink
+      // stays on its own page; only the tracking ref is cleared.
+      causeEffectProgressRef.current = null;
       if (visualReentryEvidenceRef.current.length > 0) {
         log({ type: "visual-reentry", event: "evidence-invalidated-page-turn", reason: "page locality changed before evidence completed" });
         visualReentryEvidenceRef.current = [];
         if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
         causeEvidenceTimerRef.current = null;
-        if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
-        comparisonEvidenceTimerRef.current = null;
       }
 
       pagePensRef.current.set(pageRef.current, { ...penRef.current });
@@ -5452,10 +5480,9 @@ export default function Board({
       clearVisualReentryCandidateQueue("visual re-entry generation reset by voice command");
       visualReentryPendingRef.current = [];
       visualReentryEvidenceRef.current = [];
+      causeEffectProgressRef.current = null;
       if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
       causeEvidenceTimerRef.current = null;
-      if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
-      comparisonEvidenceTimerRef.current = null;
       if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
       visualReentryDrainTimerRef.current = null;
       setInterim("");
@@ -5519,6 +5546,85 @@ export default function Board({
     }
   }, [framePage, log]);
 
+  /**
+   * Draws whichever cause_effect nodes in `nodes` haven't been committed yet
+   * for the diagram-in-progress tracked by causeEffectProgressRef — one box
+   * (and the arrow into it) per new node, real committed ink via
+   * elementsRef/commit(), same as every other direct-commit path in this
+   * file. Deterministic only: `nodes` must already come from
+   * parseExplicitCauseEffect, no LLM call happens here. Fails closed (skips
+   * the draw, leaves whatever is already on the canvas untouched) whenever
+   * the safety/consistency checks below can't be satisfied — never guesses,
+   * never erases already-spoken ink.
+   */
+  const commitCauseEffectStep = useCallback(async (
+    thoughtId: string,
+    sourceText: string,
+    nodes: string[],
+    stage: "opened" | "completed",
+  ) => {
+    if (liveRef.current !== null) {
+      log({ type: "visual-reentry", event: "cause-incremental-blocked", thoughtId, visualFamily: "cause_effect", reason: "a live line is still mutable" });
+      return;
+    }
+    const compressed: string[] = [];
+    for (const node of nodes) {
+      const label = compressLabel(node);
+      if (!label) {
+        log({ type: "visual-reentry", event: "cause-incremental-skipped", thoughtId, visualFamily: "cause_effect", reason: "a node label could not be compressed to five content words" });
+        return;
+      }
+      compressed.push(label);
+    }
+
+    let progress = causeEffectProgressRef.current;
+    if (progress && progress.page !== pageRef.current) progress = null;
+    const already = progress?.nodeLabels ?? [];
+    if (already.length >= compressed.length) return;
+    for (let i = 0; i < already.length; i += 1) {
+      if (already[i] !== compressed[i]) {
+        log({ type: "visual-reentry", event: "cause-incremental-mismatch", thoughtId, visualFamily: "cause_effect", reason: "re-parsed chain no longer matches the nodes already drawn" });
+        return;
+      }
+    }
+
+    let region = progress;
+    if (!region) {
+      const measured = measureCauseEffectProgress(compressed, Math.max(0, 4 - compressed.length));
+      if (willOverflow(penRef.current, measured.w, measured.h)) {
+        turnPage("overflow", "cause/effect diagram does not fit on the current sheet");
+      }
+      const spot = place(penRef.current, measured.w, measured.h, true);
+      region = { page: pageRef.current, regionX: spot.x, regionW: measured.w, regionTop: spot.y, nextY: spot.y, anchor: undefined, nodeLabels: [] };
+    }
+
+    const newElements: SceneElement[] = [];
+    for (let i = already.length; i < compressed.length; i += 1) {
+      const result = appendCauseEffectNode(compressed[i], region.regionX, region.nextY, region.regionW, region.anchor);
+      const converted = await convertCauseEffectAppend(result.elements);
+      newElements.push(...converted);
+      region.anchor = result.anchor;
+      region.nextY = nextCauseEffectNodeY(result.anchor.bottom);
+      region.nodeLabels.push(compressed[i]);
+    }
+    if (!newElements.length) return;
+
+    elementsRef.current = [...elementsRef.current, ...newElements];
+    const undo = emptyUndo();
+    undo.addedElementIds = newElements.map((el) => el.id);
+    recordOperation("visual_reentry", undo, { sourceText });
+    commit();
+    causeEffectProgressRef.current = region;
+    log({
+      type: "visual-reentry",
+      event: `cause-incremental-${stage}`,
+      thoughtId,
+      visualFamily: "cause_effect",
+      reason: `drew ${compressed.length - already.length} new cause/effect node(s) incrementally`,
+    });
+    revealVisualReentry({ x: region.regionX, y: region.regionTop, w: region.regionW, h: region.nextY - region.regionTop }, thoughtId);
+  }, [commit, log, recordOperation, revealVisualReentry, turnPage]);
+
   const flushVisualReentry = useCallback(async (): Promise<boolean> => {
     if (visualReentryCommitBusyRef.current) {
       visualReentryFlushRequestedRef.current = true;
@@ -5532,6 +5638,28 @@ export default function Board({
     try {
       while (visualReentryPendingRef.current.length) {
         const entry = visualReentryPendingRef.current[0];
+        // A cause_effect chain that was already drawn node-by-node as it was
+        // spoken (see commitCauseEffectStep / causeEffectProgressRef) has
+        // nothing left to commit here — the one-shot pipeline still ran (to
+        // keep its dedup/staleness/queue guarantees), but drawing its result
+        // now would duplicate ink already on the page. Only short-circuit
+        // when every node this prepared spec asked for is already drawn; a
+        // mismatch (e.g. the model-fallback path paraphrased differently)
+        // falls through to the normal one-shot commit as a safety net.
+        if (entry.prepared.spec.type === "cause_effect") {
+          const progress = causeEffectProgressRef.current;
+          const specNodes = entry.prepared.spec.nodes;
+          const alreadyDrawn = progress !== null &&
+            progress.page === pageRef.current &&
+            progress.nodeLabels.length === specNodes.length &&
+            progress.nodeLabels.every((label, index) => label === specNodes[index]);
+          if (alreadyDrawn) {
+            visualReentryPendingRef.current.shift();
+            causeEffectProgressRef.current = null;
+            log({ type: "visual-reentry", event: "cause-incremental-finalized", thoughtId: entry.prepared.thought.id, visualFamily: "cause_effect", reason: "chain already drawn incrementally, one-shot commit skipped" });
+            continue;
+          }
+        }
         const sourceInk = inkForThought(entry.prepared.thought);
         const lastInk = sourceInk[sourceInk.length - 1];
         const firstInk = sourceInk[0];
@@ -5699,7 +5827,7 @@ export default function Board({
   }, [log, now]);
   drainVisualReentryDecisionQueueRef.current = drainVisualReentryDecisionQueue;
 
-  const launchVisualReentryCandidate = useCallback((candidateThought: SettledThought, reason: string, sequenceCompleted = false, causeCompleted = false, comparisonCompleted = false) => {
+  const launchVisualReentryCandidate = useCallback((candidateThought: SettledThought, reason: string, causeCompleted = false) => {
     const experimentMode = replayModeRef.current;
     const candidateCompletedAt = now();
     const participantThoughtIds = candidateThought.participantThoughtIds ?? [candidateThought.id];
@@ -5711,9 +5839,7 @@ export default function Board({
       sourceText: candidateThought.text,
       participantThoughtIds,
     });
-    if (sequenceCompleted) log({ type: "visual-reentry", event: "sequence-evidence-completed", thoughtId: candidateThought.id, reason, visualFamily: "sequence" });
     if (causeCompleted) log({ type: "visual-reentry", event: "cause-evidence-completed", thoughtId: candidateThought.id, reason, visualFamily: "cause_effect" });
-    if (comparisonCompleted) log({ type: "visual-reentry", event: "comparison-evidence-completed", thoughtId: candidateThought.id, reason, visualFamily: "comparison" });
     const candidate = evaluateVisualCandidate(candidateThought.text);
     log({
       type: "visual-reentry",
@@ -5754,47 +5880,6 @@ export default function Board({
     drainVisualReentryDecisionQueueRef.current?.();
   }, [log, now]);
 
-  const launchExpression = useCallback((thought: SettledThought) => {
-    const experimentMode = replayModeRef.current;
-    if (experimentMode === "v2_only" || experimentMode === "vr_shell") return;
-    if (visualReentryProcessedIdsRef.current.has(thought.id)) return;
-    const expressed = expressThought(thought.text);
-    if (!expressed.spec) {
-      log({
-        type: "visual-reentry",
-        event: "expression-none",
-        thoughtId: thought.id,
-        reason: expressed.reason,
-        sourceExcerpt: thought.text.slice(0, 80),
-        sourceText: thought.text,
-      });
-      return;
-    }
-    if (!claimThought(visualReentryProcessedIdsRef.current, thought.id)) return;
-    log({
-      type: "visual-reentry",
-      event: expressed.spec.type === "note" ? "expression-note" : "expression-relation",
-      thoughtId: thought.id,
-      reason: expressed.reason,
-      visualFamily: expressed.spec.type,
-      sourceExcerpt: thought.text.slice(0, 80),
-      sourceText: thought.text,
-    });
-    visualReentryPendingRef.current.push({
-      prepared: {
-        thought,
-        spec: expressed.spec,
-        decidedAt: now(),
-        decisionLatencyMs: 0,
-        decisionSource: "deterministic_fast_path",
-        candidateCompletedAt: now(),
-      },
-      generation: visualReentryGenerationRef.current,
-      launchLiveSeq: liveSeqRef.current,
-    });
-    void flushVisualReentryRef.current?.();
-  }, [log, now]);
-
   const handleSettledVisualReentry = useCallback((thought: SettledThought) => {
     log({
       type: "visual-reentry",
@@ -5809,43 +5894,47 @@ export default function Board({
       clearTimeout(causeEvidenceTimerRef.current);
       causeEvidenceTimerRef.current = null;
     }
-    if (comparisonEvidenceTimerRef.current) {
-      clearTimeout(comparisonEvidenceTimerRef.current);
-      comparisonEvidenceTimerRef.current = null;
-    }
 
     const priorWindow = visualReentryEvidenceRef.current;
     let evidence = advanceVisualEvidence(priorWindow, thought);
     if (evidence.status === "rejected" && priorWindow.some((entry) => entry.family === "cause_effect")) {
       const prior = completePendingCauseEvidence(priorWindow);
-      if (prior?.candidate) launchVisualReentryCandidate(prior.candidate, prior.reason, false, true);
+      if (prior?.candidate) {
+        // Draws any delta before finalizing so a chain abandoned by an
+        // unrelated next thought is still fully on the canvas — the
+        // flush-loop shortcut (see flushVisualReentry) clears
+        // causeEffectProgressRef once this candidate is dequeued and found
+        // to match, so no manual reset is needed on this branch.
+        const priorNodes = parseExplicitCauseEffect(prior.candidate.text).intent?.nodes;
+        if (priorNodes) void commitCauseEffectStep(prior.candidate.id, prior.candidate.text, priorNodes, "completed");
+        launchVisualReentryCandidate(prior.candidate, prior.reason, true);
+      } else {
+        causeEffectProgressRef.current = null;
+      }
       evidence = advanceVisualEvidence([], thought);
     }
     visualReentryEvidenceRef.current = evidence.next;
     if (evidence.status === "pending") {
       log({ type: "visual-reentry", event: "evidence-held", thoughtId: thought.id, reason: evidence.reason, sourceText: thought.text, participantThoughtIds: [thought.id] });
-      if (evidence.sequenceEvidence) log({ type: "visual-reentry", event: `sequence-evidence-${evidence.sequenceEvidence}`, thoughtId: thought.id, reason: evidence.reason, visualFamily: "sequence" });
       if (evidence.causeEvidence) {
         log({ type: "visual-reentry", event: `cause-evidence-${evidence.causeEvidence}`, thoughtId: thought.id, reason: evidence.reason, visualFamily: "cause_effect" });
+        if (evidence.causeEvidence === "opened") {
+          // The opening clause already contains one full edge (evidence.ts
+          // only reports "opened" once parseExplicitCauseEffect finds
+          // exactly one edge) — draw both its nodes and the connecting
+          // arrow right away instead of waiting for the chain to complete.
+          const openedNodes = parseExplicitCauseEffect(thought.text).intent?.nodes;
+          if (openedNodes) void commitCauseEffectStep(thought.id, thought.text, openedNodes, "opened");
+        }
         causeEvidenceTimerRef.current = setTimeout(() => {
           causeEvidenceTimerRef.current = null;
           const completed = completePendingCauseEvidence(visualReentryEvidenceRef.current);
           if (!completed?.candidate) return;
           visualReentryEvidenceRef.current = [];
-          launchVisualReentryCandidate(completed.candidate, completed.reason, false, true);
+          const completedNodes = parseExplicitCauseEffect(completed.candidate.text).intent?.nodes;
+          if (completedNodes) void commitCauseEffectStep(completed.candidate.id, completed.candidate.text, completedNodes, "completed");
+          launchVisualReentryCandidate(completed.candidate, completed.reason, true);
         }, 6_000);
-      }
-      if (evidence.comparisonEvidence) {
-        log({ type: "visual-reentry", event: `comparison-evidence-${evidence.comparisonEvidence}`, thoughtId: thought.id, reason: evidence.reason, visualFamily: "comparison" });
-        if (evidence.comparisonEvidence === "extended") {
-          comparisonEvidenceTimerRef.current = setTimeout(() => {
-            comparisonEvidenceTimerRef.current = null;
-            const completed = completePendingComparisonEvidence(visualReentryEvidenceRef.current);
-            if (!completed?.candidate) return;
-            visualReentryEvidenceRef.current = [];
-            launchVisualReentryCandidate(completed.candidate, completed.reason, false, false, true);
-          }, 3_500);
-        }
       }
       return;
     }
@@ -5859,11 +5948,20 @@ export default function Board({
         sourceText: thought.text,
         participantThoughtIds: [thought.id],
       });
-      launchExpression(thought);
+      // A causal chain that just got rejected (unrelated/unsafe next
+      // thought) draws nothing further — whatever was already drawn
+      // incrementally stays on the canvas, per the never-erase-spoken-ink
+      // posture; only the tracking ref is finalized. The thought itself
+      // stays as ordinary handwriting — there is no local fallback shape.
+      if (evidence.family === "cause_effect") causeEffectProgressRef.current = null;
       return;
     }
-    launchVisualReentryCandidate(evidence.candidate, evidence.reason, evidence.sequenceEvidence === "completed", evidence.causeEvidence === "completed", evidence.comparisonEvidence === "completed");
-  }, [launchExpression, launchVisualReentryCandidate, log]);
+    if (evidence.causeEvidence === "completed") {
+      const completedNodes = parseExplicitCauseEffect(evidence.candidate.text).intent?.nodes;
+      if (completedNodes) void commitCauseEffectStep(evidence.candidate.id, evidence.candidate.text, completedNodes, "completed");
+    }
+    launchVisualReentryCandidate(evidence.candidate, evidence.reason, evidence.causeEvidence === "completed");
+  }, [commitCauseEffectStep, launchVisualReentryCandidate, log]);
 
   /**
    * Guards against a command running twice.
@@ -6478,6 +6576,7 @@ export default function Board({
     clearVisualReentryCandidateQueue("visual re-entry generation reset before replay");
     visualReentryPendingRef.current = [];
     visualReentryEvidenceRef.current = [];
+    causeEffectProgressRef.current = null;
     if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
     cameraMotionRef.current = null;
     cameraProposalSequenceRef.current = 0;
@@ -6490,8 +6589,6 @@ export default function Board({
     apiRef.current?.updateScene({ appState: { scrollX: 0, scrollY: 0, zoom: { value: 1 } } });
     if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
     causeEvidenceTimerRef.current = null;
-    if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
-    comparisonEvidenceTimerRef.current = null;
     if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
     visualReentryDrainTimerRef.current = null;
     if (scribeTimerRef.current) clearTimeout(scribeTimerRef.current);
@@ -6554,20 +6651,16 @@ export default function Board({
       const runEvents = logRef.current.slice(logStart);
       const corpusEvidence = buildCorpusEvidence(runEvents);
       const events = runEvents.filter((event): event is Extract<LogEvent, { type: "visual-reentry" }> => event.type === "visual-reentry");
-      const decisionLatencies = events.flatMap((event) => event.event === "decision-ended" && event.decisionLatencyMs !== undefined ? [event.decisionLatencyMs] : []);
+      const decisionLatencies = events.flatMap((event) => event.event === "decision-cause-effect" && event.decisionLatencyMs !== undefined ? [event.decisionLatencyMs] : []);
       const sourceLatency = (field: "candidateCompleteToDurableReadyMs" | "candidateCompleteToCommitMs") => ({
         deterministic_fast_path: (() => {
           const values = events.flatMap((event) => event.decisionSource === "deterministic_fast_path" && event[field] !== undefined ? [event[field]] : []);
           return { count: values.length, p50: percentile(values, .5), p95: percentile(values, .95) };
         })(),
-        model_fallback: (() => {
-          const values = events.flatMap((event) => event.decisionSource === "model_fallback" && event[field] !== undefined ? [event[field]] : []);
-          return { count: values.length, p50: percentile(values, .5), p95: percentile(values, .95) };
-        })(),
       });
       const settledThoughtCount = corpusEvidence.settledThoughts.length;
       const candidateAcceptedCount = events.filter((event) => event.event === "candidate-accepted").length;
-      const visualDecisionCount = events.filter((event) => event.event === "decision-started").length;
+      const visualDecisionCount = events.filter((event) => event.event === "fast-path-attempted").length;
       const vr = {
         settledThoughtCount,
         candidateAcceptedCount,
@@ -6590,36 +6683,17 @@ export default function Board({
         fastPathAttemptCount: events.filter((event) => event.event === "fast-path-attempted").length,
         fastPathSuccessCount: events.filter((event) => event.event === "fast-path-succeeded").length,
         fastPathRejectedCount: events.filter((event) => event.event === "fast-path-rejected").length,
-        modelFallbackCount: events.filter((event) => event.event === "model-fallback-started").length,
-        fastPathEnumerationCount: events.filter((event) => event.event === "decision-enumeration" && event.decisionSource === "deterministic_fast_path").length,
-        fastPathQuantitativeCount: events.filter((event) => event.event === "decision-quantitative" && event.decisionSource === "deterministic_fast_path").length,
-        exactFastPathCount: events.filter((event) => event.event === "fast-path-succeeded" &&
-          ((event.fromModality === undefined && event.toModality === undefined) ||
-            (event.fromModality === "exact" && event.toModality === "exact"))).length,
-        approximateFastPathCount: events.filter((event) => event.event === "fast-path-succeeded" && (event.fromModality === "approximate" || event.toModality === "approximate")).length,
-        approximateFallbackCount: events.filter((event) => event.event === "model-fallback-started" && event.approximationPresent === true).length,
         fastPathGroundingPassCount: events.filter((event) => event.event === "grounding-passed" && event.decisionSource === "deterministic_fast_path").length,
         fastPathGroundingFailCount: events.filter((event) => event.event === "grounding-failed" && event.decisionSource === "deterministic_fast_path").length,
         fastPathCommittedCount: events.filter((event) => event.event === "durable-result-committed" && event.decisionSource === "deterministic_fast_path").length,
-        modelCommittedCount: events.filter((event) => event.event === "durable-result-committed" && event.decisionSource === "model_fallback").length,
         modelCallsAvoidedByCandidateGate: Math.max(0, settledThoughtCount - candidateAcceptedCount),
         modelCallsAvoidedByFastPath: events.filter((event) => event.event === "fast-path-succeeded").length,
         overallModelCallRate: settledThoughtCount > 0 ? visualDecisionCount / settledThoughtCount : 0,
-        sequenceEvidenceOpened: events.filter((event) => event.event === "sequence-evidence-opened").length,
-        sequenceEvidenceExtended: events.filter((event) => event.event === "sequence-evidence-extended").length,
-        sequenceEvidenceCompleted: events.filter((event) => event.event === "sequence-evidence-completed").length,
-        sequenceCandidateCount: events.filter((event) => event.event === "candidate-accepted" && event.visualFamily === "sequence").length,
-        sequenceFastPathCount: events.filter((event) => event.event === "fast-path-succeeded" && event.visualFamily === "sequence").length,
-        sequenceModelFallbackCount: events.filter((event) => event.event === "model-fallback-started" && event.visualFamily === "sequence").length,
-        sequenceGroundingPass: events.filter((event) => event.event === "grounding-passed" && event.visualFamily === "sequence").length,
-        sequenceGroundingFail: events.filter((event) => event.event === "grounding-failed" && event.visualFamily === "sequence").length,
-        sequenceCommittedCount: events.filter((event) => event.event === "durable-result-committed" && event.visualFamily === "sequence").length,
         causeEvidenceOpened: events.filter((event) => event.event === "cause-evidence-opened").length,
         causeEvidenceExtended: events.filter((event) => event.event === "cause-evidence-extended").length,
         causeEvidenceCompleted: events.filter((event) => event.event === "cause-evidence-completed").length,
         causeCandidateCount: events.filter((event) => event.event === "candidate-accepted" && event.visualFamily === "cause_effect").length,
         causeFastPathCount: events.filter((event) => event.event === "fast-path-succeeded" && event.visualFamily === "cause_effect").length,
-        causeModelFallbackCount: events.filter((event) => event.event === "model-fallback-started" && event.visualFamily === "cause_effect").length,
         causeGroundingPassCount: events.filter((event) => event.event === "grounding-passed" && event.visualFamily === "cause_effect").length,
         causeGroundingFailCount: events.filter((event) => event.event === "grounding-failed" && event.visualFamily === "cause_effect").length,
         causeCommittedCount: events.filter((event) => event.event === "durable-result-committed" && event.visualFamily === "cause_effect").length,
@@ -6627,18 +6701,6 @@ export default function Board({
         causeRejectedNegated: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("negation near causal")).length,
         causeRejectedTemporal: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("temporal order is not causality")).length,
         causeRejectedCorrelation: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("correlation/association is not causality")).length,
-        comparisonEvidenceOpened: events.filter((event) => event.event === "comparison-evidence-opened").length,
-        comparisonEvidenceExtended: events.filter((event) => event.event === "comparison-evidence-extended").length,
-        comparisonEvidenceCompleted: events.filter((event) => event.event === "comparison-evidence-completed").length,
-        comparisonCandidateCount: events.filter((event) => event.event === "candidate-accepted" && event.visualFamily === "comparison").length,
-        comparisonFastPathCount: events.filter((event) => event.event === "fast-path-succeeded" && event.visualFamily === "comparison").length,
-        comparisonModelFallbackCount: events.filter((event) => event.event === "model-fallback-started" && event.visualFamily === "comparison").length,
-        comparisonGroundingPassCount: events.filter((event) => event.event === "grounding-passed" && event.visualFamily === "comparison").length,
-        comparisonGroundingFailCount: events.filter((event) => event.event === "grounding-failed" && event.visualFamily === "comparison").length,
-        comparisonCommittedCount: events.filter((event) => event.event === "durable-result-committed" && event.visualFamily === "comparison").length,
-        comparisonRejectedCooccurrence: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("co-occur")).length,
-        comparisonRejectedUncertain: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("uncertain comparison")).length,
-        comparisonRejectedNegated: events.filter((event) => event.event === "candidate-rejected" && event.reason?.includes("negated comparison")).length,
         pageTurnInvalidationCount: events.filter((event) => event.event === "evidence-invalidated-page-turn" || (event.event === "durable-result-expired" && event.reason?.includes("page/session"))).length,
         candidateToDurableReady: sourceLatency("candidateCompleteToDurableReadyMs"),
         candidateToCommit: sourceLatency("candidateCompleteToCommitMs"),
@@ -6660,8 +6722,6 @@ export default function Board({
             quietCommitAtMs: at("durable-result-quiet-committed"),
             groundingPassedAtMs: at("grounding-passed"),
             decisionSource: fast?.decisionSource ?? committed?.decisionSource ?? null,
-            fromModality: fast?.fromModality ?? null,
-            toModality: fast?.toModality ?? null,
             cameraRequested: sameThought.some((event) => event.event === "camera-requested"),
             cameraSuppressed: sameThought.some((event) => event.event === "camera-suppressed"),
           };
@@ -6734,10 +6794,9 @@ export default function Board({
       clearVisualReentryCandidateQueue("visual re-entry generation reset after listening stopped");
       visualReentryPendingRef.current = [];
       visualReentryEvidenceRef.current = [];
+      causeEffectProgressRef.current = null;
       if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
       causeEvidenceTimerRef.current = null;
-      if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
-      comparisonEvidenceTimerRef.current = null;
       if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
       visualReentryDrainTimerRef.current = null;
     }
@@ -6777,10 +6836,9 @@ export default function Board({
     clearVisualReentryCandidateQueue("visual re-entry component unmounted");
     visualReentryPendingRef.current = [];
     visualReentryEvidenceRef.current = [];
+    causeEffectProgressRef.current = null;
     if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
     causeEvidenceTimerRef.current = null;
-    if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
-    comparisonEvidenceTimerRef.current = null;
     if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
     visualReentryDrainTimerRef.current = null;
   }, [clearVisualReentryCandidateQueue]);
@@ -7057,10 +7115,9 @@ export default function Board({
         clearVisualReentryCandidateQueue("visual re-entry generation reset by mode change");
         visualReentryPendingRef.current = [];
         visualReentryEvidenceRef.current = [];
+        causeEffectProgressRef.current = null;
         if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
         causeEvidenceTimerRef.current = null;
-        if (comparisonEvidenceTimerRef.current) clearTimeout(comparisonEvidenceTimerRef.current);
-        comparisonEvidenceTimerRef.current = null;
         if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
         visualReentryDrainTimerRef.current = null;
         storyQueueRef.current = [];
