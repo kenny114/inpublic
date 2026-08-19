@@ -18,7 +18,8 @@ const BRING_CAUSAL = "brings?(?!\\s+(?:in|out|up|back|over|along|forward)\\b)|br
  * routinely used "lets"/"means"/"allows"/"helps"/"enables".
  */
 const NATURAL_CUE = "means?|meant|lets?|allows?|allowed|enables?|enabled|helps?|helped";
-const DIRECT_CUE = `causes?|caused|causing|leads?\\s+to|led\\s+to|results?\\s+in|resulted\\s+in|creates?|created|produces?|produced|${BRING_CAUSAL}|${NATURAL_CUE}`;
+const RELATION_CUE = "handles?|handled|uses?|used|includes?|included|contains?|contained|shows?|showed|represents?|represented|decides?|decided|builds?|built|turns?\\s+into|turned\\s+into|becomes?|became|connects?\\s+to|connected\\s+to|is\\s+part\\s+of|are\\s+part\\s+of|is\\s+made\\s+of|are\\s+made\\s+of|consists?\\s+of";
+const DIRECT_CUE = `causes?|caused|causing|leads?\\s+to|led\\s+to|results?\\s+in|resulted\\s+in|creates?|created|produces?|produced|${BRING_CAUSAL}|${NATURAL_CUE}|${RELATION_CUE}`;
 export const EXPLICIT_CAUSAL_CUE = new RegExp(`\\b(?:${DIRECT_CUE}|because|therefore|due\\s+to)\\b`, "i");
 
 const QUESTION_STEM = /^(?:what|why|how|when|where|who|whom|whose|which|should|could|would|can|do|does|did|will)\b/i;
