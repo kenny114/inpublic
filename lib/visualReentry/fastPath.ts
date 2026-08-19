@@ -2,7 +2,7 @@ import { evaluateVisualCandidate } from "./candidate";
 import { parseExplicitCauseEffect } from "./cause";
 import type { SettledThought, VisualReentrySpec } from "./types";
 
-export type VisualDecisionSource = "deterministic_fast_path";
+export type VisualDecisionSource = "deterministic_fast_path" | "model_fallback";
 
 export interface DeterministicVisualIntentResult {
   intent: VisualReentrySpec | null;
@@ -11,7 +11,11 @@ export interface DeterministicVisualIntentResult {
 
 /**
  * Exceptionally conservative extraction for the one supported visual family.
- * Returning null means "no visual" — there is no model fallback left to try.
+ * Returning null means "cause.ts's deterministic grammar found nothing" —
+ * lib/visualReentry/orchestrate.ts falls back to the narrow model call in
+ * lib/visualReentry/decide.ts, but only when
+ * lib/visualReentry/candidate.ts's loosened prefilter still thinks the
+ * clause is worth asking about.
  */
 export function tryDeterministicVisualIntent(thought: SettledThought): DeterministicVisualIntentResult {
   const family = evaluateVisualCandidate(thought.text).family;

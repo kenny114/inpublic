@@ -35,7 +35,7 @@ export interface VisualSourceEvidence {
   family: ExistingVisualFamily | null;
   candidateOutcome: "accepted" | "rejected";
   ownershipReason: string | null;
-  decisionSource: "deterministic_fast_path" | null;
+  decisionSource: "deterministic_fast_path" | "model_fallback" | null;
   groundingResult: "passed" | "failed" | "not_attempted";
   commitResult: "quiet_committed" | "committed" | "held" | "expired" | "not_attempted";
 }

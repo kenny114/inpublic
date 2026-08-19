@@ -16,6 +16,21 @@
  * just the unrecognised term) is "fail the visual, never silently change
  * what the speaker is understood to have said."
  *
+ * An edge's endpoints and its own evidence phrase must always be literally
+ * (or near-literally) present in the source — that check never weakens,
+ * regardless of which tier decided the intent. When cause.ts's deterministic
+ * grammar can ALSO independently parse an edge's evidence clause (the common
+ * case — "X causes Y", "because X, Y"), its parsed direction is cross-checked
+ * against the claimed edge as a second opinion; a mismatch there is a strong
+ * signal of a bad edge and fails the intent. When the grammar recognizes
+ * nothing in that clause — expected for the relationship language it was
+ * never taught, which is the entire reason lib/visualReentry/decide.ts's
+ * model fallback exists — there is nothing to cross-check against, and the
+ * edge stands on its literal grounding alone. Requiring the deterministic
+ * grammar to independently re-derive every model-sourced edge would make the
+ * model fallback unable to ever contribute anything the grammar didn't
+ * already catch, defeating its purpose.
+ *
  * A downgraded intent is never rejected/retried: silence is always a safe
  * fallback here (invariant #12/#18 in the Visual Re-entry brief), never an
  * error, and never a fallback to a free-form Artist action.
@@ -85,10 +100,6 @@ export function groundDecision(
     };
   }
 
-  const fullParse = parseExplicitCauseEffect(thought.sourceSegments.length > 0 ? thought.sourceSegments.join(" ") : thought.text);
-  if (!fullParse.intent) {
-    return { decision: UNGROUNDED, result: { grounded: false, reason: `source causal assertion is unsafe: ${fullParse.reason}` } };
-  }
   const sameConcept = (claimed: string, parsed: string): boolean => {
     const claimedWords = words(claimed);
     const parsedWords = new Set(words(parsed));
@@ -100,15 +111,17 @@ export function groundDecision(
     if (!source || !target || !phraseGroundedInSource(source, sourceWords) || !phraseGroundedInSource(target, sourceWords)) {
       return { decision: UNGROUNDED, result: { grounded: false, reason: `cause_effect edge ${index} has an ungrounded endpoint` } };
     }
-    const edgeParse = parseExplicitCauseEffect(edge.evidence);
-    if (!edgeParse.intent || edgeParse.intent.edges.length !== 1) {
-      return { decision: UNGROUNDED, result: { grounded: false, reason: `cause_effect edge ${index} lacks one literal directed causal clause` } };
+    if (!phraseGroundedInSource(edge.evidence, sourceWords)) {
+      return { decision: UNGROUNDED, result: { grounded: false, reason: `cause_effect edge ${index} evidence not found in source: "${edge.evidence}"` } };
     }
-    const parsedEdge = edgeParse.intent.edges[0];
-    const parsedSource = edgeParse.intent.nodes[parsedEdge.from];
-    const parsedTarget = edgeParse.intent.nodes[parsedEdge.to];
-    if (!sameConcept(source, parsedSource) || !sameConcept(target, parsedTarget)) {
-      return { decision: UNGROUNDED, result: { grounded: false, reason: `cause_effect edge ${index} direction/endpoints do not match its evidence` } };
+    const edgeParse = parseExplicitCauseEffect(edge.evidence);
+    if (edgeParse.intent && edgeParse.intent.edges.length === 1) {
+      const parsedEdge = edgeParse.intent.edges[0];
+      const parsedSource = edgeParse.intent.nodes[parsedEdge.from];
+      const parsedTarget = edgeParse.intent.nodes[parsedEdge.to];
+      if (!sameConcept(source, parsedSource) || !sameConcept(target, parsedTarget)) {
+        return { decision: UNGROUNDED, result: { grounded: false, reason: `cause_effect edge ${index} direction/endpoints do not match its evidence` } };
+      }
     }
   }
   return { decision: intent, result: { grounded: true } };

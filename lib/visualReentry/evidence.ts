@@ -80,6 +80,18 @@ export function advanceVisualEvidence(
     return { status: "candidate", candidate: thought, next: [], reason: single.reason, family: single.family, causeEvidence: "completed" };
   }
 
+  if (single.candidate) {
+    // The deterministic grammar found no complete edge, but the loosened
+    // candidate.ts prefilter still thinks this is a plausible clause — pass
+    // it straight through as a single-thought candidate rather than folding
+    // it into the multi-thought causal evidence window (that window only
+    // exists to stitch together a chain the deterministic grammar already
+    // recognizes one edge of). The model in lib/visualReentry/decide.ts
+    // decides on this thought's full text alone, via
+    // lib/visualReentry/orchestrate.ts's fast-path-then-model-fallback flow.
+    return { status: "candidate", candidate: thought, next: [], reason: single.reason };
+  }
+
   return {
     status: "rejected",
     candidate: null,

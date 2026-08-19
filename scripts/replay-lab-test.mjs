@@ -104,10 +104,12 @@ assert.equal(chooseVisualCommitMode({ hasMutableLiveLine: false, cameraHold: tru
 assert.equal(chooseVisualCommitMode({ hasMutableLiveLine: false, cameraHold: true, launchLiveSeq: 2, currentLiveSeq: 2, sameTurnFold: true }), "normal", "a just-settled line may fold into its visual this turn");
 assert.equal(chooseVisualCommitMode({ hasMutableLiveLine: false, cameraHold: false, launchLiveSeq: 2, currentLiveSeq: 2 }), "normal", "a speech gap permits the ordinary reveal path");
 
-// Only one visual family survives Visual Re-entry (cause_effect), and there
-// is no model call anywhere left in this pipeline — cause.ts's deterministic
-// parse is the whole decision process. No fetch mocking is needed any more:
-// every prepared result here comes from real deterministic code.
+// Only one visual family survives Visual Re-entry (cause_effect). Every
+// prepared result below is a deterministic fast-path match, so no fetch
+// mocking is needed here — the model-fallback tier (tried only when
+// cause.ts's deterministic grammar finds nothing) is covered end-to-end,
+// with a mocked fetch, in scripts/visual-reentry-test.mjs's "model fallback"
+// section.
 const thought = {
   id: "t",
   text: "Marketing creates traffic, and traffic creates signups.",
@@ -132,10 +134,9 @@ const prepared = await prepareVisualReentry(thought, {
 assert.equal(prepared?.spec.type, "cause_effect", "a grounded decision becomes a durable spec without rendering");
 assert.equal(prepared?.decisionSource, "deterministic_fast_path");
 
-// "the reason X was that Y" used to have no model fallback to lean on and so
-// stayed a plain thought; cause.ts's own `reasonWas` handler has always been
-// able to parse it deterministically and correctly (app slowness -> people
-// leaving), and with no model fallback left at all, this is the only path.
+// "the reason X was that Y" is parsed correctly by cause.ts's own
+// `reasonWas` handler (app slowness -> people leaving), so it resolves on
+// the deterministic fast path and never needs the model fallback.
 const hardCauseThought = {
   ...thought,
   id: "cause-hard",
@@ -151,13 +152,49 @@ const hardCausePrepared = await prepareVisualReentry(hardCauseThought, {
 assert.equal(hardCausePrepared?.spec.type, "cause_effect", "hard causal syntax now parses deterministically — there is no model fallback left to defer to");
 assert.equal(hardCauseEvents.some((event) => event.event === "fast-path-succeeded"), true);
 
+// No fast-path match here, so this falls through to the model tier. With no
+// fetch mocked (and no real API key/server in this test process), the
+// request itself fails — the exact "ANTHROPIC_API_KEY not set locally"
+// shape lib/visualReentry/decide.ts's `complete()` call fails closed on —
+// and requestVisualIntent turns that into a safe `none`, never a thrown
+// error, per lib/visualReentry/client.ts's REASON_REQUEST_REJECTED path.
 const nonCausalThought = { ...thought, id: "no-visual", text: "The team discussed the onboarding experience.", sourceSegments: ["The team discussed the onboarding experience."] };
 const nonCausalPrepared = await prepareVisualReentry(nonCausalThought, {
   signal: new AbortController().signal,
   log: () => {},
   experimentMode: "vr_full",
 });
-assert.equal(nonCausalPrepared, null, "ordinary prose never produces a visual");
+assert.equal(nonCausalPrepared, null, "an unreachable model request fails closed to no visual, same as ordinary prose the model would have said none to");
+
+// A mocked model-fallback pass through the same replay-lab entry point
+// (prepareVisualReentry), proving the two-tier flow this file exercises for
+// the deterministic tier also works for the model tier end-to-end.
+{
+  const modelThought = { ...thought, id: "model-fallback", text: "InPublic is really infrastructure in which I can explain myself.", sourceSegments: ["InPublic is really infrastructure in which I can explain myself."] };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      type: "cause_effect",
+      nodes: ["InPublic", "I can explain myself"],
+      edges: [{ from: 0, to: 1, evidence: "InPublic is really infrastructure in which I can explain myself" }],
+      evidence: ["InPublic is really infrastructure in which I can explain myself"],
+    }),
+  });
+  try {
+    const modelEvents = [];
+    const modelPrepared = await prepareVisualReentry(modelThought, {
+      signal: new AbortController().signal,
+      log: (event) => modelEvents.push(event),
+      experimentMode: "vr_full",
+    });
+    assert.equal(modelPrepared?.decisionSource, "model_fallback", "a fast-path miss on plausible prose resolves through the model tier");
+    assert.equal(modelPrepared?.spec.type, "cause_effect");
+    assert.equal(modelEvents.some((event) => event.event === "model-fallback-started"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
 
 let safeToCommit = false;
 let builds = 0;

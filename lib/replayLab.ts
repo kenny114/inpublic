@@ -226,7 +226,7 @@ export interface ReplayRunReport {
     commitAtMs: number | null;
     quietCommitAtMs: number | null;
     groundingPassedAtMs: number | null;
-    decisionSource: "deterministic_fast_path" | null;
+    decisionSource: "deterministic_fast_path" | "model_fallback" | null;
     cameraRequested: boolean;
     cameraSuppressed: boolean;
   }>;

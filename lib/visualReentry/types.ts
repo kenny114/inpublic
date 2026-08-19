@@ -107,3 +107,14 @@ export type VisualReentryIntent = z.infer<typeof VisualReentryIntentSchema>;
 export function fallbackNone(reason: string): NoneIntent {
   return { type: "none", reason };
 }
+
+/**
+ * Distinguishes a genuine model-decided `none` (a real, expected answer)
+ * from a pipeline failure (network/parse/guard) so
+ * lib/visualReentry/orchestrate.ts can log the two as separate stages
+ * (`decision-none` vs `parse-failed`) — same convention this feature used
+ * before the six-family model call was removed and is now restored for.
+ */
+export const REASON_MODEL_UNAVAILABLE = "model call failed or returned nothing";
+export const REASON_PARSE_FAILED = "response did not parse as a valid intent";
+export const REASON_REQUEST_REJECTED = "request rejected (guard/rate-limit/network)";

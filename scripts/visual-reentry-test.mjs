@@ -1,13 +1,20 @@
 /**
- * Visual Re-entry's deterministic path tested directly.
+ * Visual Re-entry's decision pipeline tested directly: the deterministic
+ * fast path AND the narrow model fallback that catches the relationship
+ * language cause.ts's fixed trigger-word grammar was never taught.
  *
  *   node --import ./scripts/ts-register.mjs scripts/visual-reentry-test.mjs
  *
  * Only one visual family survives Visual Re-entry: cause_effect
- * (box-and-arrow). There is no model call anywhere in this pipeline anymore
- * — cause.ts's deterministic parse is the whole decision process, so every
- * test here exercises real parse/ground/compress/render code, no fixtures
- * standing in for a network call.
+ * (box-and-arrow). Two tiers decide it: cause.ts's deterministic grammar
+ * (tried first, no network call), then — only when that grammar finds
+ * nothing AND candidate.ts's loosened prefilter still thinks the clause is
+ * plausible prose — a single narrow model call (lib/visualReentry/decide.ts,
+ * requested client-side through lib/visualReentry/client.ts's
+ * requestVisualIntent). The model-fallback tests below stub global.fetch
+ * (the one seam requestVisualIntent crosses) rather than hitting a real
+ * network/API — same fixture-over-network posture the rest of this suite
+ * uses for every other model-calling route.
  */
 
 import { compressLabel, compressSpec } from "../lib/visualReentry/compress.ts";
@@ -23,7 +30,8 @@ import { VisualReentryCandidateQueue } from "../lib/visualReentry/decisionQueue.
 import { evaluateVisualCandidate } from "../lib/visualReentry/candidate.ts";
 import { advanceVisualEvidence, completePendingCauseEvidence, CAUSE_EVIDENCE_MAX_AGE_MS } from "../lib/visualReentry/evidence.ts";
 import { tryDeterministicVisualIntent } from "../lib/visualReentry/fastPath.ts";
-import { commitPreparedVisualReentry } from "../lib/visualReentry/orchestrate.ts";
+import { commitPreparedVisualReentry, prepareVisualReentry } from "../lib/visualReentry/orchestrate.ts";
+import { requestVisualIntent } from "../lib/visualReentry/client.ts";
 import { newPagePen, place, willOverflow } from "../lib/ops.ts";
 
 let pass = 0;
@@ -61,18 +69,31 @@ const candidateJob = (id, overrides = {}) => ({
 
 // --------------------------------------------------------------- candidate gate
 
-section("local candidate gate — cause_effect is the only supported family");
+section("local candidate gate — cheap prefilter only, not a relationship detector");
 
-check("rejects an ordinary reflective thought", !evaluateVisualCandidate("I'm still figuring out exactly how I feel about this.").candidate);
-check("rejects a casual noun sequence", !evaluateVisualCandidate("I've been thinking about users, pricing and the website all day.").candidate);
-check("accepts an explicit causal relationship", evaluateVisualCandidate("Marketing brings traffic and traffic creates signups.").family === "cause_effect");
-check("rejects a likely hierarchy", !evaluateVisualCandidate("Our company has engineering, marketing and sales.").candidate);
-check("does not promote ordinary chronological narrative", !evaluateVisualCandidate("I woke up, went outside and talked to my friend.").candidate);
-check("marketing brings traffic stays causal", evaluateVisualCandidate("Marketing brings traffic and traffic creates signups.").family === "cause_effect");
-check("rejects an explicit flat list — enumeration is no longer supported", !evaluateVisualCandidate("There are three things we need to improve: speed, accuracy and presentation.").candidate);
-check("rejects an explicit ordered process — sequence is no longer supported", !evaluateVisualCandidate("First we collect the data, then we clean it, then we train the model.").candidate);
-check("rejects a grounded from/to change — quantitative_change is no longer supported", !evaluateVisualCandidate("Revenue went from ten to forty this quarter.").candidate);
-check("rejects an explicit two-sided contrast — comparison is no longer supported", !evaluateVisualCandidate("Option A is cheaper, while Option B is easier to use.").candidate);
+// The prefilter's job shrank on purpose: it only screens out text that could
+// never be worth EITHER decision tier (empty, a voice command, a bare
+// question, or too short/verb-less to be a real clause). It no longer tries
+// to detect a relationship itself — recognizing one is cause.ts's
+// deterministic grammar's job first, and the model's job second. So a real,
+// verb-bearing clause that the grammar doesn't recognize is now
+// `candidate: true` with no `family` — "worth asking the model about" — not
+// an outright rejection.
+check("rejects an ordinary reflective thought (no finite verb the grammar recognizes)", !evaluateVisualCandidate("I'm still figuring out exactly how I feel about this.").candidate);
+check("passes a casual noun sequence through to the model (real clause, no known trigger word)", evaluateVisualCandidate("I've been thinking about users, pricing and the website all day.").candidate && evaluateVisualCandidate("I've been thinking about users, pricing and the website all day.").family === undefined);
+check("accepts an explicit causal relationship on the deterministic fast path", evaluateVisualCandidate("Marketing brings traffic and traffic creates signups.").family === "cause_effect");
+check("passes a likely hierarchy through to the model rather than rejecting outright", evaluateVisualCandidate("Our company has engineering, marketing and sales.").candidate && evaluateVisualCandidate("Our company has engineering, marketing and sales.").family === undefined);
+check("passes ordinary chronological narrative through to the model rather than rejecting outright", evaluateVisualCandidate("I woke up, went outside and talked to my friend.").candidate && evaluateVisualCandidate("I woke up, went outside and talked to my friend.").family === undefined);
+check("marketing brings traffic stays on the deterministic fast path", evaluateVisualCandidate("Marketing brings traffic and traffic creates signups.").family === "cause_effect");
+check("passes an explicit flat list through to the model — enumeration itself is still not supported, but the prefilter no longer rejects it", evaluateVisualCandidate("There are three things we need to improve: speed, accuracy and presentation.").candidate && evaluateVisualCandidate("There are three things we need to improve: speed, accuracy and presentation.").family === undefined);
+check("rejects an explicit ordered process (no finite verb the grammar recognizes)", !evaluateVisualCandidate("First we collect the data, then we clean it, then we train the model.").candidate);
+check("rejects a grounded from/to change (no finite verb the grammar recognizes)", !evaluateVisualCandidate("Revenue went from ten to forty this quarter.").candidate);
+check("passes an explicit two-sided contrast through to the model — comparison itself is still not supported, but the prefilter no longer rejects it", evaluateVisualCandidate("Option A is cheaper, while Option B is easier to use.").candidate && evaluateVisualCandidate("Option A is cheaper, while Option B is easier to use.").family === undefined);
+check("rejects empty text", !evaluateVisualCandidate("   ").candidate);
+check("rejects a recognized voice command", !evaluateVisualCandidate("scratch that").candidate);
+check("rejects a bare question — no settled relationship to draw", !evaluateVisualCandidate("What type of pricing would we do?").candidate);
+check("rejects pure filler", !evaluateVisualCandidate("So, yeah.").candidate);
+check("rejects a short verb-less fragment", !evaluateVisualCandidate("The website thing.").candidate);
 
 section("Cause/Effect conservative candidate and direction matrix");
 
@@ -168,15 +189,138 @@ for (const spoken of [
 }
 
 {
-  // "the reason X was that Y" used to be forced to `none` here because only
-  // the (now-removed) model fallback could safely parse it. cause.ts's own
-  // `reasonWas` handler has always been able to parse this deterministically
-  // and correctly (app slowness -> people leaving) — with no model fallback
-  // left at all, this is the only path, so it must actually fire.
+  // "the reason X was that Y" is parsed correctly by cause.ts's own
+  // `reasonWas` handler (app slowness -> people leaving), so it never needs
+  // to fall through to the model even though a model fallback exists again.
   const hard = thought("The reason people kept leaving was that the app took too long to respond.");
   check("clearly causal hard syntax passes the narrow gate", evaluateVisualCandidate(hard.text).family === "cause_effect");
   const fast = tryDeterministicVisualIntent(hard);
   check("hard syntax parses deterministically with the correct direction", fast.intent?.type === "cause_effect" && fast.intent.nodes[0] === "The app took too long to respond" && fast.intent.nodes[1] === "People kept leaving");
+}
+
+// --------------------------------------------------------------- model fallback (mocked network boundary)
+
+section("model fallback — tried only when the deterministic grammar finds nothing");
+
+{
+  // (a) A deterministic match must never call the model at all. Stub fetch
+  // to fail loudly if requestVisualIntent is reached.
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => { fetchCalls += 1; throw new Error("fetch should not have been called"); };
+  try {
+    const t = thought("Marketing brings traffic and traffic creates signups.");
+    const events = [];
+    const prepared = await prepareVisualReentry(t, {
+      signal: new AbortController().signal,
+      log: (event) => events.push(event),
+      now: () => 1_000,
+    });
+    check("a deterministic fast-path match resolves without ever touching fetch", fetchCalls === 0);
+    check("a deterministic fast-path match still produces a prepared visual", prepared?.decisionSource === "deterministic_fast_path" && prepared?.spec.type === "cause_effect");
+    check("no model-fallback-started event is logged for a fast-path match", !events.some((event) => event.event === "model-fallback-started"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  // (b) The deterministic grammar finds nothing for this exact sentence —
+  // "is really infrastructure in which" matches none of cause.ts's fixed
+  // trigger words — but it's a real, verb-bearing clause the loosened
+  // candidate.ts prefilter still calls worth asking about. This is the
+  // motivating real-speech case the model fallback exists for. The model
+  // response is grounded before it can become a prepared visual.
+  const text = "InPublic is really infrastructure in which I can explain myself.";
+  const t = thought(text);
+  check("the deterministic grammar finds nothing for this sentence", tryDeterministicVisualIntent(t).intent === null);
+  check("the loosened prefilter still calls it worth asking the model about", evaluateVisualCandidate(text).candidate && evaluateVisualCandidate(text).family === undefined);
+
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return {
+      ok: true,
+      json: async () => ({
+        type: "cause_effect",
+        nodes: ["InPublic", "I can explain myself"],
+        edges: [{ from: 0, to: 1, evidence: "InPublic is really infrastructure in which I can explain myself" }],
+        evidence: ["InPublic is really infrastructure in which I can explain myself"],
+      }),
+    };
+  };
+  try {
+    const events = [];
+    const prepared = await prepareVisualReentry(t, {
+      signal: new AbortController().signal,
+      log: (event) => events.push(event),
+      now: () => 1_000,
+    });
+    check("a fast-path miss on plausible prose calls the model exactly once", fetchCalls === 1);
+    check("model-fallback-started is logged before the request", events.some((event) => event.event === "model-fallback-started"));
+    check("the grounded model response becomes a prepared visual", prepared?.decisionSource === "model_fallback" && prepared?.spec.type === "cause_effect");
+    // compress.ts strips a leading "I" as an article-like word (same
+    // compression every node goes through regardless of decision source),
+    // so the second node lands as "Can explain myself", not "I can explain
+    // myself" — this proves the label passed through the real compressSpec
+    // code, not a shortcut.
+    check("the prepared visual keeps the model's literal nodes (post-compression)", prepared?.spec.nodes[0] === "InPublic" && prepared?.spec.nodes[1] === "Can explain myself");
+    check("grounding-passed is logged for the model-sourced intent", events.some((event) => event.event === "grounding-passed" && event.decisionSource === "model_fallback"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  // (c) A model output whose evidence was never actually said must be
+  // rejected by grounding, never reach the canvas.
+  const text = "InPublic is really infrastructure in which I can explain myself.";
+  const t = thought(text);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      type: "cause_effect",
+      nodes: ["InPublic", "Total world domination"],
+      edges: [{ from: 0, to: 1, evidence: "InPublic causes total world domination" }],
+      evidence: ["InPublic causes total world domination"],
+    }),
+  });
+  try {
+    const events = [];
+    const prepared = await prepareVisualReentry(t, {
+      signal: new AbortController().signal,
+      log: (event) => events.push(event),
+      now: () => 1_000,
+    });
+    check("a model output with fabricated evidence is rejected, not committed", prepared === null);
+    check("grounding-failed is logged for the fabricated model output", events.some((event) => event.event === "grounding-failed" && event.decisionSource === "model_fallback"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
+{
+  // A missing/failing model call (e.g. no ANTHROPIC_API_KEY locally) fails
+  // closed to `none` — requestVisualIntent turns a rejected fetch into a
+  // REASON_REQUEST_REJECTED none, never a thrown error or a retry.
+  const text = "InPublic is really infrastructure in which I can explain myself.";
+  const t = thought(text);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("network unavailable"); };
+  try {
+    const events = [];
+    const prepared = await prepareVisualReentry(t, {
+      signal: new AbortController().signal,
+      log: (event) => events.push(event),
+      now: () => 1_000,
+    });
+    check("a failed model request fails closed to no visual, never throws", prepared === null);
+    check("a failed model request is logged as parse-failed (pipeline failure), not decision-none", events.some((event) => event.event === "parse-failed" && event.decisionSource === "model_fallback"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 // --------------------------------------------------------------- bounded multi-thought evidence window

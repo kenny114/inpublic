@@ -360,6 +360,9 @@ export type LogEvent =
         | "fast-path-attempted"
         | "fast-path-succeeded"
         | "fast-path-rejected"
+        | "model-fallback-started"
+        | "decision-started"
+        | "decision-ended"
         | "evidence-held"
         | "evidence-combined"
         | "cause-evidence-opened"
@@ -411,7 +414,7 @@ export type LogEvent =
       sourceText?: string;
       /** Original V2 thought IDs when a bounded evidence window owns a combined source. */
       participantThoughtIds?: string[];
-      decisionSource?: "deterministic_fast_path";
+      decisionSource?: "deterministic_fast_path" | "model_fallback";
       visualFamily?: "cause_effect";
       /** Replay-clock timestamp captured at the exact local-gate completion boundary. */
       candidateCompletedAtMs?: number;
