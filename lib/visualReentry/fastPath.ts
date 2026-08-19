@@ -16,9 +16,6 @@ export interface DeterministicVisualIntentResult {
 export function tryDeterministicVisualIntent(thought: SettledThought): DeterministicVisualIntentResult {
   const family = evaluateVisualCandidate(thought.text).family;
   if (family !== "cause_effect") return { intent: null, reason: "no supported candidate family owns this source structure" };
-  if (/\bthe\s+reason\b[\s\S]{1,180}\bwas\s+that\b/i.test(thought.text)) {
-    return { intent: null, reason: "explicit causal framing is not safely recoverable deterministically" };
-  }
   const parsed = parseExplicitCauseEffect(thought.text);
   return { intent: parsed.intent, reason: parsed.reason };
 }

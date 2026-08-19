@@ -132,6 +132,10 @@ const prepared = await prepareVisualReentry(thought, {
 assert.equal(prepared?.spec.type, "cause_effect", "a grounded decision becomes a durable spec without rendering");
 assert.equal(prepared?.decisionSource, "deterministic_fast_path");
 
+// "the reason X was that Y" used to have no model fallback to lean on and so
+// stayed a plain thought; cause.ts's own `reasonWas` handler has always been
+// able to parse it deterministically and correctly (app slowness -> people
+// leaving), and with no model fallback left at all, this is the only path.
 const hardCauseThought = {
   ...thought,
   id: "cause-hard",
@@ -144,8 +148,8 @@ const hardCausePrepared = await prepareVisualReentry(hardCauseThought, {
   log: (event) => hardCauseEvents.push(event),
   experimentMode: "vr_full",
 });
-assert.equal(hardCausePrepared, null, "hard causal syntax the deterministic parser rejects stays a plain thought — there is no model fallback left to try");
-assert.equal(hardCauseEvents.some((event) => event.event === "fast-path-rejected"), true);
+assert.equal(hardCausePrepared?.spec.type, "cause_effect", "hard causal syntax now parses deterministically — there is no model fallback left to defer to");
+assert.equal(hardCauseEvents.some((event) => event.event === "fast-path-succeeded"), true);
 
 const nonCausalThought = { ...thought, id: "no-visual", text: "The team discussed the onboarding experience.", sourceSegments: ["The team discussed the onboarding experience."] };
 const nonCausalPrepared = await prepareVisualReentry(nonCausalThought, {

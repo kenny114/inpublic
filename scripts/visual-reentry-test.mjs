@@ -168,9 +168,15 @@ for (const spoken of [
 }
 
 {
+  // "the reason X was that Y" used to be forced to `none` here because only
+  // the (now-removed) model fallback could safely parse it. cause.ts's own
+  // `reasonWas` handler has always been able to parse this deterministically
+  // and correctly (app slowness -> people leaving) — with no model fallback
+  // left at all, this is the only path, so it must actually fire.
   const hard = thought("The reason people kept leaving was that the app took too long to respond.");
   check("clearly causal hard syntax passes the narrow gate", evaluateVisualCandidate(hard.text).family === "cause_effect");
-  check("hard syntax stays deterministic-none rather than forcing an unsafe parse", tryDeterministicVisualIntent(hard).intent === null);
+  const fast = tryDeterministicVisualIntent(hard);
+  check("hard syntax parses deterministically with the correct direction", fast.intent?.type === "cause_effect" && fast.intent.nodes[0] === "The app took too long to respond" && fast.intent.nodes[1] === "People kept leaving");
 }
 
 // --------------------------------------------------------------- bounded multi-thought evidence window

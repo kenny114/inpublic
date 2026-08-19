@@ -9,7 +9,16 @@ export const DEPENDENCY_ONLY = /\b(?:depends?\s+on|requires?|relies?\s+on|is\s+c
 
 /** `bring in/out/up` is ordinary English, not "brings traffic". */
 const BRING_CAUSAL = "brings?(?!\\s+(?:in|out|up|back|over|along|forward)\\b)|brought(?!\\s+(?:in|out|up|back)\\b)";
-const DIRECT_CUE = `causes?|caused|causing|leads?\\s+to|led\\s+to|results?\\s+in|resulted\\s+in|creates?|created|produces?|produced|${BRING_CAUSAL}`;
+/**
+ * Beyond the textbook causal verbs, natural speech about what a thing DOES
+ * for the speaker is just as much a causal claim ("InPublic lets me explain
+ * myself" is exactly as directed as "InPublic causes X") — these were the
+ * missing cues across every real recording tried against this pipeline:
+ * conversational self-description never once used "causes"/"leads to", but
+ * routinely used "lets"/"means"/"allows"/"helps"/"enables".
+ */
+const NATURAL_CUE = "means?|meant|lets?|allows?|allowed|enables?|enabled|helps?|helped";
+const DIRECT_CUE = `causes?|caused|causing|leads?\\s+to|led\\s+to|results?\\s+in|resulted\\s+in|creates?|created|produces?|produced|${BRING_CAUSAL}|${NATURAL_CUE}`;
 export const EXPLICIT_CAUSAL_CUE = new RegExp(`\\b(?:${DIRECT_CUE}|because|therefore|due\\s+to)\\b`, "i");
 
 const QUESTION_STEM = /^(?:what|why|how|when|where|who|whom|whose|which|should|could|would|can|do|does|did|will)\b/i;
@@ -30,11 +39,27 @@ export interface ParsedCauseEffect {
   rejection?: "uncertain" | "negated" | "temporal" | "correlation" | "dependency" | "correction" | "incomplete" | "materiality" | "oversized" | "ambiguous";
 }
 
+/**
+ * "InPublic lets me explain myself" is a real causal claim, but its effect
+ * endpoint literally starts with a personal pronoun ("me explain myself" ->
+ * after the cue word strips to "explain myself"... but "I can explain
+ * myself" strips to nothing useful without this). Stripping a leading
+ * pronoun subject + modal turns the effect into its actual content ("explain
+ * myself") instead of failing the whole edge on PERSONAL_PRONOUN below —
+ * every real recording tried against this pipeline described effects this
+ * way ("so I can talk about things", "which lets me express myself").
+ * Endpoints that are ONLY the pronoun (nothing left after stripping) still
+ * fail PERSONAL_PRONOUN/EMPTY_DEMONSTRATIVE untouched.
+ */
+const LEADING_PRONOUN_SUBJECT = /^(?:(?:i|we|you)(?:['’](?:m|re|ve|ll|d))?\s+(?:can|could|will|would|am|are|is|get\s+to)|(?:me|us|you)(?:\s+to)?)\s+/i;
+
 function clean(value: string): string {
   return value
     .trim()
     .replace(/^(?:and|that|which)\s+/i, "")
     .replace(/^[\s,;:.-]+|[\s,;:.!?-]+$/g, "")
+    .trim()
+    .replace(LEADING_PRONOUN_SUBJECT, "")
     .trim();
 }
 
@@ -159,7 +184,7 @@ export function parseExplicitCauseEffect(text: string): ParsedCauseEffect {
   if (CAUSE_UNCERTAINTY.test(spoken)) return { intent: null, reason: "uncertain causal modality is not representable", rejection: "uncertain" };
   if (CAUSE_NEGATION.test(spoken) && EXPLICIT_CAUSAL_CUE.test(spoken)) return { intent: null, reason: "negation near causal language fails closed", rejection: "negated" };
   if (DEPENDENCY_ONLY.test(spoken)) return { intent: null, reason: "dependency/constraint is not causality", rejection: "dependency" };
-  if (/\bfirst(?:ly)?\b[\s\S]{0,240}\b(?:then|next|finally)\b/i.test(spoken) && !new RegExp(`\\b(?:causes?|caused|leads?\\s+to|led\\s+to|results?\\s+in|resulted\\s+in|because|due\\s+to|produces?|produced|${BRING_CAUSAL})\\b`, "i").test(spoken)) {
+  if (/\bfirst(?:ly)?\b[\s\S]{0,240}\b(?:then|next|finally)\b/i.test(spoken) && !EXPLICIT_CAUSAL_CUE.test(spoken)) {
     return { intent: null, reason: "temporal order is not causality", rejection: "temporal" };
   }
 
