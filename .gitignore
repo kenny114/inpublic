@@ -12,3 +12,8 @@ next-env.d.ts
 .vercel
 public/_demo-src/
 .demo-chrome-profile/
+
+# Replay exports and demo-studio session dumps. 54 MB of debug JSON that
+# briefly got committed; regenerable from a recorded session, and it does not
+# belong in the history every clone has to download.
+artifacts/
