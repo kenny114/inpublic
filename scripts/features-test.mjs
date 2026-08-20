@@ -12,7 +12,7 @@
  */
 
 import assert from "node:assert/strict";
-import { features, isLivePresentationV2Enabled, isVisualReentryV1Enabled, isMeaningEngineV1Enabled } from "../lib/features.ts";
+import { features, isLivePresentationV2Enabled, isExpressionEngineV1Enabled } from "../lib/features.ts";
 
 let pass = 0;
 const failures = [];
@@ -41,15 +41,13 @@ section("validated stack is the committed production default (docs/VALIDATED-STA
 // deliberately reverting the whole activation, this must fail loudly rather
 // than silently ship the legacy pipeline again.
 check("livePresentationV2 is the committed default", features.livePresentationV2 === true);
-// visualReentryV1 was turned back OFF 2026-08-19: superseded by the Meaning
-// Engine (features.meaningEngineV1, lib/meaning/*) — see that flag's doc
-// comment in lib/features.ts for why. meaningEngineV1 itself stays off by
-// default while it's under active development/testing (query-param-gated
-// in non-production via `?me=1`), so NEITHER visual-intelligence pipeline
-// is on for a normal production visitor right now — V2's live handwriting
-// (Tier 1) is unaffected either way.
-check("visualReentryV1 is off (superseded by the Meaning Engine)", features.visualReentryV1 === false);
-check("meaningEngineV1 is off by default while under active development", features.meaningEngineV1 === false);
+// ONE visual engine, and it is on. Visual Re-entry V1 (lib/visualReentry/)
+// and Meaning Engine V1 (lib/meaning/) were both deleted on 2026-08-20 —
+// see features.expressionEngineV1's doc comment. Three engines behind three
+// flags, none of them on, meant a normal production visitor got no semantic
+// visual at all. If this flag is ever flipped back to `false`, that is the
+// state it returns to, so this must fail loudly.
+check("expressionEngineV1 is the committed default", features.expressionEngineV1 === true);
 
 const originalEnv = process.env.NODE_ENV;
 process.env.NODE_ENV = "production";
@@ -59,63 +57,57 @@ check(
   isLivePresentationV2Enabled() === true,
 );
 check(
-  "STANDARD MODE DEFAULT: production, no window, no query params -> Visual Re-entry inactive (superseded)",
-  isVisualReentryV1Enabled() === false,
-);
-check(
-  "STANDARD MODE DEFAULT: production, no window, no query params -> Meaning Engine inactive (still off by default)",
-  isMeaningEngineV1Enabled() === false,
+  "STANDARD MODE DEFAULT: production, no window, no query params -> Expression Engine active",
+  isExpressionEngineV1Enabled() === true,
 );
 process.env.NODE_ENV = originalEnv;
 
-section("isVisualReentryV1Enabled() requires V2 to also be on (override mechanics, simulated pre-activation state)");
+section("isExpressionEngineV1Enabled() requires V2 to also be on (override mechanics, simulated pre-activation state)");
 
-// Both isLivePresentationV2Enabled() and isVisualReentryV1Enabled() read
-// `window.location.search` directly (not React state), so a minimal window
-// shim with only `location.search` is enough to exercise the resolvers
-// outside a browser — same idiom as the localStorage shim above. The
+// Both resolvers read `window.location.search` directly (not React state), so
+// a minimal window shim with only `location.search` is enough to exercise
+// them outside a browser — same idiom as the localStorage shim above. The
 // override only has anything to prove when the committed flags are off, so
 // this section temporarily simulates the pre-activation committed state
-// (both `false`) to exercise the override logic in isolation, then restores
-// the real committed defaults asserted above.
+// (both `false`), then restores the real committed defaults asserted above.
 features.livePresentationV2 = false;
-features.visualReentryV1 = false;
+features.expressionEngineV1 = false;
 
 const withSearch = (search) => {
   globalThis.window = { location: { search } };
 };
 
-check("with both flags off, no query params: disabled", !isVisualReentryV1Enabled());
+check("with both flags off, no query params: disabled", !isExpressionEngineV1Enabled());
 
-withSearch("?vr=1");
-check("?vr=1 alone (no v2): still disabled — V1 is meaningless without V2", !isVisualReentryV1Enabled());
+withSearch("?xe=1");
+check("?xe=1 alone (no v2): still disabled — the engine is meaningless without V2's settled thoughts", !isExpressionEngineV1Enabled());
 
 withSearch("?v2=1");
-check("?v2=1 alone (no vr): disabled", !isVisualReentryV1Enabled());
+check("?v2=1 alone (no xe): disabled", !isExpressionEngineV1Enabled());
 
-withSearch("?v2=1&vr=1");
-check("?v2=1&vr=1 together: enabled (dev override)", isVisualReentryV1Enabled());
+withSearch("?v2=1&xe=1");
+check("?v2=1&xe=1 together: enabled (dev override)", isExpressionEngineV1Enabled());
 
 delete globalThis.window;
 
-section("isVisualReentryV1Enabled() — dev override works, production ignores it (Part 15)");
+section("isExpressionEngineV1Enabled() — dev override works, production ignores it");
 
 process.env.NODE_ENV = "development";
-withSearch("?v2=1&vr=1");
-check("dev override works: ?v2=1&vr=1 enables V1 in development", isVisualReentryV1Enabled());
+withSearch("?v2=1&xe=1");
+check("dev override works: ?v2=1&xe=1 enables the engine in development", isExpressionEngineV1Enabled());
 
 process.env.NODE_ENV = "production";
-withSearch("?v2=1&vr=1");
+withSearch("?v2=1&xe=1");
 check(
-  "production ignores query override — ?v2=1&vr=1 must NOT enable V1 in production while the committed flags are off",
-  isVisualReentryV1Enabled() === false,
+  "production ignores query override — ?v2=1&xe=1 must NOT enable the engine in production while the committed flags are off",
+  isExpressionEngineV1Enabled() === false,
 );
 
 // The flag itself (not the query override) is what production honors.
 features.livePresentationV2 = true;
-features.visualReentryV1 = true;
+features.expressionEngineV1 = true;
 withSearch("");
-check("in production, the committed flags alone (no query needed) enable V1", isVisualReentryV1Enabled() === true);
+check("in production, the committed flags alone (no query needed) enable the engine", isExpressionEngineV1Enabled() === true);
 
 // Already back to the real committed defaults (both `true`) here, so no
 // restore is needed — just clean up the shims this section installed.
@@ -151,38 +143,6 @@ store.set("inpublic-preferences", JSON.stringify({ defaultMode: "standard", disp
 check("an explicit standard preference round-trips as standard", readPreferences().defaultMode === "standard");
 
 check("DEFAULT_PREFERENCES itself defaults to standard", DEFAULT_PREFERENCES.defaultMode === "standard");
-
-// ------------------------------------- engine mutual exclusion
-
-/**
- * The Expression Engine and the Meaning Engine both consume the same settled
- * thoughts and draw onto the same sheet. Running both double-draws the same
- * content in two visual languages, so the flag resolver — not a comment, and
- * not whoever flips the flags — has to enforce that only one can win.
- */
-{
-  const { isMeaningEngineV1Enabled, isExpressionEngineV1Enabled } = await import("../lib/features.ts");
-  const withSearch = (search) => {
-    globalThis.window = { ...globalThis.window, location: { search } };
-  };
-
-  withSearch("?v2=1&me=1");
-  check("the meaning engine turns on by itself", isMeaningEngineV1Enabled() === true);
-  check("and the expression engine stays off", isExpressionEngineV1Enabled() === false);
-
-  withSearch("?v2=1&xe=1");
-  check("the expression engine turns on by itself", isExpressionEngineV1Enabled() === true);
-
-  withSearch("?v2=1&me=1&xe=1");
-  check("with both requested, the expression engine wins", isExpressionEngineV1Enabled() === true);
-  check("and the meaning engine is forced off, so the sheet is never double-drawn", isMeaningEngineV1Enabled() === false);
-
-  // Note: `livePresentationV2` is committed on, so both resolvers' V2 gate is
-  // always satisfied in this build — the gate itself is covered by the
-  // visualReentry override tests above, which simulate the pre-activation state.
-  withSearch("?v2=1");
-  check("with neither requested, both engines stay off", isExpressionEngineV1Enabled() === false && isMeaningEngineV1Enabled() === false);
-}
 
 delete globalThis.window;
 

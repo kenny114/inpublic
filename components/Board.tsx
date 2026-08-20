@@ -165,34 +165,13 @@ import {
   unmarkProcessCommitted,
   type DirectorState,
 } from "@/lib/directorState";
-import { features, isLivePresentationV2Enabled, isVisualReentryV1Enabled, isMeaningEngineV1Enabled, isMeaningDebugOnlyEnabled, isWordlessVisualsEnabled, isExpressionEngineV1Enabled, isExpressionDebugOnlyEnabled } from "@/lib/features";
+import { features, isLivePresentationV2Enabled, isExpressionEngineV1Enabled, isExpressionDebugOnlyEnabled } from "@/lib/features";
 import { ExpressionLiveController, type ExpressionLiveUpdate } from "@/lib/expression/live";
 import { syncExpressionCanvas, createExpressionIdentity, boundsOf } from "@/lib/expression/render/excalidrawSync";
 import { describePatch } from "@/lib/expression/render/core";
 import type { ExpressionTrace } from "@/lib/expression/pipeline";
 import { formatTrace } from "@/lib/expression/trace";
-import { MeaningEngineController, type MeaningDebugSnapshot, type MeaningUpdate } from "@/lib/meaning/engine";
-import { syncMeaningCanvas, createMeaningIdentity } from "@/lib/meaning/apply";
-import { emptyProvisionalState, scanProvisional, clearProvisional, type ProvisionalState } from "@/lib/meaning/reflex";
-import { syncProvisionalCanvas, createProvisionalIdentity } from "@/lib/meaning/provisional";
-import { commitPreparedVisualReentry, prepareVisualReentry, type PreparedVisualReentry } from "@/lib/visualReentry/orchestrate";
-import { evaluateVisualCandidate } from "@/lib/visualReentry/candidate";
-import { advanceVisualEvidence, completePendingCauseEvidence, type VisualEvidenceEntry } from "@/lib/visualReentry/evidence";
-import { chooseVisualCommitMode } from "@/lib/visualReentry/commitPolicy";
-import {
-  VisualReentryCandidateQueue,
-  type VisualReentryCandidateJob,
-} from "@/lib/visualReentry/decisionQueue";
-import { claimThought } from "@/lib/visualReentry/ownership";
-import type { SettledThought } from "@/lib/visualReentry/types";
-import { parseExplicitCauseEffect } from "@/lib/visualReentry/cause";
-import { compressLabel } from "@/lib/visualReentry/compress";
-import {
-  appendCauseEffectNode,
-  convertCauseEffectAppend,
-  measureCauseEffectProgress,
-  nextCauseEffectNodeY,
-} from "@/lib/visualReentry/render";
+import type { SettledThought } from "@/lib/liveSpeech";
 import {
   activeStoryScene,
   applyStoryActions,
@@ -813,67 +792,7 @@ export default function Board({
   const aiAbortRef = useRef<AbortController | null>(null);
   /** Cancels an in-flight Scribe call. */
   const scribeAbortRef = useRef<AbortController | null>(null);
-  /** Cancels an in-flight Visual Re-entry decision call — one controller for the whole chain, same idiom as aiAbortRef/scribeAbortRef/storyAbortRef. */
-  const visualReentryAbortRef = useRef<AbortController | null>(null);
-  const visualReentryInFlightRef = useRef(false);
-  const visualReentryGenerationRef = useRef(0);
-  const visualReentryCandidateQueueRef = useRef(new VisualReentryCandidateQueue());
-  const drainVisualReentryDecisionQueueRef = useRef<(() => void) | null>(null);
-  const visualReentryPendingRef = useRef<Array<{ prepared: PreparedVisualReentry; generation: number; launchLiveSeq: number }>>([]);
-  const visualReentryEvidenceRef = useRef<VisualEvidenceEntry[]>([]);
-  /**
-   * The cause_effect diagram-in-progress: which nodes are already committed
-   * ink, and the pen region reserved for the rest of the chain. Lets
-   * handleSettledVisualReentry draw one node/edge at a time as evidence
-   * accumulates instead of waiting for the whole chain to be judged
-   * complete. Reset on page turn and on rejected evidence — see the
-   * `causeEffectProgressRef.current = null` sites next to the matching
-   * `visualReentryEvidenceRef.current = []` resets.
-   */
-  const causeEffectProgressRef = useRef<{
-    page: number;
-    regionX: number;
-    regionW: number;
-    regionTop: number;
-    nextY: number;
-    anchor?: { bottom: number; centerX: number };
-    nodeLabels: string[];
-  } | null>(null);
-  const causeEvidenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const visualReentryCommitBusyRef = useRef(false);
-  const visualReentryFlushRequestedRef = useRef(false);
-  const flushVisualReentryRef = useRef<(() => Promise<boolean>) | null>(null);
-  const visualReentryDrainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Part 12's ownership guard: no settled-thought id is ever processed twice. Reset (not trimmed) once it grows large — a long session shouldn't accumulate this forever, and a duplicate id from far in the past is not a realistic case to guard against. */
-  const visualReentryProcessedIdsRef = useRef<Set<string>>(new Set());
   const thoughtInkRef = useRef(new Map<string, { ids: string[]; base: Pen; after: Pen; page: number }>());
-  /** Meaning Engine V1 (features.meaningEngineV1): the concept/relationship id <-> Excalidraw element id mapping applyMeaningOps reads and writes. */
-  const meaningIdentityRef = useRef(createMeaningIdentity());
-  /** Set once applyMeaningUpdate is defined below; the controller itself is created once and must call whatever the latest version of that callback is. */
-  const applyMeaningUpdateRef = useRef<((update: MeaningUpdate) => void) | null>(null);
-  const meaningControllerRef = useRef<MeaningEngineController | undefined>(undefined);
-  if (meaningControllerRef.current === undefined) {
-    meaningControllerRef.current = new MeaningEngineController({
-      onUpdate: (update) => applyMeaningUpdateRef.current?.(update),
-      onDebug:
-        process.env.NODE_ENV !== "production"
-          ? (snapshot) => {
-              // Part 10/15 debug view: readable in the console without
-              // looking at the canvas, and inspectable after the fact via
-              // window.__meaningDebug (devtools console), not just
-              // scrollback — see the Meaning Canvas rebuild's audit finding
-              // that this visibility never existed before.
-              console.debug("[meaning-engine]", snapshot.event, snapshot);
-              if (typeof window !== "undefined") {
-                const w = window as unknown as { __meaningDebug?: MeaningDebugSnapshot; __meaningDebugHistory?: MeaningDebugSnapshot[] };
-                w.__meaningDebug = snapshot;
-                w.__meaningDebugHistory = [...(w.__meaningDebugHistory ?? []), snapshot];
-              }
-            }
-          : undefined,
-    });
-  }
-
   /** Expression Engine V1 (features.expressionEngineV1): the SceneObject id <-> Excalidraw element id mapping syncExpressionCanvas reads and writes. */
   const expressionIdentityRef = useRef(createExpressionIdentity());
   /** Set once applyExpressionUpdate is defined below; the controller is created once and must call whatever the latest version of that callback is. */
@@ -898,13 +817,6 @@ export default function Board({
           : undefined,
     });
   }
-
-  const clearVisualReentryCandidateQueue = useCallback((reason: string) => {
-    const removed = visualReentryCandidateQueueRef.current.clear();
-    for (const job of removed) {
-      log({ type: "visual-reentry", event: "candidate-expired", thoughtId: job.thought.id, reason, queueDepth: 0 });
-    }
-  }, [log]);
 
   /**
    * The board as meaning, for the models. Positions come from the concept's
@@ -1045,13 +957,9 @@ export default function Board({
    * settled-thought output only; see docs/VISUAL-REENTRY-V1.md. Resolved
    * once per mount, same reasoning as v2Enabled above.
    */
-  const vrEnabled = useMemo(() => isVisualReentryV1Enabled(), []);
-  const meEnabled = useMemo(() => isMeaningEngineV1Enabled(), []);
-  const meDebugOnly = useMemo(() => isMeaningDebugOnlyEnabled(), []);
   /** Expression Engine V1 (features.expressionEngineV1). Mutually exclusive with meEnabled — the flag resolver enforces it, so both can be read here without a guard. */
   const xeEnabled = useMemo(() => isExpressionEngineV1Enabled(), []);
   const xeDebugOnly = useMemo(() => isExpressionDebugOnlyEnabled(), []);
-  const wordlessEnabled = useMemo(() => isWordlessVisualsEnabled(), []);
   const replayLabEnabled = useMemo(() => isDev && (demoStudio || isReplayLabEnabled(window.location.search)), [demoStudio]);
   /**
    * The thought currently being held open across Deepgram finals, under V2
@@ -2136,18 +2044,6 @@ export default function Board({
         : "";
       const midThought = carried !== "" && !isThoughtComplete(carried);
       dropLiveLine();
-      // The diagram-in-progress belongs to the page it was drawn on — a page
-      // turn (even with no pending evidence window, e.g. right after a
-      // chain just completed but before flushVisualReentry finalized the
-      // ref) always invalidates it for further growth. Already-drawn ink
-      // stays on its own page; only the tracking ref is cleared.
-      causeEffectProgressRef.current = null;
-      if (visualReentryEvidenceRef.current.length > 0) {
-        log({ type: "visual-reentry", event: "evidence-invalidated-page-turn", reason: "page locality changed before evidence completed" });
-        visualReentryEvidenceRef.current = [];
-        if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
-        causeEvidenceTimerRef.current = null;
-      }
 
       pagePensRef.current.set(pageRef.current, { ...penRef.current });
       pageMarksRef.current.set(pageRef.current, marksRef.current);
@@ -3028,15 +2924,11 @@ export default function Board({
           liveCameraHoldRef.current = false;
           // Generic Overview Removal V1 (docs/GENERIC-OVERVIEW-REMOVAL-V1-PRODUCTION-VALIDATION.md):
           // this timer still exists purely to release the live-camera hold —
-          // a queued Visual Re-entry commit or a pending structural reframe
-          // still deserves to run the moment speech goes quiet. What it no
-          // longer does is fall back to a generic full-page overview when
-          // neither of those is waiting; "nothing happened for 1.8 seconds"
-          // is not by itself a camera command.
-          void flushVisualReentryRef.current?.().then((committed) => {
-            if (committed) return;
-            if (pendingReframeRef.current) releasePendingReframeRef.current?.();
-          });
+          // a pending structural reframe still deserves to run the moment
+          // speech goes quiet. What it no longer does is fall back to a
+          // generic full-page overview when none is waiting; "nothing
+          // happened for 1.8 seconds" is not by itself a camera command.
+          if (pendingReframeRef.current) releasePendingReframeRef.current?.();
         }, LIVE_CAMERA_OVERVIEW_MS);
       }
 
@@ -3468,99 +3360,12 @@ export default function Board({
     [commit, log, retireSpeculative],
   );
 
-  // ---- the reflex layer: signs during speech ------------------------------
-  //
-  // THE INVERSION. Until now interims reached only writeLive (the caption
-  // line) and every visual system waited for a settled thought — words live,
-  // pictures late. Under wordless mode that is backwards, so the same settled
-  // interim words also drive tentative signs here.
-  //
-  // This deliberately runs even when V2 is active, which the older Tier 2
-  // reflex does not (`features.reflex && !v2Enabled` in handleInterim). V2's
-  // protected invariant 6 exists to stop secondary systems fighting the live
-  // *text* line for the screen; these signs are drawn in their own reserved
-  // band (lib/meaning/provisional.ts) and never touch the thought lifecycle,
-  // and under wordless the text line is no longer the primary output for them
-  // to collide with. Invariant 1 — no model in the Tier 1 live path — is
-  // untouched: the scan is pure regex and table lookup, no network.
-  const provisionalStateRef = useRef<ProvisionalState>(emptyProvisionalState());
-  const provisionalIdentityRef = useRef(createProvisionalIdentity());
-  /** Everything settled in the current utterance, rescanned whole each tick. */
-  const provisionalUtteranceRef = useRef("");
-  /** Bumped at every settlement, so a new utterance can never adopt old keys. */
-  const provisionalUtteranceIdRef = useRef(0);
-
-  /**
-   * Apply one reflex diff to the canvas.
-   *
-   * No `recordOperation`: provisional ink is scaffolding with a lifetime
-   * shorter than a sentence, and every mark it makes is removed again at
-   * settlement (or at a page turn, or a reset). Putting each guess in the undo
-   * stack would bury the user's real history under the machine's thinking.
-   */
-  const applyProvisional = useCallback(
-    async (next: ProvisionalState) => {
-      const epoch = liveSeqRef.current;
-      const { elements, addedIds, removedIds } = await syncProvisionalCanvas(
-        next,
-        elementsRef.current,
-        pageRef.current,
-        provisionalIdentityRef.current,
-      );
-      // A clear/undo/page change between the scan and the draw invalidates the
-      // whole result — same stale-epoch guard writeLive and Tier 2 both use.
-      if (liveSeqRef.current !== epoch) return;
-      if (!addedIds.length && !removedIds.length) return;
-      elementsRef.current = elements;
-      commit();
-    },
-    [commit],
-  );
-
-  /** Settled interim words -> tentative signs. Synchronous scan, async draw. */
-  const reflexOnInterim = useCallback(
-    (freshWords: string) => {
-      provisionalUtteranceRef.current = `${provisionalUtteranceRef.current} ${freshWords}`.trim();
-      const diff = scanProvisional(
-        provisionalStateRef.current,
-        provisionalUtteranceRef.current,
-        String(provisionalUtteranceIdRef.current),
-      );
-      provisionalStateRef.current = diff.state;
-      if (!diff.added.length && !diff.updated.length && !diff.removed.length) return;
-      log({
-        type: "reflex",
-        event: "provisional",
-        added: diff.added.map((a) => a.sign.glyph),
-        updated: diff.updated.map((u) => u.sign.glyph),
-        removed: diff.removed.length,
-      });
-      void applyProvisional(diff.state);
-    },
-    [applyProvisional, log],
-  );
-
-  /**
-   * The thought settled. Retire every guess *before* the Meaning Engine draws
-   * its confident version, so a viewer never sees both readings at once.
-   */
-  const settleProvisional = useCallback(() => {
-    provisionalUtteranceRef.current = "";
-    provisionalUtteranceIdRef.current += 1;
-    const diff = clearProvisional(provisionalStateRef.current);
-    provisionalStateRef.current = diff.state;
-    if (diff.removed.length) void applyProvisional(diff.state);
-  }, [applyProvisional]);
-
-  /** Everything provisional, gone. Used by undo and by explicit clears. */
+  /** Every speculative mark, gone. Used by undo and by explicit clears. */
   const dropAllSpeculative = useCallback(() => {
     // Instant, not faded: a hard reset should not leave a fading ghost behind.
     retireSpeculative([...speculativeMarksRef.current.keys()], "session reset", false);
     speculativeStateRef.current = emptySpeculativeState();
     speculativeUtteranceRef.current = "";
-    provisionalStateRef.current = emptyProvisionalState();
-    provisionalIdentityRef.current = createProvisionalIdentity();
-    provisionalUtteranceRef.current = "";
   }, [retireSpeculative]);
 
   // ---- the Scribe ----------------------------------------------------------
@@ -5627,18 +5432,6 @@ export default function Board({
       prevInterimRef.current = [];
       aiAbortRef.current?.abort();
       scribeAbortRef.current?.abort();
-      visualReentryAbortRef.current?.abort();
-      visualReentryAbortRef.current = null;
-      visualReentryInFlightRef.current = false;
-      visualReentryGenerationRef.current += 1;
-      clearVisualReentryCandidateQueue("visual re-entry generation reset by voice command");
-      visualReentryPendingRef.current = [];
-      visualReentryEvidenceRef.current = [];
-      causeEffectProgressRef.current = null;
-      if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
-      causeEvidenceTimerRef.current = null;
-      if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
-      visualReentryDrainTimerRef.current = null;
       setInterim("");
       commit();
       log({ type: "command", command, rawTranscript: raw, when });
@@ -5649,7 +5442,7 @@ export default function Board({
         turnPage("explicit-clear", "speaker explicitly requested a new page");
       }
     },
-    [clearStoryCaption, clearVisualReentryCandidateQueue, commit, doStoryUndo, doUndo, dropAllSpeculative, dropLiveLine, log, turnPage],
+    [clearStoryCaption, commit, doStoryUndo, doUndo, dropAllSpeculative, dropLiveLine, log, turnPage],
   );
 
   const stampThoughtInk = useCallback((thoughtId: string) => {
@@ -5720,65 +5513,6 @@ export default function Board({
     elementsRef.current = elementsRef.current.map((el) => (idsToFade.has(el.id) ? patch(el, { opacity: 22 }) : el));
     commit();
   }, [commit]);
-
-  const applyMeaningUpdate = useCallback(async (update: MeaningUpdate) => {
-    log({
-      type: "meaning",
-      event: "updated",
-      family: update.plan.family,
-      focusConceptIds: update.plan.focusConceptIds,
-      topic: update.state.topic,
-      currentInterpretation: update.state.currentInterpretation,
-      reason: update.plan.reason,
-    });
-    // MEANING_DEBUG_ONLY (?debug=1): prove the semantic brain in isolation.
-    // The onDebug callback above already logged this round's full snapshot
-    // by the time onUpdate fires — stop here, before any layout, arrow, or
-    // camera decision runs, let alone an Excalidraw write.
-    if (meDebugOnly) return;
-    const { elements: nextElements, addedIds, removedIds } = await syncMeaningCanvas(
-      update.state,
-      elementsRef.current,
-      penRef.current,
-      pageRef.current,
-      meaningIdentityRef.current,
-      () => turnPage("overflow", "meaning diagram does not fit on the current sheet"),
-      update.plan,
-      { wordless: wordlessEnabled },
-    );
-    if (addedIds.length || removedIds.length) {
-      const removedSet = new Set(removedIds);
-      const removedElements = elementsRef.current.filter((el) => removedSet.has(el.id));
-      elementsRef.current = nextElements;
-      const undo = emptyUndo();
-      undo.addedElementIds = addedIds;
-      undo.removedElements = removedElements;
-      recordOperation("meaning_engine", undo, { sourceText: update.state.topic ?? "" });
-      commit();
-      const addedSet = new Set(addedIds);
-      const added = nextElements.filter((el) => addedSet.has(el.id));
-      if (added.length) {
-        const xs = added.map((el) => el.x);
-        const ys = added.map((el) => el.y);
-        const xe = added.map((el) => el.x + (el.width ?? 0));
-        const ye = added.map((el) => el.y + (el.height ?? 0));
-        revealVisualReentry(
-          { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xe) - Math.min(...xs), h: Math.max(...ye) - Math.min(...ys) },
-          "meaning-engine",
-        );
-      }
-    }
-    fadeConsumedTranscript(update.consumedIds);
-  }, [commit, fadeConsumedTranscript, log, meDebugOnly, recordOperation, revealVisualReentry, turnPage, wordlessEnabled]);
-
-  useEffect(() => {
-    applyMeaningUpdateRef.current = applyMeaningUpdate;
-  }, [applyMeaningUpdate]);
-
-  /** Buffers this settled thought's text into the Meaning Engine's debounced cadence — see lib/meaning/engine.ts. */
-  const handleSettledMeaning = useCallback((thought: SettledThought) => {
-    meaningControllerRef.current?.submit({ source: "human_speech", content: thought.text, id: thought.id });
-  }, []);
 
   /**
    * Expression Engine V1 (features.expressionEngineV1): puts one finished
@@ -5858,422 +5592,6 @@ export default function Board({
     expressionControllerRef.current?.submit({ id: thought.id, text: thought.text });
   }, []);
 
-  /**
-   * Draws whichever cause_effect nodes in `nodes` haven't been committed yet
-   * for the diagram-in-progress tracked by causeEffectProgressRef — one box
-   * (and the arrow into it) per new node, real committed ink via
-   * elementsRef/commit(), same as every other direct-commit path in this
-   * file. Deterministic only: `nodes` must already come from
-   * parseExplicitCauseEffect, no LLM call happens here. Fails closed (skips
-   * the draw, leaves whatever is already on the canvas untouched) whenever
-   * the safety/consistency checks below can't be satisfied — never guesses,
-   * never erases already-spoken ink.
-   */
-  const commitCauseEffectStep = useCallback(async (
-    thoughtId: string,
-    sourceText: string,
-    nodes: string[],
-    stage: "opened" | "completed",
-  ) => {
-    if (liveRef.current !== null) {
-      log({ type: "visual-reentry", event: "cause-incremental-blocked", thoughtId, visualFamily: "cause_effect", reason: "a live line is still mutable" });
-      return;
-    }
-    const compressed: string[] = [];
-    for (const node of nodes) {
-      const label = compressLabel(node);
-      if (!label) {
-        log({ type: "visual-reentry", event: "cause-incremental-skipped", thoughtId, visualFamily: "cause_effect", reason: "a node label could not be compressed to five content words" });
-        return;
-      }
-      compressed.push(label);
-    }
-
-    let progress = causeEffectProgressRef.current;
-    if (progress && progress.page !== pageRef.current) progress = null;
-    const already = progress?.nodeLabels ?? [];
-    if (already.length >= compressed.length) return;
-    for (let i = 0; i < already.length; i += 1) {
-      if (already[i] !== compressed[i]) {
-        log({ type: "visual-reentry", event: "cause-incremental-mismatch", thoughtId, visualFamily: "cause_effect", reason: "re-parsed chain no longer matches the nodes already drawn" });
-        return;
-      }
-    }
-
-    let region = progress;
-    if (!region) {
-      const measured = measureCauseEffectProgress(compressed, Math.max(0, 4 - compressed.length));
-      if (willOverflow(penRef.current, measured.w, measured.h)) {
-        turnPage("overflow", "cause/effect diagram does not fit on the current sheet");
-      }
-      const spot = place(penRef.current, measured.w, measured.h, true);
-      region = { page: pageRef.current, regionX: spot.x, regionW: measured.w, regionTop: spot.y, nextY: spot.y, anchor: undefined, nodeLabels: [] };
-    }
-
-    const newElements: SceneElement[] = [];
-    for (let i = already.length; i < compressed.length; i += 1) {
-      const result = appendCauseEffectNode(compressed[i], region.regionX, region.nextY, region.regionW, region.anchor);
-      const converted = await convertCauseEffectAppend(result.elements);
-      newElements.push(...converted);
-      region.anchor = result.anchor;
-      region.nextY = nextCauseEffectNodeY(result.anchor.bottom);
-      region.nodeLabels.push(compressed[i]);
-    }
-    if (!newElements.length) return;
-
-    elementsRef.current = [...elementsRef.current, ...newElements];
-    const undo = emptyUndo();
-    undo.addedElementIds = newElements.map((el) => el.id);
-    recordOperation("visual_reentry", undo, { sourceText });
-    commit();
-    causeEffectProgressRef.current = region;
-    log({
-      type: "visual-reentry",
-      event: `cause-incremental-${stage}`,
-      thoughtId,
-      visualFamily: "cause_effect",
-      reason: `drew ${compressed.length - already.length} new cause/effect node(s) incrementally`,
-    });
-    revealVisualReentry({ x: region.regionX, y: region.regionTop, w: region.regionW, h: region.nextY - region.regionTop }, thoughtId);
-  }, [commit, log, recordOperation, revealVisualReentry, turnPage]);
-
-  const flushVisualReentry = useCallback(async (): Promise<boolean> => {
-    if (visualReentryCommitBusyRef.current) {
-      visualReentryFlushRequestedRef.current = true;
-      return false;
-    }
-    // Never race geometry against a mutable interim line. A settled line has
-    // already reserved its row, though, so the camera hold alone is not a
-    // placement hazard.
-    if (liveRef.current !== null) return false;
-    visualReentryCommitBusyRef.current = true;
-    try {
-      while (visualReentryPendingRef.current.length) {
-        const entry = visualReentryPendingRef.current[0];
-        // A cause_effect chain that was already drawn node-by-node as it was
-        // spoken (see commitCauseEffectStep / causeEffectProgressRef) has
-        // nothing left to commit here — the one-shot pipeline still ran (to
-        // keep its dedup/staleness/queue guarantees), but drawing its result
-        // now would duplicate ink already on the page. Only short-circuit
-        // when every node this prepared spec asked for is already drawn; a
-        // mismatch (e.g. the model-fallback path paraphrased differently)
-        // falls through to the normal one-shot commit as a safety net.
-        if (entry.prepared.spec.type === "cause_effect") {
-          const progress = causeEffectProgressRef.current;
-          const specNodes = entry.prepared.spec.nodes;
-          const alreadyDrawn = progress !== null &&
-            progress.page === pageRef.current &&
-            progress.nodeLabels.length === specNodes.length &&
-            progress.nodeLabels.every((label, index) => label === specNodes[index]);
-          if (alreadyDrawn) {
-            visualReentryPendingRef.current.shift();
-            causeEffectProgressRef.current = null;
-            log({ type: "visual-reentry", event: "cause-incremental-finalized", thoughtId: entry.prepared.thought.id, visualFamily: "cause_effect", reason: "chain already drawn incrementally, one-shot commit skipped" });
-            continue;
-          }
-        }
-        const sourceInk = inkForThought(entry.prepared.thought);
-        const lastInk = sourceInk[sourceInk.length - 1];
-        const firstInk = sourceInk[0];
-        const canReplace =
-          Boolean(firstInk && lastInk) &&
-          lastInk.page === pageRef.current &&
-          samePen(penRef.current, lastInk.after) &&
-          liveRef.current === null;
-        const commitMode = chooseVisualCommitMode({
-          hasMutableLiveLine: liveRef.current !== null,
-          cameraHold: liveCameraHoldRef.current,
-          launchLiveSeq: entry.launchLiveSeq,
-          currentLiveSeq: liveSeqRef.current,
-          sameTurnFold: canReplace,
-        });
-        // During speech, only a result whose source thought predates the
-        // latest live update may enter quietly. A just-settled result waits
-        // for either continued speech or the ordinary safe reveal window.
-        if (commitMode === "blocked") return false;
-        const quietCommit = commitMode === "quiet";
-        let placementPage = entry.prepared.thought.page;
-        const placementPen = penRef.current;
-        const placementSeq = liveSeqRef.current;
-        const isRelevant = (targetPage = placementPage) =>
-          entry.generation === visualReentryGenerationRef.current &&
-          targetPage === placementPage &&
-          pageRef.current === placementPage &&
-          now() - entry.prepared.decidedAt <= VISUAL_REENTRY_RESULT_TTL_MS;
-        const result = await commitPreparedVisualReentry(entry.prepared, {
-          pen: placementPen,
-          pageIndex: placementPage,
-          isSafe: () => chooseVisualCommitMode({
-            hasMutableLiveLine: liveRef.current !== null,
-            cameraHold: liveCameraHoldRef.current,
-            launchLiveSeq: entry.launchLiveSeq,
-            currentLiveSeq: liveSeqRef.current,
-            sameTurnFold: canReplace,
-          }) !== "blocked",
-          isRelevant,
-          isPlacementCurrent: (target) =>
-            penRef.current === target.pen &&
-            pageRef.current === target.pageIndex &&
-            liveSeqRef.current === placementSeq,
-          turnPageForOverflow: (target) => {
-            if (penRef.current !== target.pen || pageRef.current !== target.pageIndex) return null;
-            turnPage("overflow", "visual re-entry does not fit on the current sheet");
-            placementPage = pageRef.current;
-            return { pen: penRef.current, pageIndex: placementPage };
-          },
-          choosePromoteTarget: () => {
-            const hideIds = sourceInk.flatMap((ink) => ink.ids);
-            if (!hideIds.length) return null;
-            if (canReplace && firstInk) {
-              Object.assign(penRef.current, firstInk.base);
-              return { pen: penRef.current, pageIndex: pageRef.current, hideIds, mode: "replace" as const };
-            }
-            return { pen: penRef.current, pageIndex: pageRef.current, hideIds, mode: "hide" as const };
-          },
-          commitVisual: (elements, promote) => {
-            const hideIds = new Set(promote?.hideIds ?? []);
-            const removed = hideIds.size
-              ? elementsRef.current.filter((el) => hideIds.has(el.id))
-              : [];
-            elementsRef.current = [
-              ...elementsRef.current.filter((el) => !hideIds.has(el.id)),
-              ...(elements as SceneElement[]),
-            ];
-            const undo = emptyUndo();
-            undo.addedElementIds = (elements as SceneElement[]).map((el) => el.id);
-            undo.removedElements = removed;
-            recordOperation("visual_reentry", undo, { sourceText: entry.prepared.thought.text });
-            commit();
-          },
-          revealIfNeeded: (bounds) => {
-            if (quietCommit) {
-              log({ type: "visual-reentry", event: "camera-suppressed", thoughtId: entry.prepared.thought.id, reason: "quiet commit while speech owns attention" });
-            } else {
-              revealVisualReentry(bounds, entry.prepared.thought.id);
-            }
-          },
-          log,
-          now,
-        });
-        if (result === "held") return false;
-        visualReentryPendingRef.current.shift();
-        if (result === "committed") {
-          if (quietCommit) {
-            log({ type: "visual-reentry", event: "durable-result-quiet-committed", thoughtId: entry.prepared.thought.id });
-          }
-          if (visualReentryPendingRef.current.length) {
-            if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
-            visualReentryDrainTimerRef.current = setTimeout(() => {
-              visualReentryDrainTimerRef.current = null;
-              void flushVisualReentryRef.current?.();
-            }, LIVE_CAMERA_OVERVIEW_MS);
-          }
-          return true;
-        }
-      }
-      return false;
-    } finally {
-      visualReentryCommitBusyRef.current = false;
-      if (visualReentryFlushRequestedRef.current) {
-        visualReentryFlushRequestedRef.current = false;
-        queueMicrotask(() => void flushVisualReentryRef.current?.());
-      }
-    }
-  }, [commit, inkForThought, log, now, recordOperation, revealVisualReentry, turnPage]);
-  flushVisualReentryRef.current = flushVisualReentry;
-
-  const drainVisualReentryDecisionQueue = useCallback(() => {
-    if (visualReentryInFlightRef.current) return;
-
-    const queue = visualReentryCandidateQueueRef.current;
-    const { job, expired } = queue.dequeue({
-      generation: visualReentryGenerationRef.current,
-      page: pageRef.current,
-      now: now(),
-    });
-    for (const entry of expired) {
-      log({ type: "visual-reentry", event: "candidate-dequeued", thoughtId: entry.job.thought.id, queueDepth: queue.size });
-      log({ type: "visual-reentry", event: "candidate-expired", thoughtId: entry.job.thought.id, reason: entry.reason, queueDepth: queue.size });
-    }
-    if (!job) return;
-
-    log({ type: "visual-reentry", event: "candidate-dequeued", thoughtId: job.thought.id, queueDepth: queue.size });
-    if (visualReentryProcessedIdsRef.current.size > 200) visualReentryProcessedIdsRef.current.clear();
-    if (!claimThought(visualReentryProcessedIdsRef.current, job.thought.id)) {
-      log({ type: "visual-reentry", event: "duplicate-thought-skipped", thoughtId: job.thought.id });
-      queueMicrotask(() => drainVisualReentryDecisionQueueRef.current?.());
-      return;
-    }
-
-    const controller = new AbortController();
-    visualReentryAbortRef.current = controller;
-    visualReentryInFlightRef.current = true;
-    void prepareVisualReentry(job.thought, {
-      signal: controller.signal,
-      log,
-      now,
-      experimentMode: job.experimentMode,
-      candidateCompletedAt: job.candidateCompletedAt,
-    }).then((prepared) => {
-      if (!prepared) return;
-      if (job.generation !== visualReentryGenerationRef.current || prepared.thought.page !== pageRef.current) {
-        log({ type: "visual-reentry", event: "durable-result-expired", thoughtId: job.thought.id, reason: "page/session changed before result became ready" });
-        return;
-      }
-      if (visualReentryPendingRef.current.length >= VISUAL_REENTRY_PENDING_MAX) {
-        const dropped = visualReentryPendingRef.current.shift();
-        if (dropped) log({ type: "visual-reentry", event: "durable-result-expired", thoughtId: dropped.prepared.thought.id, reason: "durable queue capacity reached" });
-      }
-      visualReentryPendingRef.current.push({ prepared, generation: job.generation, launchLiveSeq: job.launchLiveSeq });
-      if (liveCameraHoldRef.current || liveRef.current !== null) {
-        log({ type: "visual-reentry", event: "durable-result-held", thoughtId: job.thought.id, reason: "speech is active" });
-      }
-      void flushVisualReentryRef.current?.();
-    }).finally(() => {
-      if (visualReentryAbortRef.current === controller) {
-        visualReentryAbortRef.current = null;
-        visualReentryInFlightRef.current = false;
-      }
-      queueMicrotask(() => drainVisualReentryDecisionQueueRef.current?.());
-    });
-  }, [log, now]);
-  drainVisualReentryDecisionQueueRef.current = drainVisualReentryDecisionQueue;
-
-  const launchVisualReentryCandidate = useCallback((candidateThought: SettledThought, reason: string, causeCompleted = false) => {
-    const experimentMode = replayModeRef.current;
-    const candidateCompletedAt = now();
-    const participantThoughtIds = candidateThought.participantThoughtIds ?? [candidateThought.id];
-    if (candidateThought.id.startsWith("evidence:")) log({
-      type: "visual-reentry",
-      event: "evidence-combined",
-      thoughtId: candidateThought.id,
-      reason,
-      sourceText: candidateThought.text,
-      participantThoughtIds,
-    });
-    if (causeCompleted) log({ type: "visual-reentry", event: "cause-evidence-completed", thoughtId: candidateThought.id, reason, visualFamily: "cause_effect" });
-    const candidate = evaluateVisualCandidate(candidateThought.text);
-    log({
-      type: "visual-reentry",
-      event: candidate.candidate ? "candidate-accepted" : "candidate-rejected",
-      thoughtId: candidateThought.id,
-      reason: candidate.reason,
-      sourceExcerpt: candidateThought.text.slice(0, 80),
-      sourceText: candidateThought.text,
-      participantThoughtIds,
-      candidateCompletedAtMs: candidateCompletedAt,
-      visualFamily: candidate.family,
-    });
-    if (!candidate.candidate || experimentMode === "vr_shell") return;
-
-    if (visualReentryProcessedIdsRef.current.has(candidateThought.id)) {
-      log({ type: "visual-reentry", event: "duplicate-thought-skipped", thoughtId: candidateThought.id });
-      return;
-    }
-    const job: VisualReentryCandidateJob = {
-      thought: candidateThought,
-      experimentMode: experimentMode === "vr_decision" ? "vr_decision" : "vr_full",
-      generation: visualReentryGenerationRef.current,
-      page: candidateThought.page,
-      launchLiveSeq: liveSeqRef.current,
-      candidateCompletedAt,
-      expiresAt: candidateCompletedAt + VISUAL_REENTRY_RESULT_TTL_MS,
-    };
-    const queued = visualReentryCandidateQueueRef.current.enqueue(job);
-    if (queued === "duplicate") {
-      log({ type: "visual-reentry", event: "duplicate-thought-skipped", thoughtId: candidateThought.id });
-      return;
-    }
-    if (queued === "full") {
-      log({ type: "visual-reentry", event: "candidate-queue-full", thoughtId: candidateThought.id, reason: "candidate decision queue capacity reached", queueDepth: visualReentryCandidateQueueRef.current.size });
-      return;
-    }
-    log({ type: "visual-reentry", event: "candidate-queued", thoughtId: candidateThought.id, queueDepth: visualReentryCandidateQueueRef.current.size });
-    drainVisualReentryDecisionQueueRef.current?.();
-  }, [log, now]);
-
-  const handleSettledVisualReentry = useCallback((thought: SettledThought) => {
-    log({
-      type: "visual-reentry",
-      event: "thought-received",
-      thoughtId: thought.id,
-      sourceExcerpt: thought.text.slice(0, 80),
-      sourceText: thought.text,
-      participantThoughtIds: [thought.id],
-    });
-    void flushVisualReentryRef.current?.();
-    if (causeEvidenceTimerRef.current) {
-      clearTimeout(causeEvidenceTimerRef.current);
-      causeEvidenceTimerRef.current = null;
-    }
-
-    const priorWindow = visualReentryEvidenceRef.current;
-    let evidence = advanceVisualEvidence(priorWindow, thought);
-    if (evidence.status === "rejected" && priorWindow.some((entry) => entry.family === "cause_effect")) {
-      const prior = completePendingCauseEvidence(priorWindow);
-      if (prior?.candidate) {
-        // Draws any delta before finalizing so a chain abandoned by an
-        // unrelated next thought is still fully on the canvas — the
-        // flush-loop shortcut (see flushVisualReentry) clears
-        // causeEffectProgressRef once this candidate is dequeued and found
-        // to match, so no manual reset is needed on this branch.
-        const priorNodes = parseExplicitCauseEffect(prior.candidate.text).intent?.nodes;
-        if (priorNodes) void commitCauseEffectStep(prior.candidate.id, prior.candidate.text, priorNodes, "completed");
-        launchVisualReentryCandidate(prior.candidate, prior.reason, true);
-      } else {
-        causeEffectProgressRef.current = null;
-      }
-      evidence = advanceVisualEvidence([], thought);
-    }
-    visualReentryEvidenceRef.current = evidence.next;
-    if (evidence.status === "pending") {
-      log({ type: "visual-reentry", event: "evidence-held", thoughtId: thought.id, reason: evidence.reason, sourceText: thought.text, participantThoughtIds: [thought.id] });
-      if (evidence.causeEvidence) {
-        log({ type: "visual-reentry", event: `cause-evidence-${evidence.causeEvidence}`, thoughtId: thought.id, reason: evidence.reason, visualFamily: "cause_effect" });
-        if (evidence.causeEvidence === "opened") {
-          // The opening clause already contains one full edge (evidence.ts
-          // only reports "opened" once parseExplicitCauseEffect finds
-          // exactly one edge) — draw both its nodes and the connecting
-          // arrow right away instead of waiting for the chain to complete.
-          const openedNodes = parseExplicitCauseEffect(thought.text).intent?.nodes;
-          if (openedNodes) void commitCauseEffectStep(thought.id, thought.text, openedNodes, "opened");
-        }
-        causeEvidenceTimerRef.current = setTimeout(() => {
-          causeEvidenceTimerRef.current = null;
-          const completed = completePendingCauseEvidence(visualReentryEvidenceRef.current);
-          if (!completed?.candidate) return;
-          visualReentryEvidenceRef.current = [];
-          const completedNodes = parseExplicitCauseEffect(completed.candidate.text).intent?.nodes;
-          if (completedNodes) void commitCauseEffectStep(completed.candidate.id, completed.candidate.text, completedNodes, "completed");
-          launchVisualReentryCandidate(completed.candidate, completed.reason, true);
-        }, 6_000);
-      }
-      return;
-    }
-    if (!evidence.candidate) {
-      log({
-        type: "visual-reentry",
-        event: "candidate-rejected",
-        thoughtId: thought.id,
-        reason: evidence.reason,
-        sourceExcerpt: thought.text.slice(0, 80),
-        sourceText: thought.text,
-        participantThoughtIds: [thought.id],
-      });
-      // A causal chain that just got rejected (unrelated/unsafe next
-      // thought) draws nothing further — whatever was already drawn
-      // incrementally stays on the canvas, per the never-erase-spoken-ink
-      // posture; only the tracking ref is finalized. The thought itself
-      // stays as ordinary handwriting — there is no local fallback shape.
-      if (evidence.family === "cause_effect") causeEffectProgressRef.current = null;
-      return;
-    }
-    if (evidence.causeEvidence === "completed") {
-      const completedNodes = parseExplicitCauseEffect(evidence.candidate.text).intent?.nodes;
-      if (completedNodes) void commitCauseEffectStep(evidence.candidate.id, evidence.candidate.text, completedNodes, "completed");
-    }
-    launchVisualReentryCandidate(evidence.candidate, evidence.reason, evidence.causeEvidence === "completed");
-  }, [commitCauseEffectStep, launchVisualReentryCandidate, log]);
 
   /**
    * Guards against a command running twice.
@@ -6430,10 +5748,6 @@ export default function Board({
             await writeLive(thought.text, true, isLastVisibleWrite ? finalTiming : undefined);
             stampThoughtInk(thought.id);
             log({ type: "v2", event: "pop-suppressed" });
-            if (vrEnabled || (replayModeRef.current !== null && replayModeRef.current !== "v2_only")) {
-              handleSettledVisualReentry(thought);
-            }
-            if (meEnabled) handleSettledMeaning(thought);
             if (xeEnabled) handleSettledExpression(thought);
           }
           if (v3PendingText) await writeLive(v3PendingText, false, finalTiming);
@@ -6469,7 +5783,6 @@ export default function Board({
         // Settle tier 2 against what was actually said: guesses the final
         // confirms are promoted, guesses it contradicts disappear.
         settleSpeculative(text);
-        if (wordlessEnabled) settleProvisional();
         nudgeScribe();
         resetSilenceTimer();
       }
@@ -6480,7 +5793,7 @@ export default function Board({
       // unconditionally here; downstream visual intelligence must consume
       // settled thought state, not compete with the active one.
     },
-    [correct, handleSettledMeaning, handleSettledVisualReentry, handleStoryFinal, log, meEnabled, now, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleProvisional, settleSpeculative, stampThoughtInk, v2Enabled, vrEnabled, wordlessEnabled, writeLive, writeStoryCaption],
+    [correct, handleStoryFinal, log, now, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleSpeculative, stampThoughtInk, v2Enabled, writeLive, writeStoryCaption],
   );
 
   const flushPresentationBoundary = useCallback(async () => {
@@ -6529,13 +5842,9 @@ export default function Board({
       await writeLive(thought.text, true);
       stampThoughtInk(thought.id);
       log({ type: "v2", event: "pop-suppressed" });
-      if (vrEnabled || (replayModeRef.current !== null && replayModeRef.current !== "v2_only")) {
-        handleSettledVisualReentry(thought);
-      }
-      if (meEnabled) handleSettledMeaning(thought);
       if (xeEnabled) handleSettledExpression(thought);
     }
-  }, [handleSettledExpression, handleSettledMeaning, handleSettledVisualReentry, log, meEnabled, now, stampThoughtInk, v2Enabled, vrEnabled, writeLive, xeEnabled]);
+  }, [handleSettledExpression, log, now, stampThoughtInk, v2Enabled, writeLive, xeEnabled]);
 
   const handleInterim = useCallback(
     (text: string, audioEndMs: number, streamEpoch: number, confidence = 0, timing?: DeepgramResultTiming) => {
@@ -6642,7 +5951,6 @@ export default function Board({
         // canvas reacts to these same settled words *now*, not at settlement.
         // Not gated on `!v2Enabled` — that gate protects the live text line,
         // which is not what this draws into.
-        if (fresh && wordlessEnabled) reflexOnInterim(fresh);
         if (fresh && features.reflex && !v2Enabled) {
           speculativeUtteranceRef.current =
             `${speculativeUtteranceRef.current} ${fresh}`.trim();
@@ -6698,7 +6006,7 @@ export default function Board({
 
       if (silenceTimerRef.current) resetSilenceTimer();
     },
-    [handleStoryPartial, reflexOnInterim, renderSpeculative, resetSilenceTimer, runVoiceCommand, v2Enabled, wordlessEnabled, writeLive, writeStoryCaption],
+    [handleStoryPartial, renderSpeculative, resetSilenceTimer, runVoiceCommand, v2Enabled, writeLive, writeStoryCaption],
   );
 
   /** Gemini engine: marks the model asked for, straight off the socket. */
@@ -6891,14 +6199,6 @@ export default function Board({
     aiAbortRef.current?.abort();
     scribeAbortRef.current?.abort();
     storyAbortRef.current?.abort();
-    visualReentryAbortRef.current?.abort();
-    visualReentryAbortRef.current = null;
-    visualReentryInFlightRef.current = false;
-    visualReentryGenerationRef.current += 1;
-    clearVisualReentryCandidateQueue("visual re-entry generation reset before replay");
-    visualReentryPendingRef.current = [];
-    visualReentryEvidenceRef.current = [];
-    causeEffectProgressRef.current = null;
     if (cameraMotionRef.current) cancelAnimationFrame(cameraMotionRef.current.rafId);
     cameraMotionRef.current = null;
     cameraProposalSequenceRef.current = 0;
@@ -6909,15 +6209,9 @@ export default function Board({
     pendingPageArrivalCameraRef.current = null;
     compositionRef.current = initialCompositionState();
     apiRef.current?.updateScene({ appState: { scrollX: 0, scrollY: 0, zoom: { value: 1 } } });
-    if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
-    causeEvidenceTimerRef.current = null;
-    if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
-    visualReentryDrainTimerRef.current = null;
     if (scribeTimerRef.current) clearTimeout(scribeTimerRef.current);
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     elementsRef.current = [];
-    meaningIdentityRef.current = createMeaningIdentity();
-    meaningControllerRef.current?.reset();
     expressionIdentityRef.current = createExpressionIdentity();
     expressionControllerRef.current?.reset();
     boardRef.current = new SemanticBoard();
@@ -6943,7 +6237,6 @@ export default function Board({
     v2ThoughtSourceRegionRef.current = null;
     prevInterimRef.current = [];
     settledCountRef.current = 0;
-    visualReentryProcessedIdsRef.current = new Set();
     replayDecisionWindowsRef.current = [];
     replayDecisionOpenRef.current = new Map();
     replayMaxConcurrencyRef.current = 0;
@@ -7079,7 +6372,7 @@ export default function Board({
       replayModeRef.current = null;
       deepgram.stop(false);
     }
-  }, [clearVisualReentryCandidateQueue, commit, deepgram, replayLabEnabled, status]);
+  }, [commit, deepgram, replayLabEnabled, status]);
 
   const demoRunRef = useRef(runReplayExperiment);
   demoRunRef.current = runReplayExperiment;
@@ -7113,21 +6406,9 @@ export default function Board({
       scribeFailuresRef.current = 0;
       storyAbortRef.current?.abort();
       storyQueueRef.current = [];
-      visualReentryAbortRef.current?.abort();
-      visualReentryAbortRef.current = null;
-      visualReentryInFlightRef.current = false;
-      visualReentryGenerationRef.current += 1;
-      clearVisualReentryCandidateQueue("visual re-entry generation reset after listening stopped");
-      visualReentryPendingRef.current = [];
-      visualReentryEvidenceRef.current = [];
-      causeEffectProgressRef.current = null;
-      if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
-      causeEvidenceTimerRef.current = null;
-      if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
-      visualReentryDrainTimerRef.current = null;
     }
     wasListeningRef.current = listening;
-  }, [clearVisualReentryCandidateQueue, status]);
+  }, [status]);
 
   // ---- manual dry-run handle ----------------------------------------------
   // Lets me rehearse pacing from the console without talking:
@@ -7158,16 +6439,7 @@ export default function Board({
   }, [demoStudio, guest]);
 
   useEffect(() => () => {
-    visualReentryAbortRef.current?.abort();
-    clearVisualReentryCandidateQueue("visual re-entry component unmounted");
-    visualReentryPendingRef.current = [];
-    visualReentryEvidenceRef.current = [];
-    causeEffectProgressRef.current = null;
-    if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
-    causeEvidenceTimerRef.current = null;
-    if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
-    visualReentryDrainTimerRef.current = null;
-  }, [clearVisualReentryCandidateQueue]);
+  }, []);
 
   /** Put a saved session back on the canvas. */
   const restoreSession = useCallback(
@@ -7484,18 +6756,6 @@ export default function Board({
         aiAbortRef.current?.abort();
         scribeAbortRef.current?.abort();
         storyAbortRef.current?.abort();
-        visualReentryAbortRef.current?.abort();
-        visualReentryAbortRef.current = null;
-        visualReentryInFlightRef.current = false;
-        visualReentryGenerationRef.current += 1;
-        clearVisualReentryCandidateQueue("visual re-entry generation reset by mode change");
-        visualReentryPendingRef.current = [];
-        visualReentryEvidenceRef.current = [];
-        causeEffectProgressRef.current = null;
-        if (causeEvidenceTimerRef.current) clearTimeout(causeEvidenceTimerRef.current);
-        causeEvidenceTimerRef.current = null;
-        if (visualReentryDrainTimerRef.current) clearTimeout(visualReentryDrainTimerRef.current);
-        visualReentryDrainTimerRef.current = null;
         storyQueueRef.current = [];
         const origin = pageOrigin(pageRef.current);
         const pageHasStandardContent = !activeStoryScene(storyRef.current) && elementsRef.current.some((element) =>
@@ -7526,7 +6786,7 @@ export default function Board({
       log({ type: "mode", from: previous, to: next });
       autosaveRef.current?.schedule();
     },
-    [clearStoryCaption, clearVisualReentryCandidateQueue, log, turnPage],
+    [clearStoryCaption, log, turnPage],
   );
 
   // ---- main-thread contention -----------------------------------------------

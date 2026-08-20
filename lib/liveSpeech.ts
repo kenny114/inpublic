@@ -463,3 +463,27 @@ export function flushPresentationThought(
   };
 }
 
+
+/**
+ * One settled thought: the unit Live Speech Presentation V2 emits once a run
+ * of Deepgram finals has stopped moving, and the only input the visual engine
+ * consumes. Lived under `lib/visualReentry/types.ts` while Visual Re-entry was
+ * the engine; it was never a Visual Re-entry concept, so it stayed when that
+ * engine was deleted and the Expression Engine became the only consumer.
+ */
+export interface SettledThought {
+  id: string;
+  text: string;
+  sourceSegments: string[];
+  page: number;
+  /** Session-clock time at which the first contributing final was received. */
+  startedAt?: number;
+  settledAt: number;
+  sessionGeneration?: number;
+  sourceRegion?: {
+    audioStartMs: number;
+    audioEndMs: number;
+  };
+  /** Present on combined evidence sources; single thoughts implicitly contain their own id. */
+  participantThoughtIds?: string[];
+}

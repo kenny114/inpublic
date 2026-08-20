@@ -1,13 +1,25 @@
 # Expression Engine V1 — meaning → visual expression
 
-This is the implementation that exists, not a future sketch. It lives in
-`lib/expression/` and is wired into the live speech path behind a flag that is
-off by default (`features.expressionEngineV1`).
+InPublic's core capability, and the only visual engine. It lives in
+`lib/expression/` and is ON by default (`features.expressionEngineV1`).
 
-## Why a new engine and not a rewrite of `lib/meaning/`
+**Activated 2026-08-20.** Before that date there were three visual engines
+behind three flags — Visual Re-entry V1 (`lib/visualReentry/`), Meaning
+Engine V1 (`lib/meaning/`), and this one — and *none* of them was on in
+production, so a real visitor got no semantic visual at all. The other two
+were deleted rather than left flagged off; recover them from the commit
+before the activation if a comparison baseline is ever wanted.
 
-`lib/meaning/` already got several important things right and they were
-carried forward rather than rediscovered: the model never emits geometry,
+The capability, stated plainly: **you speak what you mean, and the meaning is
+expressed visually in real time.** Speech is today's input, not the product.
+Anything that can produce meaning — a person talking, or later an AI agent
+saying "here is what I am trying to explain" — plugs into the same pipeline,
+because only the first layer knows where the words came from.
+
+## Why a new engine and not a rewrite of the Meaning Engine
+
+The Meaning Engine (`lib/meaning/`, deleted) got several important things
+right and they were carried forward rather than rediscovered: the model never emits geometry,
 the visual planner is deterministic, layout is a pure function, the canvas
 is patched rather than wiped, and non-structural meaning is kept as claims
 instead of being forced into fake edges.
@@ -21,9 +33,9 @@ types there is nothing to resolve a visual primitive from. Three further
 layers named in the brief had no home at all: communicative intent, a
 renderer abstraction, and evaluation/repair.
 
-Those are schema-level problems, so they were fixed at the schema.
-`lib/meaning/` is untouched and remains the default live engine; the two are
-mutually exclusive at the flag resolver.
+Those are schema-level problems, so they were fixed at the schema — which is
+why this was a new engine and not a patch, and why the old one was deleted
+once this one was proven rather than kept as a second way to draw.
 
 ## The layers
 
@@ -178,9 +190,9 @@ of five. / My mother's name is Mariam.` — through the real extractor:
 
 ## Live speech
 
-Wired, behind `features.expressionEngineV1` (dev override `?xe=1`). Off by
-default: with the flag off no controller is created, no model is called and no
-canvas write happens — verified in the browser, not just by reading the branch.
+Wired and on by default (`features.expressionEngineV1`; dev override `?xe=1`
+still works for a build with the flag off). It is the only consumer of the
+settled-thought stream.
 
 ```text
 Deepgram → Live Presentation V2 settled thought

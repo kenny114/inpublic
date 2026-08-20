@@ -91,10 +91,6 @@ export type OperationType =
   | "form_comparison"
   /** 3-6 existing concepts reorganized into an ordered chain. See lib/directorState.ts. */
   | "form_process"
-  /** A Visual Re-entry drawing that folded a settled thought. */
-  | "visual_reentry"
-  /** A Meaning Engine reconciliation applying one or more canvas operations (lib/meaning/reconcile.ts). */
-  | "meaning_engine"
   /** An Expression Engine scene reconciled onto the sheet (lib/expression/render/excalidrawSync.ts). */
   | "expression_engine";
 

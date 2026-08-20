@@ -98,110 +98,33 @@ export const features = {
    * override; reverting requires flipping this literal back to `false`.
    */
   livePresentationV2: true,
-  /**
-   * Visual Re-entry V1 — controlled reintroduction of visual intelligence
-   * DOWNSTREAM of Live Speech Presentation V2's settled-thought output. Only
-   * two visual families exist in V1: `enumeration` and `quantitative_change`
-   * (see lib/visualReentry/). `none` is a first-class, expected result — the
-   * hypothesis being tested is that most settled thoughts should produce no
-   * additional visual at all. See docs/VISUAL-REENTRY-V1.md.
-   *
-   * Meaningless without V2: `isVisualReentryV1Enabled()` returns false
-   * whenever `isLivePresentationV2Enabled()` is false, regardless of this
-   * flag or the dev override below. Off means the pipeline never runs — no
-   * extra LLM call, no extra canvas write, zero behavior change, same
-   * pattern as `reflex` / `livePresentationV2`.
-   *
-   * Dev-only override: with `NODE_ENV !== "production"`, `?vr=1` in the URL
-   * enables this mode for that page load (still requires V2 to also be on,
-   * via the `livePresentationV2` flag or `?v2=1`), so on/off can be compared
-   * without editing and redeploying — e.g. `/try?v2=1&vr=1`. Production
-   * always ignores the query param and reads only the committed flag value,
-   * same reasoning as every other flag in this file.
-   *
-   * ACTIVATED 2026-08-17 (docs/VALIDATED-STACK-PRODUCTION-ACTIVATION-V1.md):
-   * same activation as `livePresentationV2` above, for the same reason —
-   * `?vr=1` is now a no-op in every environment. Reverting requires flipping
-   * this literal back to `false` (and/or `livePresentationV2`, since this
-   * flag is inert without it regardless).
-   *
-   * SUPERSEDED 2026-08-19: turned back off now that the Meaning Engine
-   * (features.meaningEngineV1, lib/meaning/*) is the system actually being
-   * developed against. Left running, this fired an LLM call on every
-   * settled thought and logged its own `decision-none`/`fast-path-rejected`
-   * events under `type: "visual-reentry"` — easy to misread as a Meaning
-   * Engine failure during a session-log audit, since the two pipelines ran
-   * in parallel with no visual distinction in a casual read of the log.
-   * Everything under lib/visualReentry/ remains fully implemented and
-   * untouched; flip this back to `true` to bring it back as a comparison
-   * baseline if ever needed.
-   */
-  visualReentryV1: false,
-  /**
-   * Meaning Engine V1 — a persistent SemanticState (lib/meaning/types.ts)
-   * built downstream of Live Speech Presentation V2's settled-thought
-   * output, reconciled against the canvas via lib/meaning/reconcile.ts +
-   * lib/meaning/apply.ts instead of Visual Re-entry's single-clause
-   * cause_effect grammar. Off by default while it's validated against real
-   * sessions — Visual Re-entry (and everything else V2 already does) stays
-   * exactly as-is either way.
-   *
-   * Off means components/Board.tsx's meaning-engine branch never runs — no
-   * MeaningEngineController is created, no extra call, no extra canvas
-   * write, same pattern as `reflex` / `visualReentryV1`.
-   *
-   * When turning this on for local testing, also flip `visualReentryV1` off
-   * — both currently draw from the same settled-thought stream onto the
-   * same canvas, and running both at once double-draws related content.
-   *
-   * Dev-only override: with `NODE_ENV !== "production"`, `?me=1` in the URL
-   * enables this mode for that page load (still requires V2, via the
-   * `livePresentationV2` flag or `?v2=1`), mirroring visualReentryV1's
-   * `?vr=1`.
-   */
-  meaningEngineV1: false,
 
   /**
-   * Wordless Visuals V1 — the meaning region draws signs (lib/meaning/
-   * lexicon.ts -> lib/meaning/sign.ts) instead of labelled boxes, so a
-   * concept reaches the canvas as a glyph and never as its English label.
+   * Expression Engine V1 (`lib/expression/*`) — THE visual engine, and the
+   * product's core capability: meaning → visual expression. Driven by Live
+   * Speech Presentation V2's settled-thought stream through
+   * meaning → world → intent → grammar → scene → render → evaluate → repair.
+   * One model call, at the meaning layer only; every other layer is
+   * deterministic TypeScript that runs without a network.
    *
-   * Scoped deliberately to the meaning region and nothing else. The live
-   * transcript line (lib/ops.ts buildLiveLine) and the Scribe's lettering
-   * are separate surfaces on the same sheet, and switching them off is a
-   * different decision with a different failure mode — a viewer left with
-   * no signal at all if the sign vocabulary misses. Turning this on first
-   * lets the wordless region be judged next to the words it is meant to
-   * replace, which is the only way to find out whether it actually reads.
+   * ACTIVATED 2026-08-20. It replaced two predecessors that both drew from
+   * this same settled-thought stream onto this same sheet, and both of which
+   * were deleted rather than left flagged off:
    *
-   * Meaningless without the Meaning Engine: `isWordlessVisualsEnabled()`
-   * returns false when `isMeaningEngineV1Enabled()` is false.
+   *   - Visual Re-entry V1 (`lib/visualReentry/`), two visual families and a
+   *     single-clause cause_effect grammar.
+   *   - Meaning Engine V1 (`lib/meaning/`), a persistent SemanticState whose
+   *     relation vocabulary was discourse-shaped (`causes`, `supports`,
+   *     `contains`, `related_to`) over untyped concepts, so ordinary speech
+   *     about the world collapsed into unlabelled boxes.
    *
-   * Dev-only override: `?wordless=1`, mirroring `?me=1`.
-   */
-  wordlessVisualsV1: false,
-
-  /**
-   * Expression Engine V1 — the rebuild in `lib/expression/*`, driven by the
-   * same Live Speech Presentation V2 settled-thought stream the Meaning
-   * Engine consumes, but through the full meaning → world → intent →
-   * grammar → scene → render → evaluate → repair pipeline instead of
-   * SemanticState -> planMeaning -> syncMeaningCanvas.
-   *
-   * Off means components/Board.tsx's expression branch never runs — no
-   * controller is created, no extra model call, no extra canvas write —
-   * exactly the pattern `visualReentryV1` and `meaningEngineV1` follow.
-   *
-   * MUTUALLY EXCLUSIVE with the Meaning Engine, and enforced rather than
-   * documented: `isExpressionEngineV1Enabled()` wins and
-   * `isMeaningEngineV1Enabled()` returns false whenever it is on. Both draw
-   * from the same settled-thought stream onto the same sheet, and running
-   * the pair at once double-draws the same content in two different visual
-   * languages — the exact confusion that made `visualReentryV1` worth
-   * turning off when the Meaning Engine arrived.
+   * Three engines behind three flags meant the product shipped no semantic
+   * visual at all, because no combination of them was ever turned on in
+   * production. There is now one engine and one flag. Recover the others from
+   * the commit before this one if a comparison baseline is ever wanted.
    *
    * Dev-only override: `?xe=1` (still requires V2, via `livePresentationV2`
-   * or `?v2=1`), mirroring `?me=1` and `?vr=1`.
+   * or `?v2=1`).
    */
   expressionEngineV1: true,
 } as const;
@@ -222,43 +145,9 @@ export function isLivePresentationV2Enabled(): boolean {
 }
 
 /**
- * Resolves `features.visualReentryV1` plus its dev-only `?vr=1` override.
- * Always false when `isLivePresentationV2Enabled()` is false — Visual
- * Re-entry has no meaning without V2's settled-thought output to consume.
- * See the flag's doc comment above for why env/query overrides aren't
- * trusted for anything user-facing in this codebase.
- */
-export function isVisualReentryV1Enabled(): boolean {
-  if (!isLivePresentationV2Enabled()) return false;
-  if (features.visualReentryV1) return true;
-  if (process.env.NODE_ENV === "production") return false;
-  if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("vr") === "1";
-}
-
-/**
- * Resolves `features.meaningEngineV1` plus its dev-only `?me=1` override.
- * Always false when `isLivePresentationV2Enabled()` is false, same
- * reasoning as `isVisualReentryV1Enabled()`.
- */
-export function isMeaningEngineV1Enabled(): boolean {
-  if (!isLivePresentationV2Enabled()) return false;
-  // The Expression Engine replaces this one. Both consume the same settled
-  // thoughts and draw onto the same sheet, so they cannot both run — see
-  // `expressionEngineV1`'s doc comment. Enforced here rather than left to
-  // whoever flips the flags.
-  if (isExpressionEngineV1Enabled()) return false;
-  if (features.meaningEngineV1) return true;
-  if (process.env.NODE_ENV === "production") return false;
-  if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("me") === "1";
-}
-
-/**
  * Resolves `features.expressionEngineV1` plus its dev-only `?xe=1` override.
- * Always false without Live Presentation V2, same reasoning as
- * `isVisualReentryV1Enabled()`: there is no settled-thought stream to
- * consume without it.
+ * Always false without Live Presentation V2 — there is no settled-thought
+ * stream to consume without it.
  */
 export function isExpressionEngineV1Enabled(): boolean {
   if (!isLivePresentationV2Enabled()) return false;
@@ -269,43 +158,12 @@ export function isExpressionEngineV1Enabled(): boolean {
 }
 
 /**
- * Dev-only, `?debug=1`-gated counterpart of `isMeaningDebugOnlyEnabled()`:
- * runs the whole Expression pipeline and logs every stage, but stops before
- * any Excalidraw write or camera move. The way to tell a misunderstanding
+ * Dev-only, `?debug=1`-gated: runs the whole Expression pipeline and logs
+ * every stage, but stops before any Excalidraw write or camera move. The way to tell a misunderstanding
  * apart from a bad drawing without a canvas in the way.
  */
 export function isExpressionDebugOnlyEnabled(): boolean {
   if (!isExpressionEngineV1Enabled()) return false;
-  if (process.env.NODE_ENV === "production") return false;
-  if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("debug") === "1";
-}
-
-/**
- * Resolves `features.wordlessVisualsV1` plus its dev-only `?wordless=1`
- * override. Always false without the Meaning Engine, which is what produces
- * the SemanticState the lexicon maps.
- */
-export function isWordlessVisualsEnabled(): boolean {
-  if (!isMeaningEngineV1Enabled()) return false;
-  if (features.wordlessVisualsV1) return true;
-  if (process.env.NODE_ENV === "production") return false;
-  if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("wordless") === "1";
-}
-
-/**
- * Dev-only, `?debug=1`-gated: proves the semantic brain in isolation before
- * reconnecting it to the canvas. Requires the Meaning Engine itself to be
- * on (`isMeaningEngineV1Enabled()`) — it has no meaning otherwise. When
- * true, components/Board.tsx's applyMeaningUpdate stops after logging the
- * Part-10 debug snapshot: no layout, no arrows, no camera movement, no
- * Excalidraw write. Never available in production (this is a testing tool,
- * not a product surface, so it has no committed-flag path at all — only
- * the query-string override).
- */
-export function isMeaningDebugOnlyEnabled(): boolean {
-  if (!isMeaningEngineV1Enabled()) return false;
   if (process.env.NODE_ENV === "production") return false;
   if (typeof window === "undefined") return false;
   return new URLSearchParams(window.location.search).get("debug") === "1";

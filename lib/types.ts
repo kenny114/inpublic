@@ -429,16 +429,6 @@ export type LogEvent =
       pageIndex?: number;
     }
   | {
-      t: number;
-      type: "meaning";
-      event: "updated" | "no-change";
-      family?: string;
-      focusConceptIds?: string[];
-      topic?: string;
-      currentInterpretation?: string;
-      reason?: string;
-    }
-  | {
       /**
        * The Expression Engine (lib/expression/*) on the live speech path.
        *

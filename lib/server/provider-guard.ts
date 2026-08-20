@@ -10,7 +10,7 @@ import { audioReservationSeconds } from "@/lib/providerCost";
 import { anonIdFromRequest } from "./anonId";
 import { consumeDevelopmentReplayAuthorization } from "./developmentReplayAuthorization";
 
-export type CostFeature = "deepgram" | "gemini" | "scribe" | "beat" | "artist" | "story" | "math" | "audio" | "visual-reentry" | "meaning-engine" | "expression-engine";
+export type CostFeature = "deepgram" | "gemini" | "scribe" | "beat" | "artist" | "story" | "math" | "audio" | "visual-reentry" | "expression-engine";
 export interface GuardSpec {
   feature: CostFeature;
   provider: "anthropic" | "google" | "deepgram";
