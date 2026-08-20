@@ -86,6 +86,22 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number, stro
  * renderer only draws what it is given — the strokes themselves came from
  * the Drawing Agent (lib/expression/draw/), resolved before render ever runs.
  */
+/** How long one stroke takes to draw in, and the gap before the next one starts. Both in ms. */
+const STROKE_DRAW_MS = 220;
+const STROKE_STAGGER_MS = 55;
+
+/**
+ * Scales a Sketch's normalized 0-100 strokes into one object's actual box,
+ * inset so the icon never touches the edge it shares with its label, and
+ * reveals them in the order the Drawing Agent listed them — contour first,
+ * detail after — one at a time, the way the strokes were drawn rather than
+ * all at once. `pathLength="1"` makes the dash-based draw-in independent of
+ * each path's real length, so the same CSS animation (defined once in
+ * app/dev/express/express.css) works for a two-point line and a twelve-point
+ * curve alike. The renderer only draws what it is given — the strokes
+ * themselves came from the Drawing Agent (lib/expression/draw/), resolved
+ * before render ever runs.
+ */
 function renderSketch(sketch: Sketch, x: number, y: number, w: number, h: number, stroke: number): string {
   const inset = Math.min(w, h) * 0.16;
   const boxW = w - inset * 2;
@@ -93,9 +109,10 @@ function renderSketch(sketch: Sketch, x: number, y: number, w: number, h: number
   const sx = (px: number) => x + inset + (px / 100) * boxW;
   const sy = (py: number) => y + inset + (py / 100) * boxH;
   return sketch.strokes
-    .map((s) => {
-      const d = s.points.map(([px, py], i) => `${i === 0 ? "M" : "L"} ${sx(px).toFixed(1)} ${sy(py).toFixed(1)}`).join(" ");
-      return `<path d="${d}" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    .map((s, i) => {
+      const d = s.points.map(([px, py], j) => `${j === 0 ? "M" : "L"} ${sx(px).toFixed(1)} ${sy(py).toFixed(1)}`).join(" ");
+      const delay = (i * STROKE_STAGGER_MS).toFixed(0);
+      return `<path d="${d}" pathLength="1" class="ip-sketch-stroke" style="animation-delay:${delay}ms" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"/>`;
     })
     .join("");
 }

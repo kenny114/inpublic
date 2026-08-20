@@ -148,9 +148,29 @@
   }
 }
 
+/* A sketch's strokes draw in one at a time, contour first then detail — the
+   order the Drawing Agent listed them in (lib/expression/draw/agent.ts).
+   Each path already carries pathLength="1" and a per-stroke animation-delay
+   computed in lib/expression/render/svg.ts, so this one rule animates every
+   stroke regardless of its real length or position in the sequence.
+   Duration here must match STROKE_DRAW_MS in svg.ts. */
+.xlab-svg .ip-sketch-stroke {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: xlab-draw 220ms linear forwards;
+}
+
+@keyframes xlab-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .xlab-svg .ip-new {
+  .xlab-svg .ip-new,
+  .xlab-svg .ip-sketch-stroke {
     animation: none;
+    stroke-dashoffset: 0;
   }
 }
 
