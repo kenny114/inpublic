@@ -15,9 +15,17 @@
  * Guessing an icon from wording is the failure mode this architecture
  * exists to eliminate, and it would enter the system right here if it
  * entered anywhere.
+ *
+ * The Drawing Agent (lib/expression/draw/) does not violate this: a
+ * `sketchKey` attached below is derived from the entity's TYPE and LABEL —
+ * the same typed fact every primitive choice above already trusts — and
+ * what it draws is decided by a model call, not a keyword lookup table.
+ * Nothing here inspects the label to choose a shape; the label only becomes
+ * the cache key once the shape has already been decided by type.
  */
 
 import type { Region, VisualPrimitive, WorldEntity } from "../schemas";
+import { sketchKeyFor } from "../draw/library";
 
 export interface PrimitiveSize {
   w: number;
@@ -50,6 +58,19 @@ export interface ResolvedPrimitive {
   /** Number of repeated marks, when the primitive repeats. */
   count?: number;
   size: PrimitiveSize;
+  /** Set only for primitives that are otherwise a plain shape with a label — see withSketch below. */
+  sketchKey?: string;
+}
+
+/**
+ * Attaches a sketch cache key to a primitive that would otherwise be nothing
+ * but a shape and a label. Not every primitive gets one: a figure already
+ * draws a person, a place_marker already draws a place, a quantity_array
+ * already draws the count itself — none of those need an icon to stop being
+ * a caption. `node`, `moment`, `state_marker` and `object_glyph` do.
+ */
+function withSketch(resolved: ResolvedPrimitive, entity: WorldEntity): ResolvedPrimitive {
+  return { ...resolved, sketchKey: sketchKeyFor(entity.type, entity.label) };
 }
 
 function hasChildren(region: Region): boolean {
@@ -113,15 +134,15 @@ export function resolvePrimitive(entity: WorldEntity | null, region: Region): Re
       return { primitive: "place_marker", size: PRIMITIVE_SIZE.place_marker };
 
     case "object":
-      return { primitive: "object_glyph", size: PRIMITIVE_SIZE.object_glyph };
+      return withSketch({ primitive: "object_glyph", size: PRIMITIVE_SIZE.object_glyph }, entity);
 
     case "state":
-      return { primitive: "state_marker", size: PRIMITIVE_SIZE.state_marker };
+      return withSketch({ primitive: "state_marker", size: PRIMITIVE_SIZE.state_marker }, entity);
 
     case "event":
     case "action":
     case "time":
-      return { primitive: "moment", size: PRIMITIVE_SIZE.moment };
+      return withSketch({ primitive: "moment", size: PRIMITIVE_SIZE.moment }, entity);
 
     case "quantity": {
       const value = entity.quantity?.value;
@@ -142,7 +163,7 @@ export function resolvePrimitive(entity: WorldEntity | null, region: Region): Re
           size: { w: Math.max(PRIMITIVE_SIZE.quantity_array.w, count * 32 + 32), h: PRIMITIVE_SIZE.quantity_array.h },
         };
       }
-      return { primitive: "node", size: PRIMITIVE_SIZE.node };
+      return withSketch({ primitive: "node", size: PRIMITIVE_SIZE.node }, entity);
     }
   }
 }

@@ -28,6 +28,8 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { ExpressionSession, segmentText, type ExpressionTrace } from "@/lib/expression/pipeline";
 import { describePatch } from "@/lib/expression/render/core";
 import { SvgRenderer } from "@/lib/expression/render/svg";
+import { resolveSketches } from "@/lib/expression/draw/client";
+import type { Sketch } from "@/lib/expression/draw/schemas";
 
 const SAMPLE = `My name is Kenny Farmer.
 I'm from Trinidad and Tobago.
@@ -47,6 +49,14 @@ export function ExpressionLab() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sessionRef = useRef<ExpressionSession | null>(null);
+  // The sketch library, client-side: persists across runs (not reset with the
+  // world) because a concept's icon does not depend on which conversation drew
+  // it first — the whole point is that "cut" only ever costs one model call.
+  const sketchCacheRef = useRef(new Map<string, Sketch>());
+  // Strokes arrive after the plain shape already rendered (see the fire-and-
+  // forget resolveSketches call below) — this exists purely to make the SVG
+  // useMemo recompute once sketchCacheRef gains an entry a render already needs.
+  const [sketchTick, setSketchTick] = useState(0);
 
   const visualize = useCallback(async () => {
     setBusy(true);
@@ -64,6 +74,10 @@ export function ExpressionLab() {
         // this is the incremental behaviour, so it should be watchable.
         setTraces([...collected]);
         setSelected(collected.length - 1);
+        // Fire-and-forget: the plain shape is already on screen from the line
+        // above, and a slow or failed draw must never hold up the sentence
+        // after it. Strokes fill in progressively as they resolve.
+        void resolveSketches(trace.scene.objects, sketchCacheRef.current).then(() => setSketchTick((t) => t + 1));
       }
       if (!collected.length) setError("Nothing to visualize.");
     } catch (err) {
@@ -74,7 +88,11 @@ export function ExpressionLab() {
   }, [text]);
 
   const trace = traces[selected];
-  const svg = useMemo(() => (trace ? renderer.render(trace.scene, trace.patch) : null), [trace]);
+  const svg = useMemo(
+    () => (trace ? renderer.render(trace.scene, trace.patch, sketchCacheRef.current) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sketchTick is the deliberate recompute trigger; sketchCacheRef itself is never reassigned.
+    [trace, sketchTick],
+  );
 
   return (
     <div className="xlab">

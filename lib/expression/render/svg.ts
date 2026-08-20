@@ -20,6 +20,7 @@
  */
 
 import type { RenderPatch, Renderer, ScenePlan, SceneConnector, SceneObject } from "../schemas";
+import type { Sketch } from "../draw/schemas";
 
 const STROKE_FOR_WEIGHT: Record<number, number> = { 0: 1.25, 1: 1.75, 2: 2.25, 3: 3 };
 const FONT = "ui-sans-serif, system-ui, 'Segoe UI', sans-serif";
@@ -79,7 +80,27 @@ function roundedRect(x: number, y: number, w: number, h: number, r: number, stro
   return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" ry="${r}" fill="none" stroke="currentColor" stroke-width="${stroke}"${dash ? ` stroke-dasharray="${dash}"` : ""}/>`;
 }
 
-function renderObject(object: SceneObject): string {
+/**
+ * Scales a Sketch's normalized 0-100 strokes into one object's actual box,
+ * inset so the icon never touches the edge it shares with its label. The
+ * renderer only draws what it is given — the strokes themselves came from
+ * the Drawing Agent (lib/expression/draw/), resolved before render ever runs.
+ */
+function renderSketch(sketch: Sketch, x: number, y: number, w: number, h: number, stroke: number): string {
+  const inset = Math.min(w, h) * 0.16;
+  const boxW = w - inset * 2;
+  const boxH = h - inset * 2;
+  const sx = (px: number) => x + inset + (px / 100) * boxW;
+  const sy = (py: number) => y + inset + (py / 100) * boxH;
+  return sketch.strokes
+    .map((s) => {
+      const d = s.points.map(([px, py], i) => `${i === 0 ? "M" : "L"} ${sx(px).toFixed(1)} ${sy(py).toFixed(1)}`).join(" ");
+      return `<path d="${d}" fill="none" stroke="currentColor" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    })
+    .join("");
+}
+
+function renderObject(object: SceneObject, sketches?: Map<string, Sketch>): string {
   const stroke = STROKE_FOR_WEIGHT[object.weight] ?? 1.75;
   const { x, y, w, h } = object;
   const cx = x + w / 2;
@@ -112,8 +133,11 @@ function renderObject(object: SceneObject): string {
       ].join("");
     }
 
-    case "object_glyph":
-      return roundedRect(x, y, w, h * 0.7, 8, stroke) + label(object, cx, y + h - 2, fontSize);
+    case "object_glyph": {
+      const sketch = object.sketchKey ? sketches?.get(object.sketchKey) : undefined;
+      const mark = sketch ? renderSketch(sketch, x, y, w, h * 0.7, stroke) : roundedRect(x, y, w, h * 0.7, 8, stroke);
+      return mark + label(object, cx, y + h - 2, fontSize);
+    }
 
     case "container": {
       // Title in the header band; the boundary itself states containment.
@@ -133,23 +157,30 @@ function renderObject(object: SceneObject): string {
       return marks + label(object, cx, topY + size + 22, fontSize);
     }
 
-    case "state_marker":
-      return (
-        `<ellipse cx="${cx}" cy="${y + h * 0.38}" rx="${w * 0.4}" ry="${h * 0.28}" fill="none" stroke="currentColor" stroke-width="${stroke}"/>` +
-        label(object, cx, y + h - 6, fontSize)
-      );
+    case "state_marker": {
+      const sketch = object.sketchKey ? sketches?.get(object.sketchKey) : undefined;
+      const mark = sketch
+        ? renderSketch(sketch, x, y, w, h * 0.7, stroke)
+        : `<ellipse cx="${cx}" cy="${y + h * 0.38}" rx="${w * 0.4}" ry="${h * 0.28}" fill="none" stroke="currentColor" stroke-width="${stroke}"/>`;
+      return mark + label(object, cx, y + h - 6, fontSize);
+    }
 
     case "moment": {
-      // A beat in time: a soft-cornered band, visually distinct from a concept box.
-      return roundedRect(x, y, w, h, h / 2, stroke) + label(object, cx, y + h / 2 + 5, fontSize);
+      // A beat in time: a soft-cornered band, or the Drawing Agent's icon when one is cached.
+      const sketch = object.sketchKey ? sketches?.get(object.sketchKey) : undefined;
+      const mark = sketch ? renderSketch(sketch, x, y, w, h * 0.72, stroke) : roundedRect(x, y, w, h, h / 2, stroke);
+      return mark + label(object, cx, y + h / 2 + 5, fontSize);
     }
 
     case "text_label":
       return label(object, cx, y + 18, 13);
 
     case "node":
-    default:
-      return roundedRect(x, y, w, h, 10, stroke) + label(object, cx, y + h / 2 + 5, fontSize);
+    default: {
+      const sketch = object.sketchKey ? sketches?.get(object.sketchKey) : undefined;
+      const mark = sketch ? renderSketch(sketch, x, y, w, h * 0.72, stroke) : roundedRect(x, y, w, h, 10, stroke);
+      return mark + label(object, cx, y + h / 2 + 5, fontSize);
+    }
   }
 }
 
@@ -184,7 +215,7 @@ export class SvgRenderer implements Renderer<string> {
     this.options = options;
   }
 
-  render(scene: ScenePlan, patch: RenderPatch): string {
+  render(scene: ScenePlan, patch: RenderPatch, sketches?: Map<string, Sketch>): string {
     if (!scene.objects.length) {
       return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" width="400" height="120"></svg>`;
     }
@@ -200,7 +231,7 @@ export class SvgRenderer implements Renderer<string> {
     const body = [
       ...scene.connectors.map(renderConnector),
       ...objects.map((object) => {
-        const inner = renderObject(object);
+        const inner = renderObject(object, sketches);
         const isNew = this.options.markNew && added.has(object.id);
         return `<g data-object-id="${object.id}"${object.entityId ? ` data-entity-id="${object.entityId}"` : ""}${isNew ? ' class="ip-new"' : ""}>${inner}</g>`;
       }),

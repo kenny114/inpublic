@@ -47,7 +47,8 @@ export type LogEvent =
         | "completed_prefix"
         | "continuation_hold"
         | "safety_bound"
-        | "safe_forced_split";
+        | "safe_forced_split"
+        | "hold_expired";
       text: string;
       wordCount: number;
       charCount: number;

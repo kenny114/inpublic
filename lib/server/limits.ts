@@ -64,4 +64,8 @@ export const routeLimits: Record<string, { limit: number; windowSeconds: number 
   // a paragraph into the expression lab produces a short burst, so the
   // ceiling is a little higher than the meaning engine's debounced rate.
   "expression-engine": { limit: positiveInteger("RATE_LIMIT_EXPRESSION_ENGINE_PER_MINUTE", 30), windowSeconds: 60 },
+  // One call per NEW concept, not per mention — the sketch library serves
+  // every repeat for free, so this only bounds a burst of genuinely novel
+  // concepts, which is rarer than a burst of sentences.
+  "sketch-agent": { limit: positiveInteger("RATE_LIMIT_SKETCH_AGENT_PER_MINUTE", 20), windowSeconds: 60 },
 };

@@ -598,6 +598,14 @@ export const SceneObjectSchema = z
     regionId: IdSchema,
     primitive: VisualPrimitiveSchema,
     label: z.string().max(60).optional(),
+    /**
+     * Deterministic cache key for the Drawing Agent (lib/expression/draw/),
+     * derived from the entity's type and label the same way every time —
+     * never model-supplied, so this is a lookup key and not geometry. Set
+     * only for primitives worth illustrating (currently "node"); absent
+     * means "draw the plain shape", the same fallback a cache miss produces.
+     */
+    sketchKey: z.string().optional(),
     /** For quantity_array / figure_group: how many marks to draw. */
     count: z.number().int().min(1).max(24).optional(),
     x: z.number().finite(),

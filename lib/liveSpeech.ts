@@ -138,7 +138,9 @@ export type PresentationBoundaryReason =
   | "completed_prefix"
   | "continuation_hold"
   | "safety_bound"
-  | "safe_forced_split";
+  | "safe_forced_split"
+  /** Emitted by the MAX_PRESENTATION_HOLD_MS ceiling, not by a language rule. */
+  | "hold_expired";
 
 export interface PresentationThoughtState {
   text: string;
@@ -185,6 +187,18 @@ export const EMPTY_PRESENTATION_THOUGHT: PresentationThoughtState = {
  * a punctuation-poor monologue cannot grow without limit.
  */
 export const MAX_PRESENTATION_WORDS = 32;
+
+/**
+ * The longest a thought may be held before it is emitted regardless of how it
+ * is worded. A held thought is invisible: the visual engine only ever sees
+ * emitted thoughts, so time spent holding is time the canvas says nothing.
+ *
+ * Every other boundary rule is a judgement about language and can be wrong in
+ * a direction that holds forever. This one cannot — it is the floor that makes
+ * "the engine eventually receives what was said" true by construction rather
+ * than by the wording happening to be recognised.
+ */
+export const MAX_PRESENTATION_HOLD_MS = 4000;
 const FORCED_SPLIT_TARGET_WORDS = 28;
 const MIN_SAFE_PREFIX_WORDS = 10;
 
@@ -275,7 +289,22 @@ export function isStablePresentationClause(text: string, strongPunctuation = fal
     if (/\?["')\]]?$/.test(clean) && /^(?:what|why|how|when|where|which|who|is|are|was|were|do|does|did|can|could|will|would|should|have|has|had)\b/i.test(clean)) {
       return true;
     }
-    return hasClauseShape(clean);
+    // The provider ended this with a terminal mark and it does not promise
+    // more. That IS the evidence — nothing further is required.
+    //
+    // This used to also demand hasClauseShape(), a closed whitelist of ~60
+    // verbs, which made settling depend on WHICH verb was spoken: "There was
+    // a cut." settled because `was` was listed, "A cat sat by the tree." did
+    // not because `sat` was never added. A thought that does not settle never
+    // reaches the visual engine at all, so an unlisted verb meant silence
+    // from the engine and an ever-growing transcript instead of a picture —
+    // observed live holding one thought for 14.9s across three finals.
+    //
+    // A whitelist of English verbs cannot be completed, and every miss fails
+    // closed on the product's only output. `hasObviouslyOpenClauseShape`
+    // above already catches what this was reaching for (a clause that
+    // audibly promises more), and it does so by shape rather than vocabulary.
+    return true;
   }
   if (hasOpenPresentationTail(clean)) return false;
   return words.length >= 6 && hasClauseShape(clean);
@@ -432,6 +461,16 @@ export function pushPresentationSegment(
     rawSegments = [rawSegment];
     heldSince = at;
     providerFinalCount = 1;
+  }
+
+  // Held too long to keep waiting for a boundary that may never come. Emitted
+  // as it stands rather than accumulated further — see MAX_PRESENTATION_HOLD_MS.
+  if (pendingText && at - heldSince >= MAX_PRESENTATION_HOLD_MS) {
+    emitBounded(pendingText, "hold_expired");
+    pendingText = "";
+    rawSegments = [];
+    heldSince = at;
+    providerFinalCount = 0;
   }
 
   const state = pendingText

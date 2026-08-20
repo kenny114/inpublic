@@ -562,6 +562,7 @@ export function compose(world: WorldState, plan: ExpressionPlan): ScenePlan {
     primitive: p.resolved.primitive,
     label: labelFor(p, world),
     count: p.resolved.count,
+    sketchKey: p.resolved.sketchKey,
     x: p.x,
     y: p.y,
     w: p.w,
