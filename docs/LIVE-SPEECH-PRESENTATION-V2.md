@@ -117,6 +117,23 @@ These remain the responsibility of higher visual layers, built downstream of V2'
 5. Finalisation should not visibly pop.
 6. Secondary visual systems (Reflex, Scribe, Beat/Artist/Organizer, Director, Math) must not write directly into the live thought lifecycle while V2 is active.
 7. Future visual intelligence should consume **settled** speech/thought state downstream — not compete with the active one.
+
+> **Scope note (Wordless Visuals V1, `features.wordlessVisualsV1`).** Invariants
+> 6 and 7 were written when the live *text* line was the primary output, and
+> what they protect is that line's ownership of the screen. Under wordless mode
+> the text line is no longer the primary output, and the reflex sign layer
+> (`lib/meaning/reflex.ts`) consumes settled *interim* words rather than settled
+> thoughts — which invariant 7 forbids as written.
+>
+> The exemption is narrow and conditional on all four of these holding: the
+> layer draws only into its own reserved band (`lib/meaning/provisional.ts`),
+> never into the thought lifecycle; it is pure and synchronous, so **invariant 1
+> is fully intact** — no model on the Tier 1 path; every mark it makes is retired
+> at settlement, so it cannot outlive the words that produced it; and it is inert
+> unless `wordlessVisualsV1` is on, so invariant 9 (independently toggleable)
+> still holds. With `wordlessVisualsV1` off, 6 and 7 apply unchanged.
+>
+> See docs/WORDLESS-VISUAL-OVERHAUL-V1.md.
 8. No model emits canvas coordinates (a pre-existing, codebase-wide rule; V2 does not weaken it).
 9. V2 must remain independently testable and independently toggleable from legacy behavior — see "Feature Flag / Activation" below.
 

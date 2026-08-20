@@ -165,7 +165,16 @@ import {
   unmarkProcessCommitted,
   type DirectorState,
 } from "@/lib/directorState";
-import { features, isLivePresentationV2Enabled, isVisualReentryV1Enabled } from "@/lib/features";
+import { features, isLivePresentationV2Enabled, isVisualReentryV1Enabled, isMeaningEngineV1Enabled, isMeaningDebugOnlyEnabled, isWordlessVisualsEnabled, isExpressionEngineV1Enabled, isExpressionDebugOnlyEnabled } from "@/lib/features";
+import { ExpressionLiveController, type ExpressionLiveUpdate } from "@/lib/expression/live";
+import { syncExpressionCanvas, createExpressionIdentity, boundsOf } from "@/lib/expression/render/excalidrawSync";
+import { describePatch } from "@/lib/expression/render/core";
+import type { ExpressionTrace } from "@/lib/expression/pipeline";
+import { formatTrace } from "@/lib/expression/trace";
+import { MeaningEngineController, type MeaningDebugSnapshot, type MeaningUpdate } from "@/lib/meaning/engine";
+import { syncMeaningCanvas, createMeaningIdentity } from "@/lib/meaning/apply";
+import { emptyProvisionalState, scanProvisional, clearProvisional, type ProvisionalState } from "@/lib/meaning/reflex";
+import { syncProvisionalCanvas, createProvisionalIdentity } from "@/lib/meaning/provisional";
 import { commitPreparedVisualReentry, prepareVisualReentry, type PreparedVisualReentry } from "@/lib/visualReentry/orchestrate";
 import { evaluateVisualCandidate } from "@/lib/visualReentry/candidate";
 import { advanceVisualEvidence, completePendingCauseEvidence, type VisualEvidenceEntry } from "@/lib/visualReentry/evidence";
@@ -838,6 +847,58 @@ export default function Board({
   /** Part 12's ownership guard: no settled-thought id is ever processed twice. Reset (not trimmed) once it grows large — a long session shouldn't accumulate this forever, and a duplicate id from far in the past is not a realistic case to guard against. */
   const visualReentryProcessedIdsRef = useRef<Set<string>>(new Set());
   const thoughtInkRef = useRef(new Map<string, { ids: string[]; base: Pen; after: Pen; page: number }>());
+  /** Meaning Engine V1 (features.meaningEngineV1): the concept/relationship id <-> Excalidraw element id mapping applyMeaningOps reads and writes. */
+  const meaningIdentityRef = useRef(createMeaningIdentity());
+  /** Set once applyMeaningUpdate is defined below; the controller itself is created once and must call whatever the latest version of that callback is. */
+  const applyMeaningUpdateRef = useRef<((update: MeaningUpdate) => void) | null>(null);
+  const meaningControllerRef = useRef<MeaningEngineController | undefined>(undefined);
+  if (meaningControllerRef.current === undefined) {
+    meaningControllerRef.current = new MeaningEngineController({
+      onUpdate: (update) => applyMeaningUpdateRef.current?.(update),
+      onDebug:
+        process.env.NODE_ENV !== "production"
+          ? (snapshot) => {
+              // Part 10/15 debug view: readable in the console without
+              // looking at the canvas, and inspectable after the fact via
+              // window.__meaningDebug (devtools console), not just
+              // scrollback — see the Meaning Canvas rebuild's audit finding
+              // that this visibility never existed before.
+              console.debug("[meaning-engine]", snapshot.event, snapshot);
+              if (typeof window !== "undefined") {
+                const w = window as unknown as { __meaningDebug?: MeaningDebugSnapshot; __meaningDebugHistory?: MeaningDebugSnapshot[] };
+                w.__meaningDebug = snapshot;
+                w.__meaningDebugHistory = [...(w.__meaningDebugHistory ?? []), snapshot];
+              }
+            }
+          : undefined,
+    });
+  }
+
+  /** Expression Engine V1 (features.expressionEngineV1): the SceneObject id <-> Excalidraw element id mapping syncExpressionCanvas reads and writes. */
+  const expressionIdentityRef = useRef(createExpressionIdentity());
+  /** Set once applyExpressionUpdate is defined below; the controller is created once and must call whatever the latest version of that callback is. */
+  const applyExpressionUpdateRef = useRef<((update: ExpressionLiveUpdate) => void) | null>(null);
+  const expressionControllerRef = useRef<ExpressionLiveController | undefined>(undefined);
+  if (expressionControllerRef.current === undefined) {
+    expressionControllerRef.current = new ExpressionLiveController({
+      onUpdate: (update) => applyExpressionUpdateRef.current?.(update),
+      onTrace:
+        process.env.NODE_ENV !== "production"
+          ? (trace) => {
+              // Every stage of the run, inspectable after the fact from the
+              // devtools console rather than only in scrollback — the same
+              // visibility /dev/express gives, for the live path. Which layer
+              // failed is the only question worth asking when a picture is
+              // wrong, and the canvas alone cannot answer it.
+              console.debug("[expression]", trace.intent.primary, trace.plan.grammar, trace);
+              const w = window as unknown as { __expression?: ExpressionTrace; __expressionHistory?: ExpressionTrace[] };
+              w.__expression = trace;
+              w.__expressionHistory = [...(w.__expressionHistory ?? []), trace];
+            }
+          : undefined,
+    });
+  }
+
   const clearVisualReentryCandidateQueue = useCallback((reason: string) => {
     const removed = visualReentryCandidateQueueRef.current.clear();
     for (const job of removed) {
@@ -985,6 +1046,12 @@ export default function Board({
    * once per mount, same reasoning as v2Enabled above.
    */
   const vrEnabled = useMemo(() => isVisualReentryV1Enabled(), []);
+  const meEnabled = useMemo(() => isMeaningEngineV1Enabled(), []);
+  const meDebugOnly = useMemo(() => isMeaningDebugOnlyEnabled(), []);
+  /** Expression Engine V1 (features.expressionEngineV1). Mutually exclusive with meEnabled — the flag resolver enforces it, so both can be read here without a guard. */
+  const xeEnabled = useMemo(() => isExpressionEngineV1Enabled(), []);
+  const xeDebugOnly = useMemo(() => isExpressionDebugOnlyEnabled(), []);
+  const wordlessEnabled = useMemo(() => isWordlessVisualsEnabled(), []);
   const replayLabEnabled = useMemo(() => isDev && (demoStudio || isReplayLabEnabled(window.location.search)), [demoStudio]);
   /**
    * The thought currently being held open across Deepgram finals, under V2
@@ -3401,12 +3468,99 @@ export default function Board({
     [commit, log, retireSpeculative],
   );
 
+  // ---- the reflex layer: signs during speech ------------------------------
+  //
+  // THE INVERSION. Until now interims reached only writeLive (the caption
+  // line) and every visual system waited for a settled thought — words live,
+  // pictures late. Under wordless mode that is backwards, so the same settled
+  // interim words also drive tentative signs here.
+  //
+  // This deliberately runs even when V2 is active, which the older Tier 2
+  // reflex does not (`features.reflex && !v2Enabled` in handleInterim). V2's
+  // protected invariant 6 exists to stop secondary systems fighting the live
+  // *text* line for the screen; these signs are drawn in their own reserved
+  // band (lib/meaning/provisional.ts) and never touch the thought lifecycle,
+  // and under wordless the text line is no longer the primary output for them
+  // to collide with. Invariant 1 — no model in the Tier 1 live path — is
+  // untouched: the scan is pure regex and table lookup, no network.
+  const provisionalStateRef = useRef<ProvisionalState>(emptyProvisionalState());
+  const provisionalIdentityRef = useRef(createProvisionalIdentity());
+  /** Everything settled in the current utterance, rescanned whole each tick. */
+  const provisionalUtteranceRef = useRef("");
+  /** Bumped at every settlement, so a new utterance can never adopt old keys. */
+  const provisionalUtteranceIdRef = useRef(0);
+
+  /**
+   * Apply one reflex diff to the canvas.
+   *
+   * No `recordOperation`: provisional ink is scaffolding with a lifetime
+   * shorter than a sentence, and every mark it makes is removed again at
+   * settlement (or at a page turn, or a reset). Putting each guess in the undo
+   * stack would bury the user's real history under the machine's thinking.
+   */
+  const applyProvisional = useCallback(
+    async (next: ProvisionalState) => {
+      const epoch = liveSeqRef.current;
+      const { elements, addedIds, removedIds } = await syncProvisionalCanvas(
+        next,
+        elementsRef.current,
+        pageRef.current,
+        provisionalIdentityRef.current,
+      );
+      // A clear/undo/page change between the scan and the draw invalidates the
+      // whole result — same stale-epoch guard writeLive and Tier 2 both use.
+      if (liveSeqRef.current !== epoch) return;
+      if (!addedIds.length && !removedIds.length) return;
+      elementsRef.current = elements;
+      commit();
+    },
+    [commit],
+  );
+
+  /** Settled interim words -> tentative signs. Synchronous scan, async draw. */
+  const reflexOnInterim = useCallback(
+    (freshWords: string) => {
+      provisionalUtteranceRef.current = `${provisionalUtteranceRef.current} ${freshWords}`.trim();
+      const diff = scanProvisional(
+        provisionalStateRef.current,
+        provisionalUtteranceRef.current,
+        String(provisionalUtteranceIdRef.current),
+      );
+      provisionalStateRef.current = diff.state;
+      if (!diff.added.length && !diff.updated.length && !diff.removed.length) return;
+      log({
+        type: "reflex",
+        event: "provisional",
+        added: diff.added.map((a) => a.sign.glyph),
+        updated: diff.updated.map((u) => u.sign.glyph),
+        removed: diff.removed.length,
+      });
+      void applyProvisional(diff.state);
+    },
+    [applyProvisional, log],
+  );
+
+  /**
+   * The thought settled. Retire every guess *before* the Meaning Engine draws
+   * its confident version, so a viewer never sees both readings at once.
+   */
+  const settleProvisional = useCallback(() => {
+    provisionalUtteranceRef.current = "";
+    provisionalUtteranceIdRef.current += 1;
+    const diff = clearProvisional(provisionalStateRef.current);
+    provisionalStateRef.current = diff.state;
+    if (diff.removed.length) void applyProvisional(diff.state);
+  }, [applyProvisional]);
+
   /** Everything provisional, gone. Used by undo and by explicit clears. */
   const dropAllSpeculative = useCallback(() => {
     // Instant, not faded: a hard reset should not leave a fading ghost behind.
     retireSpeculative([...speculativeMarksRef.current.keys()], "session reset", false);
     speculativeStateRef.current = emptySpeculativeState();
     speculativeUtteranceRef.current = "";
+    provisionalStateRef.current = emptyProvisionalState();
+    provisionalIdentityRef.current = createProvisionalIdentity();
+    provisionalUtteranceRef.current = "";
   }, [retireSpeculative]);
 
   // ---- the Scribe ----------------------------------------------------------
@@ -5547,6 +5701,164 @@ export default function Board({
   }, [framePage, log]);
 
   /**
+   * Meaning Engine V1 (features.meaningEngineV1): applies the canvas
+   * operations lib/meaning/reconcile.ts computed for one meaning-engine
+   * decision — reconciling against the existing canvas via
+   * meaningIdentityRef rather than drawing fresh content every time,
+   * same commit()/recordOperation() path every other direct-commit
+   * primitive in this file uses.
+   */
+  /** Fades (never deletes) transcript ink for thoughts the Meaning Engine successfully represented — transcript is working memory, the diagram is the durable expression. Not undo-tracked, same precedent as the settle-flash opacity pulse below: a style change, not a content change. */
+  const fadeConsumedTranscript = useCallback((thoughtIds: string[]) => {
+    if (!thoughtIds.length) return;
+    const idsToFade = new Set<string>();
+    for (const thoughtId of thoughtIds) {
+      const ink = thoughtInkRef.current.get(thoughtId);
+      if (ink) for (const id of ink.ids) idsToFade.add(id);
+    }
+    if (!idsToFade.size) return;
+    elementsRef.current = elementsRef.current.map((el) => (idsToFade.has(el.id) ? patch(el, { opacity: 22 }) : el));
+    commit();
+  }, [commit]);
+
+  const applyMeaningUpdate = useCallback(async (update: MeaningUpdate) => {
+    log({
+      type: "meaning",
+      event: "updated",
+      family: update.plan.family,
+      focusConceptIds: update.plan.focusConceptIds,
+      topic: update.state.topic,
+      currentInterpretation: update.state.currentInterpretation,
+      reason: update.plan.reason,
+    });
+    // MEANING_DEBUG_ONLY (?debug=1): prove the semantic brain in isolation.
+    // The onDebug callback above already logged this round's full snapshot
+    // by the time onUpdate fires — stop here, before any layout, arrow, or
+    // camera decision runs, let alone an Excalidraw write.
+    if (meDebugOnly) return;
+    const { elements: nextElements, addedIds, removedIds } = await syncMeaningCanvas(
+      update.state,
+      elementsRef.current,
+      penRef.current,
+      pageRef.current,
+      meaningIdentityRef.current,
+      () => turnPage("overflow", "meaning diagram does not fit on the current sheet"),
+      update.plan,
+      { wordless: wordlessEnabled },
+    );
+    if (addedIds.length || removedIds.length) {
+      const removedSet = new Set(removedIds);
+      const removedElements = elementsRef.current.filter((el) => removedSet.has(el.id));
+      elementsRef.current = nextElements;
+      const undo = emptyUndo();
+      undo.addedElementIds = addedIds;
+      undo.removedElements = removedElements;
+      recordOperation("meaning_engine", undo, { sourceText: update.state.topic ?? "" });
+      commit();
+      const addedSet = new Set(addedIds);
+      const added = nextElements.filter((el) => addedSet.has(el.id));
+      if (added.length) {
+        const xs = added.map((el) => el.x);
+        const ys = added.map((el) => el.y);
+        const xe = added.map((el) => el.x + (el.width ?? 0));
+        const ye = added.map((el) => el.y + (el.height ?? 0));
+        revealVisualReentry(
+          { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xe) - Math.min(...xs), h: Math.max(...ye) - Math.min(...ys) },
+          "meaning-engine",
+        );
+      }
+    }
+    fadeConsumedTranscript(update.consumedIds);
+  }, [commit, fadeConsumedTranscript, log, meDebugOnly, recordOperation, revealVisualReentry, turnPage, wordlessEnabled]);
+
+  useEffect(() => {
+    applyMeaningUpdateRef.current = applyMeaningUpdate;
+  }, [applyMeaningUpdate]);
+
+  /** Buffers this settled thought's text into the Meaning Engine's debounced cadence — see lib/meaning/engine.ts. */
+  const handleSettledMeaning = useCallback((thought: SettledThought) => {
+    meaningControllerRef.current?.submit({ source: "human_speech", content: thought.text, id: thought.id });
+  }, []);
+
+  /**
+   * Expression Engine V1 (features.expressionEngineV1): puts one finished
+   * ScenePlan onto the sheet.
+   *
+   * Deliberately thin, and that is the point of the whole pipeline sitting
+   * upstream. Every visual decision — what exists, what connects, what
+   * dominates, where it goes, what shape it takes — was already made by
+   * lib/expression/*, deterministically, before this callback runs. What is
+   * left here is the board's own business: reconcile against the sheet,
+   * record an undo entry, commit, move the camera, fade consumed transcript.
+   * Compare applyMeaningUpdate above, which still has to hand a layout, a
+   * plan and a wordless flag to its sync function.
+   */
+  const applyExpressionUpdate = useCallback(async (update: ExpressionLiveUpdate) => {
+    const { trace } = update;
+    log({
+      type: "expression",
+      event: "updated",
+      intent: trace.intent.primary,
+      grammar: trace.plan.grammar,
+      reason: trace.plan.reason,
+      preservation: trace.evaluation.semanticPreservation,
+      problems: trace.evaluation.problems.map((p) => p.type),
+      interpretation: trace.world.interpretation,
+    });
+
+    // The evaluator's verdict is worth logging loudly on the live path: a
+    // scene that invented a relation is saying something the speaker did not,
+    // and that is the one failure worth interrupting a session log for.
+    if (trace.evaluation.inventedRelations.length) {
+      log({ type: "expression", event: "invented-relation", detail: trace.evaluation.inventedRelations.join("; ") });
+    }
+
+    // ?debug=1: prove the pipeline in isolation. onTrace has already recorded
+    // the full run by now — stop before any Excalidraw write or camera move.
+    if (xeDebugOnly) return;
+
+    const { elements: nextElements, addedIds, removedIds, updatedIds } = await syncExpressionCanvas(
+      trace.scene,
+      trace.patch,
+      elementsRef.current,
+      penRef.current,
+      pageRef.current,
+      expressionIdentityRef.current,
+      () => turnPage("overflow", "expression scene does not fit on the current sheet"),
+    );
+
+    if (addedIds.length || removedIds.length || updatedIds.length) {
+      const goneIds = new Set([...removedIds, ...updatedIds]);
+      const removedElements = elementsRef.current.filter((el) => goneIds.has(el.id));
+      elementsRef.current = nextElements;
+      const undo = emptyUndo();
+      undo.addedElementIds = [...addedIds, ...updatedIds];
+      undo.removedElements = removedElements;
+      recordOperation("expression_engine", undo, { sourceText: trace.world.interpretation ?? "" });
+      commit();
+
+      log({ type: "expression", event: "rendered", patch: describePatch(trace.patch) });
+
+      // Only newly ADDED ink pulls the camera. Re-framing on a reposition
+      // would drag the view every time the layout breathed, which is exactly
+      // the jitter that makes a live board unwatchable.
+      const bounds = boundsOf(nextElements, addedIds);
+      if (bounds) revealVisualReentry(bounds, "expression-engine");
+    }
+
+    fadeConsumedTranscript(update.consumedIds);
+  }, [commit, fadeConsumedTranscript, log, recordOperation, revealVisualReentry, turnPage, xeDebugOnly]);
+
+  useEffect(() => {
+    applyExpressionUpdateRef.current = applyExpressionUpdate;
+  }, [applyExpressionUpdate]);
+
+  /** Buffers this settled thought into the Expression Engine's debounced cadence — see lib/expression/live.ts. */
+  const handleSettledExpression = useCallback((thought: SettledThought) => {
+    expressionControllerRef.current?.submit({ id: thought.id, text: thought.text });
+  }, []);
+
+  /**
    * Draws whichever cause_effect nodes in `nodes` haven't been committed yet
    * for the diagram-in-progress tracked by causeEffectProgressRef — one box
    * (and the arrow into it) per new node, real committed ink via
@@ -6121,6 +6433,8 @@ export default function Board({
             if (vrEnabled || (replayModeRef.current !== null && replayModeRef.current !== "v2_only")) {
               handleSettledVisualReentry(thought);
             }
+            if (meEnabled) handleSettledMeaning(thought);
+            if (xeEnabled) handleSettledExpression(thought);
           }
           if (v3PendingText) await writeLive(v3PendingText, false, finalTiming);
         })();
@@ -6155,6 +6469,7 @@ export default function Board({
         // Settle tier 2 against what was actually said: guesses the final
         // confirms are promoted, guesses it contradicts disappear.
         settleSpeculative(text);
+        if (wordlessEnabled) settleProvisional();
         nudgeScribe();
         resetSilenceTimer();
       }
@@ -6165,7 +6480,7 @@ export default function Board({
       // unconditionally here; downstream visual intelligence must consume
       // settled thought state, not compete with the active one.
     },
-    [correct, handleSettledVisualReentry, handleStoryFinal, log, now, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleSpeculative, stampThoughtInk, v2Enabled, vrEnabled, writeLive, writeStoryCaption],
+    [correct, handleSettledMeaning, handleSettledVisualReentry, handleStoryFinal, log, meEnabled, now, nudgeScribe, resetSilenceTimer, runVoiceCommand, settleProvisional, settleSpeculative, stampThoughtInk, v2Enabled, vrEnabled, wordlessEnabled, writeLive, writeStoryCaption],
   );
 
   const flushPresentationBoundary = useCallback(async () => {
@@ -6217,8 +6532,10 @@ export default function Board({
       if (vrEnabled || (replayModeRef.current !== null && replayModeRef.current !== "v2_only")) {
         handleSettledVisualReentry(thought);
       }
+      if (meEnabled) handleSettledMeaning(thought);
+      if (xeEnabled) handleSettledExpression(thought);
     }
-  }, [handleSettledVisualReentry, log, now, stampThoughtInk, v2Enabled, vrEnabled, writeLive]);
+  }, [handleSettledExpression, handleSettledMeaning, handleSettledVisualReentry, log, meEnabled, now, stampThoughtInk, v2Enabled, vrEnabled, writeLive, xeEnabled]);
 
   const handleInterim = useCallback(
     (text: string, audioEndMs: number, streamEpoch: number, confidence = 0, timing?: DeepgramResultTiming) => {
@@ -6321,6 +6638,11 @@ export default function Board({
         // flag. Live speech owns the screen until the thought settles —
         // secondary visual systems must not write into the active thought
         // lifecycle. See docs/LIVE-SPEECH-PRESENTATION-V2.md.
+        // The inversion (see the reflex layer above): under wordless mode the
+        // canvas reacts to these same settled words *now*, not at settlement.
+        // Not gated on `!v2Enabled` — that gate protects the live text line,
+        // which is not what this draws into.
+        if (fresh && wordlessEnabled) reflexOnInterim(fresh);
         if (fresh && features.reflex && !v2Enabled) {
           speculativeUtteranceRef.current =
             `${speculativeUtteranceRef.current} ${fresh}`.trim();
@@ -6376,7 +6698,7 @@ export default function Board({
 
       if (silenceTimerRef.current) resetSilenceTimer();
     },
-    [handleStoryPartial, renderSpeculative, resetSilenceTimer, runVoiceCommand, v2Enabled, writeLive, writeStoryCaption],
+    [handleStoryPartial, reflexOnInterim, renderSpeculative, resetSilenceTimer, runVoiceCommand, v2Enabled, wordlessEnabled, writeLive, writeStoryCaption],
   );
 
   /** Gemini engine: marks the model asked for, straight off the socket. */
@@ -6594,6 +6916,10 @@ export default function Board({
     if (scribeTimerRef.current) clearTimeout(scribeTimerRef.current);
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     elementsRef.current = [];
+    meaningIdentityRef.current = createMeaningIdentity();
+    meaningControllerRef.current?.reset();
+    expressionIdentityRef.current = createExpressionIdentity();
+    expressionControllerRef.current?.reset();
     boardRef.current = new SemanticBoard();
     pageRef.current = 0;
     pagePensRef.current = new Map();
@@ -6993,6 +7319,54 @@ export default function Board({
         await runScribe();
         return logRef.current.filter((e) => e.type === "sketch").slice(-3);
       },
+      /**
+       * Feed settled thoughts to the Expression Engine as if they had been
+       * spoken, without a microphone. Needs `?v2=1&xe=1` (add `&debug=1` to
+       * run the pipeline without drawing).
+       *
+       *   inpublic.speak("My name is Kenny Farmer.")
+       *   inpublic.speak(["I'm from Trinidad and Tobago.", "I have a family of five."])
+       *
+       * Goes through the real settled-thought path — same controller, same
+       * debounce, same canvas sync — so what it exercises is what live speech
+       * exercises. Returns the trace of the run it triggers.
+       */
+      speak: async (input: string | string[]) => {
+        if (!xeEnabled) {
+          console.warn("[expression] not enabled — reload with ?v2=1&xe=1");
+          return null;
+        }
+        const lines = Array.isArray(input) ? input : [input];
+        lines.forEach((text, i) =>
+          handleSettledExpression({ id: `spoken-${Date.now()}-${i}`, text } as SettledThought),
+        );
+        // Long enough for the controller's debounce plus one model round-trip.
+        await new Promise((resolve) => setTimeout(resolve, 6000));
+        return (window as unknown as { __expression?: ExpressionTrace }).__expression ?? null;
+      },
+      /**
+       * The pipeline trace for the most recent expression run, printed stage
+       * by stage: input, meaning, world before and after, intent, plan,
+       * scene, canvas diff, evaluation and repair.
+       *
+       *   inpublic.trace()     → the latest run
+       *   inpublic.trace(-2)   → the run before it
+       *   inpublic.traces()    → every run this session, as objects
+       *
+       * This is the answer to "which layer broke it" — the canvas alone
+       * cannot say, and every stage is preserved precisely so it can.
+       */
+      trace: (offset = -1) => {
+        const history = (window as unknown as { __expressionHistory?: ExpressionTrace[] }).__expressionHistory ?? [];
+        const item = history.at(offset);
+        if (!item) {
+          console.warn("[expression] no runs yet — needs ?v2=1&xe=1 and some speech");
+          return null;
+        }
+        console.log(formatTrace(item));
+        return item;
+      },
+      traces: () => (window as unknown as { __expressionHistory?: ExpressionTrace[] }).__expressionHistory ?? [],
       undo: doUndo,
       clear: doClear,
       clearSketch,
@@ -7087,11 +7461,13 @@ export default function Board({
     doUndo,
     drainRenderQueue,
     growSketch,
+    handleSettledExpression,
     handleStoryFinal,
     handleStoryPartial,
     markPerceivedStall,
     runScribe,
     writeLive,
+    xeEnabled,
   ]);
 
   const handleModeChange = useCallback(

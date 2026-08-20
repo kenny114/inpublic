@@ -12,7 +12,7 @@
  */
 
 import assert from "node:assert/strict";
-import { features, isLivePresentationV2Enabled, isVisualReentryV1Enabled } from "../lib/features.ts";
+import { features, isLivePresentationV2Enabled, isVisualReentryV1Enabled, isMeaningEngineV1Enabled } from "../lib/features.ts";
 
 let pass = 0;
 const failures = [];
@@ -36,12 +36,20 @@ check("directorV1 is enabled", features.directorV1 === true);
 section("validated stack is the committed production default (docs/VALIDATED-STACK-PRODUCTION-ACTIVATION-V1.md)");
 
 // This is the product contract this section exists to protect: a normal
-// visitor with zero query params, in production, gets V2 + Visual Re-entry
-// with no legacy fallback. If either flag below is ever flipped back to
-// `false` without deliberately reverting the whole activation, this must
-// fail loudly rather than silently ship the legacy pipeline again.
+// visitor with zero query params, in production, gets V2 with no legacy
+// fallback. If this flag is ever flipped back to `false` without
+// deliberately reverting the whole activation, this must fail loudly rather
+// than silently ship the legacy pipeline again.
 check("livePresentationV2 is the committed default", features.livePresentationV2 === true);
-check("visualReentryV1 is the committed default", features.visualReentryV1 === true);
+// visualReentryV1 was turned back OFF 2026-08-19: superseded by the Meaning
+// Engine (features.meaningEngineV1, lib/meaning/*) — see that flag's doc
+// comment in lib/features.ts for why. meaningEngineV1 itself stays off by
+// default while it's under active development/testing (query-param-gated
+// in non-production via `?me=1`), so NEITHER visual-intelligence pipeline
+// is on for a normal production visitor right now — V2's live handwriting
+// (Tier 1) is unaffected either way.
+check("visualReentryV1 is off (superseded by the Meaning Engine)", features.visualReentryV1 === false);
+check("meaningEngineV1 is off by default while under active development", features.meaningEngineV1 === false);
 
 const originalEnv = process.env.NODE_ENV;
 process.env.NODE_ENV = "production";
@@ -51,8 +59,12 @@ check(
   isLivePresentationV2Enabled() === true,
 );
 check(
-  "STANDARD MODE DEFAULT: production, no window, no query params -> Visual Re-entry active",
-  isVisualReentryV1Enabled() === true,
+  "STANDARD MODE DEFAULT: production, no window, no query params -> Visual Re-entry inactive (superseded)",
+  isVisualReentryV1Enabled() === false,
+);
+check(
+  "STANDARD MODE DEFAULT: production, no window, no query params -> Meaning Engine inactive (still off by default)",
+  isMeaningEngineV1Enabled() === false,
 );
 process.env.NODE_ENV = originalEnv;
 
@@ -139,6 +151,38 @@ store.set("inpublic-preferences", JSON.stringify({ defaultMode: "standard", disp
 check("an explicit standard preference round-trips as standard", readPreferences().defaultMode === "standard");
 
 check("DEFAULT_PREFERENCES itself defaults to standard", DEFAULT_PREFERENCES.defaultMode === "standard");
+
+// ------------------------------------- engine mutual exclusion
+
+/**
+ * The Expression Engine and the Meaning Engine both consume the same settled
+ * thoughts and draw onto the same sheet. Running both double-draws the same
+ * content in two visual languages, so the flag resolver — not a comment, and
+ * not whoever flips the flags — has to enforce that only one can win.
+ */
+{
+  const { isMeaningEngineV1Enabled, isExpressionEngineV1Enabled } = await import("../lib/features.ts");
+  const withSearch = (search) => {
+    globalThis.window = { ...globalThis.window, location: { search } };
+  };
+
+  withSearch("?v2=1&me=1");
+  check("the meaning engine turns on by itself", isMeaningEngineV1Enabled() === true);
+  check("and the expression engine stays off", isExpressionEngineV1Enabled() === false);
+
+  withSearch("?v2=1&xe=1");
+  check("the expression engine turns on by itself", isExpressionEngineV1Enabled() === true);
+
+  withSearch("?v2=1&me=1&xe=1");
+  check("with both requested, the expression engine wins", isExpressionEngineV1Enabled() === true);
+  check("and the meaning engine is forced off, so the sheet is never double-drawn", isMeaningEngineV1Enabled() === false);
+
+  // Note: `livePresentationV2` is committed on, so both resolvers' V2 gate is
+  // always satisfied in this build — the gate itself is covered by the
+  // visualReentry override tests above, which simulate the pre-activation state.
+  withSearch("?v2=1");
+  check("with neither requested, both engines stay off", isExpressionEngineV1Enabled() === false && isMeaningEngineV1Enabled() === false);
+}
 
 delete globalThis.window;
 

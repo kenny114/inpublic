@@ -430,6 +430,54 @@ export type LogEvent =
     }
   | {
       t: number;
+      type: "meaning";
+      event: "updated" | "no-change";
+      family?: string;
+      focusConceptIds?: string[];
+      topic?: string;
+      currentInterpretation?: string;
+      reason?: string;
+    }
+  | {
+      /**
+       * The Expression Engine (lib/expression/*) on the live speech path.
+       *
+       * Carries the two things a session log cannot recover afterwards: which
+       * layer decided what (intent + grammar + the planner's reason), and the
+       * evaluator's own verdict on the result. `preservation` and
+       * `invented-relation` are the point of logging this at all — a scene
+       * that asserts a relation the speaker never made is the one failure
+       * worth finding in a log rather than in a recording.
+       */
+      t: number;
+      type: "expression";
+      event: "updated" | "rendered" | "invented-relation";
+      intent?: string;
+      grammar?: string;
+      reason?: string;
+      preservation?: number;
+      problems?: string[];
+      interpretation?: string;
+      patch?: string[];
+      detail?: string;
+    }
+  | {
+      /**
+       * The reflex layer (lib/meaning/reflex.ts): tentative signs drawn from
+       * settled interim words, before the thought settles. Logged as glyph
+       * names rather than the clause text — the whole point of the layer is
+       * that speech becomes a picture, and a log full of transcript would
+       * make it impossible to tell whether that actually happened.
+       */
+      t: number;
+      type: "reflex";
+      event: "provisional" | "cleared";
+      added?: string[];
+      updated?: string[];
+      removed?: number;
+    }
+  | {
+      t: number;
       type: "comparison";
       event: "detected" | "movement_started" | "movement_completed" | "movement_cancelled" | "undo";
       leftConceptId: string;

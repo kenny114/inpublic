@@ -454,11 +454,13 @@ export async function buildConceptNode(
   label: string,
   kind: string,
   pen: Pen,
+  /** When set, the box uses this size so layout and ink cannot drift. */
+  sizeHint?: { w: number; h: number },
 ): Promise<BuiltConcept | null> {
   const { convertToExcalidrawElements } = await import("@excalidraw/excalidraw");
   const size = SIZE.box;
-  const w = Math.max(170, textW(label, size) + 48);
-  const h = 70;
+  const w = sizeHint?.w ?? Math.max(170, textW(label, size) + 48);
+  const h = sizeHint?.h ?? 70;
   const p = place(pen, w, h);
   const stroke = KIND_STROKE[kind] ?? SOFT;
 
@@ -488,6 +490,60 @@ export async function buildConceptNode(
     elements,
     nodeId: node.id,
     mark: { key: markKey(label), x: p.x, y: p.y, w, h },
+  };
+}
+
+/**
+ * A region, not a labelled card. Bound text on a large rectangle is centered
+ * by Excalidraw and lands on top of whatever sits inside — so the title is a
+ * separate text element in the header band, never container-bound.
+ */
+export async function buildEnclosureFrame(
+  nodeId: string,
+  title: string,
+  kind: string,
+  pen: Pen,
+  sizeHint: { w: number; h: number },
+): Promise<(BuiltConcept & { titleId: string | null }) | null> {
+  const { convertToExcalidrawElements } = await import("@excalidraw/excalidraw");
+  const w = sizeHint.w;
+  const h = sizeHint.h;
+  const p = place(pen, w, h);
+  const stroke = KIND_STROKE[kind] ?? SOFT;
+  const skeleton: Record<string, unknown>[] = [
+    {
+      id: nodeId,
+      type: "rectangle",
+      x: p.x,
+      y: p.y,
+      width: w,
+      height: h,
+      strokeColor: stroke,
+      backgroundColor: "transparent",
+      roughness: 2,
+      strokeWidth: 1,
+    },
+  ];
+  if (title) {
+    skeleton.push({
+      type: "text",
+      x: p.x + 16,
+      y: p.y + 12,
+      text: title,
+      fontSize: SIZE.box,
+      fontFamily: HAND,
+      strokeColor: INK,
+    });
+  }
+  const elements = convertToExcalidrawElements(skeleton as never) as unknown as SceneElement[];
+  const node = elements.find((el) => el.type === "rectangle");
+  if (!node) return null;
+  const titleEl = elements.find((el) => el.type === "text");
+  return {
+    elements,
+    nodeId: node.id,
+    titleId: titleEl?.id ?? null,
+    mark: { key: markKey(title), x: p.x, y: p.y, w, h },
   };
 }
 

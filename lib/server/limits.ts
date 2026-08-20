@@ -57,4 +57,12 @@ export const routeLimits: Record<string, { limit: number; windowSeconds: number 
   // At most one call per settled thought, and thoughts are naturally paced by
   // speech — this only bounds a misbehaving client, same reasoning as beat's.
   "visual-reentry": { limit: positiveInteger("RATE_LIMIT_VISUAL_REENTRY_PER_MINUTE", 20), windowSeconds: 60 },
+  // The engine debounces/coalesces settled thoughts before calling (see
+  // lib/meaning/engine.ts), so observed rates stay well under one call per
+  // settled thought — this only bounds a misbehaving client.
+  "meaning-engine": { limit: positiveInteger("RATE_LIMIT_MEANING_ENGINE_PER_MINUTE", 15), windowSeconds: 60 },
+  // One call per input segment, and segments are sentences — a person typing
+  // a paragraph into the expression lab produces a short burst, so the
+  // ceiling is a little higher than the meaning engine's debounced rate.
+  "expression-engine": { limit: positiveInteger("RATE_LIMIT_EXPRESSION_ENGINE_PER_MINUTE", 30), windowSeconds: 60 },
 };
