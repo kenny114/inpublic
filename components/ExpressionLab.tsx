@@ -36,7 +36,7 @@ I'm from Trinidad and Tobago.
 I have a family of five.
 My mother's name is Mariam.`;
 
-const STAGES = ["input", "meaning", "world", "intent", "expression", "scene", "render", "evaluation"] as const;
+const STAGES = ["input", "meaning", "world", "intent", "composition", "clean", "presentation", "expression", "scene", "render", "evaluation"] as const;
 type Stage = (typeof STAGES)[number];
 
 const renderer = new SvgRenderer({ markNew: true });
@@ -215,10 +215,81 @@ function renderStage(stage: Stage, trace: ExpressionTrace) {
         </>
       );
 
+    case "composition":
+      return (
+        <>
+          <Note>
+            The single story of this thought. One primary, one spine. Clean and the renderer may only realise this plan — they cannot add a second subject or keep what this dropped.
+          </Note>
+          <Lines
+            rows={
+              trace.composition
+                ? [
+                    `primary    ${trace.composition.primaryId ?? "—"}`,
+                    `spine      ${trace.composition.spine.map((e) => `${e.from} ${e.label ? `—${e.label}→` : "→"} ${e.to}`).join("  ") || "—"}`,
+                    `allowed    ${trace.composition.allowed.join(", ") || "—"}`,
+                    `demote     ${trace.composition.demote.join(", ") || "—"}`,
+                    `remove     ${trace.composition.remove.join(", ") || "—"}`,
+                    `why        ${trace.composition.reason}`,
+                  ]
+                : ["(fast path — Composition Agent did not run)"]
+            }
+          />
+        </>
+      );
+
+    case "clean":
+      return (
+        <>
+          <Note>
+            Occupancy police. One primary, at most six nodes, no competing centres, leftover fans dropped. Constrained by Composition; Presentation may still drop for clarity. The renderer may not keep what this rejected.
+          </Note>
+          <Lines
+            rows={
+              trace.clean
+                ? [
+                    `primary    ${trace.clean.primaryId ?? "—"}`,
+                    `keep       ${trace.clean.keep.join(", ") || "—"}`,
+                    `promote    ${trace.clean.promote.join(", ") || "—"}`,
+                    `demote     ${trace.clean.demote.join(", ") || "—"}`,
+                    `remove     ${trace.clean.remove.join(", ") || "—"}`,
+                    `relations  ${trace.clean.allowedRelations.map((r) => `${r.from}→${r.to}${r.label ? ` "${r.label}"` : ""}`).join("  ") || "—"}`,
+                    `max        ${trace.clean.maxNodes}`,
+                    `why        ${trace.clean.reason}`,
+                    "",
+                    `board was  ${trace.board.nodeCount} nodes, ${trace.board.connectorCount} lines`,
+                  ]
+                : ["(fast path — Clean Agent did not run)"]
+            }
+          />
+        </>
+      );
+
+    case "presentation":
+      return (
+        <>
+          <Note>
+            How the story is shown. One layout, one heavy centre, support medium, periphery light. Simplifications are drops for clarity — the Draw layer may not add them back.
+          </Note>
+          <Lines
+            rows={
+              trace.presentation
+                ? [
+                    `layout     ${trace.presentation.layout}`,
+                    `emphasis   primary ${trace.presentation.emphasis.primary} · support ${trace.presentation.emphasis.support} · periphery ${trace.presentation.emphasis.periphery}`,
+                    `simplify   ${trace.presentation.simplifications.join(", ") || "—"}`,
+                    `notes      ${trace.presentation.notes}`,
+                  ]
+                : ["(fast path — Presentation Agent did not run)"]
+            }
+          />
+        </>
+      );
+
     case "expression":
       return (
         <>
-          <Note>What should exist visually and what connects to what. Still no coordinates anywhere.</Note>
+          <Note>What should exist visually and what connects to what. Still no coordinates anywhere. Constrained by the composition and clean plans when they exist.</Note>
           <Lines
             rows={[
               `grammar    ${trace.plan.grammar}`,

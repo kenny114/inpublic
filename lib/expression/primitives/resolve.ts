@@ -48,6 +48,9 @@ export const PRIMITIVE_SIZE: Record<VisualPrimitive, PrimitiveSize> = {
   state_marker: { w: 144, h: 96 },
   moment: { w: 168, h: 80 },
   text_label: { w: 200, h: 40 },
+  metric_value: { w: 176, h: 96 },
+  metric_series: { w: 240, h: 128 },
+  metric_gauge: { w: 220, h: 120 },
 };
 
 /** How many marks a counted thing is drawn as. Beyond this a crowd reads as "many", and drawing more costs comprehension rather than adding it. */
@@ -67,9 +70,27 @@ export interface ResolvedPrimitive {
  * but a shape and a label. Not every primitive gets one: a figure already
  * draws a person, a place_marker already draws a place, a quantity_array
  * already draws the count itself — none of those need an icon to stop being
- * a caption. `node`, `moment`, `state_marker` and `object_glyph` do.
+ * a caption.
+ *
+ * WHAT IS DRAWN AND WHAT IS NAMED. This used to be attached to `node`,
+ * `moment`, `state_marker` and `object_glyph` alike — that is, to concepts,
+ * actions, events, times and states as well as to physical things. A
+ * physical thing has a shape a drawing can be right or wrong about. The
+ * others do not: asked for "something new" or "the rebuild" the model
+ * cannot draw the thing, so it draws an ASSOCIATION with it, and an
+ * abstract scribble beside a correct label reads as neither the label nor
+ * the concept — it is the guessed-icon failure this module's header rejects,
+ * arriving through the drawing agent instead of through a lookup table.
+ * A concept's honest visual is the clean labelled node it already has.
+ *
+ * It costs latency too, and the late kind: every uncached key is a model
+ * call whose result lands as a second commit after the board already looked
+ * settled (components/Board.tsx's phase 2). Restricting this to `object`
+ * removes most of those calls from an ordinary sentence, so what the board
+ * shows at the end of a thought is what it showed a moment into it.
  */
 function withSketch(resolved: ResolvedPrimitive, entity: WorldEntity): ResolvedPrimitive {
+  if (entity.type !== "object") return resolved;
   return { ...resolved, sketchKey: sketchKeyFor(entity.type, entity.label) };
 }
 
@@ -85,6 +106,28 @@ function repeated(primitive: VisualPrimitive, count: number, base: PrimitiveSize
 export function resolvePrimitive(entity: WorldEntity | null, region: Region): ResolvedPrimitive {
   if (region.role === "annotation" || !entity) {
     return { primitive: "text_label", size: PRIMITIVE_SIZE.text_label };
+  }
+
+  /**
+   * A metric ("200 visitors last week, 500 this week") is a measurement
+   * over time, never an extent to count out in marks — checked first, and
+   * unconditionally, so nothing below (the count-as-extent rule right after
+   * this, or the per-type switch) can reinterpret "500" as five hundred
+   * dots. Three shapes, chosen purely from the metric's own structure, never
+   * from wording:
+   *   target set                 -> metric_gauge (actual against a threshold)
+   *   3+ points in history       -> metric_series (an ordered run)
+   *   otherwise (1 or 2 points)  -> metric_value (a number, or a before/after pair)
+   * Two-metric comparison is not a fourth case here — it is two
+   * metric_value/metric_series regions placed as poles by the `comparison`
+   * grammar (lib/expression/grammars/index.ts), decided from a
+   * `contrasts_with` relation between two metric entities, same as any other
+   * comparison.
+   */
+  if (entity.metric) {
+    if (entity.metric.target) return { primitive: "metric_gauge", size: PRIMITIVE_SIZE.metric_gauge };
+    if (entity.metric.history.length >= 3) return { primitive: "metric_series", size: PRIMITIVE_SIZE.metric_series };
+    return { primitive: "metric_value", size: PRIMITIVE_SIZE.metric_value };
   }
 
   /**

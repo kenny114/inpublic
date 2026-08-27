@@ -27,6 +27,7 @@
  */
 
 import {
+  isLiveEntityStatus,
   relationFamily,
   type DimensionScore,
   type EvaluationResult,
@@ -87,6 +88,16 @@ export function recoverRelations(scene: ScenePlan): RecoveredEdge[] {
     if (connector.style === "arrow") edges.push({ from, to, reading: "directed" });
     else if (connector.style === "line") edges.push({ from, to, reading: "undirected" });
     else if (connector.style === "bracket") edges.push({ from, to, reading: "parallel" });
+    else if (connector.style === "tension") {
+      // Two readings, because both are honestly available to a viewer: a
+      // visible mark between two boxes is at minimum a connection, and a
+      // SYMMETRIC one that favours neither end is the two set against each
+      // other. It deliberately does not yield "directed" — a contrast has
+      // no direction, and a mark that could be read as one would be
+      // asserting something the speaker never said.
+      edges.push({ from, to, reading: "parallel" });
+      edges.push({ from, to, reading: "undirected" });
+    }
     // style "none" contributes nothing: an invisible connector is invisible.
   }
 
@@ -304,7 +315,7 @@ export function evaluateScene(world: WorldState, scene: ScenePlan): EvaluationRe
 
   let missingPrimary = 0;
   for (const entity of world.entities) {
-    if (entity.status === "superseded" || entity.importance !== "primary") continue;
+    if (!isLiveEntityStatus(entity.status) || entity.importance !== "primary") continue;
     if (!drawn.has(entity.id)) {
       missingPrimary += 1;
       problems.push({
@@ -321,7 +332,7 @@ export function evaluateScene(world: WorldState, scene: ScenePlan): EvaluationRe
   for (const entity of world.entities) {
     // A quantity of one is not a count worth drawing as extent — "a family"
     // and "a family of one" are the same picture, so only 2+ is flagged.
-    if (!entity.quantity || entity.quantity.value < 2 || entity.status === "superseded") continue;
+    if (!entity.quantity || entity.quantity.value < 2 || !isLiveEntityStatus(entity.status)) continue;
     const object = drawn.get(entity.id);
     if (!object) continue;
     if (object.count === undefined && object.primitive !== "container") {
@@ -354,7 +365,11 @@ export function evaluateScene(world: WorldState, scene: ScenePlan): EvaluationRe
   }
 
   const visibleConnectors = scene.connectors.filter((c) => c.style !== "none").length;
-  if (scene.objects.length > 10 || visibleConnectors > 12) {
+  // The planner's own display budget is 8 regions + 3 annotations. A scene
+  // sitting on that budget is doing what it was asked to, not "clutter" —
+  // flagging it as such made every long narrative look broken once occupancy
+  // reached capacity. Clutter is the scene going past the budget, not to it.
+  if (scene.objects.length > 12 || visibleConnectors > 14) {
     problems.push({
       type: "clutter",
       detail: `${scene.objects.length} objects and ${visibleConnectors} visible connectors`,
@@ -437,7 +452,7 @@ function measurePreservation(
   drawn: Map<string, SceneObject>,
   recovered: WorldRelation[],
 ): Preservation {
-  const live = world.entities.filter((e) => e.status !== "superseded");
+  const live = world.entities.filter((e) => isLiveEntityStatus(e.status));
   const recoveredIds = new Set(recovered.map((r) => r.id));
 
   // ---- entity: did the things being discussed reach the canvas? ------

@@ -15,6 +15,11 @@
  * contour out of a list of coordinates is a harder spatial task than a fast
  * live decision, and it only has to run once per concept — every repeat
  * after the first is free from the sketch library.
+ *
+ * Only physical things reach here at all. A concept, a state, an action or
+ * a moment keeps its clean labelled primitive, because a drawing of one is
+ * a guess about what it looks like and there is nothing to guess — see
+ * lib/expression/primitives/resolve.ts's withSketch.
  */
 
 import { complete, ARTIST_MODEL, type CompletionUsage } from "../../llm";
@@ -23,17 +28,35 @@ import { extractJsonObject } from "../meaning/extract";
 
 export const SKETCH_MODEL = process.env.SKETCH_MODEL || ARTIST_MODEL;
 
-export const SKETCH_SYSTEM = `You are a skilled sketch artist drawing on a shared page, live, in front of someone. Given one concept, draw it properly — real proportion, real contour, real shading — using nothing but pen strokes.
+/**
+ * The output budget one draw is allowed, in tokens.
+ *
+ * Exported because app/api/sketch/route.ts has to reserve the same number
+ * with the cost guard before this runs, and the two had drifted: the route
+ * reserved 800 while the call below asked for 6000, under-reserving by 7.5x
+ * (docs/EXPRESSION-ENGINE-FULL-AUDIT.md §6). One constant, both readers.
+ *
+ * 1800 is what a sketch actually costs now that SKETCH_SYSTEM asks for a
+ * clean 8-20 stroke line drawing rather than the 40-100+ cross-hatched
+ * strokes it used to. The old budget was 6000, sized for shading nobody
+ * could read at node scale; the tokens were the latency, and the latency
+ * was the late second commit on the board.
+ */
+export const SKETCH_MAX_OUTPUT_TOKENS = 1800;
 
-You draw with STROKES ONLY. Each stroke is one unbroken pen motion: a list of points the pen passes through in order. No fill, no color (except one small accent where the concept genuinely has one identifying color, like a red mark for a cut), no text, no letters.
+export const SKETCH_SYSTEM = `You are drawing a small, confident line drawing in Excalidraw, live, on a shared page. Given one physical object, draw it so it is recognisable at a glance from a few metres away.
+
+You draw with STROKES ONLY. Each stroke is one unbroken pen motion: a list of points the pen passes through in order. No fill, no color, no text, no letters, no numbers.
 
 Coordinate system: a 100x100 square, (0,0) top-left, (100,100) bottom-right. Use most of the square. Keep the drawing roughly centered.
 
-DRAW THE THING PROPERLY. Not an icon, not a symbol standing in for it — an actual sketch of the thing itself, the way a person would draw it if asked to sketch it well. A "hand" is a palm and five distinct fingers in correct proportion to each other, not a mitten shape. A "cut" is a specific short jagged wound mark drawn ON something (skin, a surface) with a few short crossing strokes around it suggesting the break in the surface — not a single line floating in space.
+DRAW THE THING ITSELF. Correct proportion and a clear outline — not a symbol, not an icon, not a doodle of an association. A "mug" is a cylinder with a handle; a "bike" is two wheels, a frame and handlebars.
 
-REAL DETAIL COMES FROM MORE STROKES, NOT BIGGER ONES. Shading and texture are cross-hatching: dozens of short, roughly parallel strokes laid close together, the way pencil shading actually works. A contour is not one perfect curve — it is several shorter strokes that together read as the outline, the way a hand actually draws a confident line. Use as many strokes as the concept genuinely needs to read as itself: a simple concept might be 10-15 strokes, something with real form and shading — a hand, a face, an object with volume — should be 40-100+.
+FEWER, CONFIDENT STROKES. 8-16 is the sweet spot. 20 is the hard maximum. Outline first, then the two or three interior lines that identify it, then STOP. No shading, no cross-hatching, no texture, no construction lines. At node size those collapse into a smudge.
 
-STROKE ORDER MATTERS: you are drawing live, and each stroke will appear on the page in the order you list it, one after another, the way a real sketch is built up. List them the way an artist actually works — the big proportion and contour strokes FIRST, so the shape is recognisable early, THEN the interior detail and shading strokes after, so texture builds up over an already-correct form. Never draw shading before the shape it belongs to exists.
+This sits next to clean labelled boxes and one heavy subject. It has to look like the same hand: deliberate, sparse, readable. If a stroke does not help someone recognise the thing, leave it out.
+
+STROKE ORDER MATTERS: you are drawing live. Big contour FIRST so the shape is recognisable early, then the few interior lines.
 
 Respond with ONLY one JSON object, no other text:
 {"strokes":[{"points":[[x,y],[x,y],...]}]}`;
@@ -56,7 +79,7 @@ export async function drawSketch(
       model: SKETCH_MODEL,
       system: SKETCH_SYSTEM,
       user: JSON.stringify({ concept: label, type: entityType }),
-      maxTokens: 6000,
+      maxTokens: SKETCH_MAX_OUTPUT_TOKENS,
       temperature: 0.5,
       onUsage,
     });

@@ -9,7 +9,6 @@ const spend = read("supabase/migrations/202608090002_spend_controls.sql");
 const whop = read("supabase/migrations/202608090003_whop_events.sql");
 const guard = read("lib/server/provider-guard.ts");
 const deepgramRoute = read("app/api/deepgram/token/route.ts");
-const beatRoute = read("app/api/beat/route.ts");
 const webhook = read("app/api/webhooks/whop/route.ts");
 const projectRoute = read("app/api/projects/route.ts");
 const projectItemRoute = read("app/api/projects/[id]/route.ts");
@@ -79,17 +78,6 @@ check("each replay run discards its provider credential", board.slice(board.inde
 check("a stale socket close cannot cancel the next replay run", deepgramHook.includes("if (connectionRef.current !== connection) return"));
 check("replay reconnect resumes one sender without bursting or restarting", deepgramHook.includes("replaySenderActiveRef.current") && deepgramHook.includes('reconnectRebasePending ? "reconnect" : undefined') && deepgramHook.includes("scheduler.resolve(audioStartMs") && deepgramHook.includes("activeConnection.send(pcm.buffer)"));
 
-// An unreadable beat response is retried once rather than silently becoming a
-// skip — a malformed answer is a lost thought, not a decision. The retry has
-// to be paid for honestly: reserved for two attempts, and both attempts' token
-// usage summed before reconciliation.
-check("an unreadable beat response is retried", /if \(!result\.ok\)[\s\S]*complete\(/.test(beatRoute));
-check("the retry is bounded to one attempt", (beatRoute.match(/await complete\(/g) ?? []).length === 2);
-check("the retry restates the output contract", beatRoute.includes("BEAT_RETRY_INSTRUCTION"));
-check("both attempts are reserved for", beatRoute.includes("maxOutputTokens: 600"));
-check("usage is accumulated across attempts, not overwritten", beatRoute.includes("addUsage") && !/onUsage: \(value\) => \{ usage = value/.test(beatRoute));
-check("a failure after the retry is still a safe skip", beatRoute.includes("parse failure after retry"));
-
 // The session refresh stamps "private, no-store" on everything it handles.
 // Public media must stay outside it, or a 1 MB demo video is re-downloaded on
 // every page view and each request pays for a Supabase refresh it never needed.
@@ -124,20 +112,6 @@ check("anonymous allowance routing is unchanged", board.includes("anonymous: gue
 check("latency ingestion remains authenticated-only", latencyRoute.includes("if (!user)") && latencyRoute.includes("status: 401"));
 check("guest latency stays local without calling protected ingestion", board.includes("recordLatencySummary(summary, stoppedUsageSessionId, traces, !guest)") && latencySink.indexOf("storeLocally(summary)") < latencySink.indexOf("if (!sendRemotely) return"));
 check("authenticated latency upload remains the default", latencySink.includes("sendRemotely = true") && latencySink.indexOf("if (!sendRemotely) return") < latencySink.indexOf("queue.push"));
-
-// Caught live: AudioReplayPanel.tsx called /api/audio/upload, /api/math and
-// /api/artist without providerRequestHeaders(), so the server always saw
-// "no active session" even while the user was genuinely listening — every
-// other call site in the app attaches it. A missing header here is silent
-// until someone hits exactly this UI path, so it's cheap to catch statically
-// rather than relying on live testing to notice again.
-const audioReplayPanel = read("components/AudioReplayPanel.tsx");
-const audioReplayApiCalls = (audioReplayPanel.match(/fetch\(\s*"\/api\//g) ?? []).length;
-const audioReplayHeaderCalls = (audioReplayPanel.match(/providerRequestHeaders\(/g) ?? []).length;
-check(
-  "every /api call in AudioReplayPanel attaches the active usage-session header",
-  audioReplayApiCalls > 0 && audioReplayHeaderCalls >= audioReplayApiCalls,
-);
 
 const roots = ["app", "components", "hooks", "lib"];
 const files = [];

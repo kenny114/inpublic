@@ -24,6 +24,7 @@
  */
 
 import {
+  isLiveEntityStatus,
   relationFamily,
   type Connection,
   type GrammarId,
@@ -34,9 +35,27 @@ import {
   type WorldState,
 } from "../schemas";
 
-/** Visual restraint lives here, not in the world model: the world understands everything, the grammar shows a few. */
+/**
+ * Visual restraint lives here, not in the world model: the world
+ * understands everything, the grammar shows a few.
+ *
+ * This bounds the STRUCTURE a grammar may draw — the steps in a sequence,
+ * the parts of a hierarchy, the poles of a comparison and their
+ * dimensions. A grammar that found real structure is showing one idea, and
+ * cutting it mid-idea makes the picture wrong rather than clean, so this
+ * stays where it was.
+ *
+ * What made boards dense was never the structure; it was everything
+ * attached AROUND it. That is bounded separately and much harder — see
+ * CONTEXT_BUDGET in lib/expression/planner/plan.ts.
+ */
 export const REGION_BUDGET = 8;
-export const ANNOTATION_BUDGET = 3;
+/**
+ * Two, not three. An annotation is the one thing on this canvas that is
+ * literally a sentence, and the budget is how many sentences a picture can
+ * carry before it stops being a picture. Three was already a paragraph.
+ */
+export const ANNOTATION_BUDGET = 2;
 
 export interface GrammarResult {
   regions: Region[];
@@ -62,7 +81,7 @@ const regionId = (entityId: string) => `r-${entityId}`.slice(0, 48);
 const connectionId = (relationId: string) => `c-${relationId}`.slice(0, 48);
 
 function active(world: WorldState): WorldEntity[] {
-  return world.entities.filter((e) => e.status !== "superseded");
+  return world.entities.filter((e) => isLiveEntityStatus(e.status));
 }
 
 function entityById(world: WorldState, id: string): WorldEntity | undefined {
@@ -142,6 +161,14 @@ function connectionLabel(rel: WorldRelation): string | undefined {
    * This is the one place text is not a failure of visual expression: it is
    * the only thing that can carry the meaning at all.
    */
+  /**
+   * A want is the same case as a polarity, arriving from the other side: an
+   * arrow from a person to a thing says they are connected and which way
+   * the line runs, and nothing at all about what the person is doing with
+   * it — wanting it, building it, refusing it all draw identically. The
+   * word is the relation, so the word is drawn.
+   */
+  if (rel.type === "wants") return "wants";
   if (rel.type === "prevents") return "prevents";
   if (rel.type === "refutes") return "refutes";
   if (rel.type === "greater_than") return "more";
@@ -185,6 +212,48 @@ function parentChildMap(world: WorldState): Map<string, string[]> {
     else if (rel.type === "part_of" || rel.type === "member_of") push(rel.target, rel.source);
   }
   return map;
+}
+
+/**
+ * The entity that belongs under `pole` by this relation, if any.
+ *
+ * `has_property` is membership, not a directed arrow: the extractor emits
+ * both `plan-a → plan-a-duration` and `plan-a-duration → plan-a` for the
+ * same fact. If either end is the pole, the other end is the dimension.
+ * greater_than / less_than stay directed — those are measurements, not
+ * ownership.
+ */
+function dimensionHungOn(rel: WorldRelation, pole: string): string | undefined {
+  if (rel.type === "has_property") {
+    if (rel.source === pole && rel.target !== pole) return rel.target;
+    if (rel.target === pole && rel.source !== pole) return rel.source;
+    return undefined;
+  }
+  if ((rel.type === "greater_than" || rel.type === "less_than") && rel.source === pole) return rel.target;
+  return undefined;
+}
+
+/**
+ * Owner and dimension of a has_property edge, treating it as undirected.
+ *
+ * A quantity attached to a non-quantity is a dimension of it, whichever
+ * way the extractor pointed the edge — otherwise a reversed
+ * `plan-a-duration → plan-a` would lift Plan A onto its duration and the
+ * poles would become the measurements. Concept-properties ("expensive")
+ * keep the canonical direction (source owns target).
+ */
+function hasPropertyOwnership(
+  rel: WorldRelation,
+  world: WorldState,
+): { ownerId: string; dimensionId: string } | undefined {
+  if (rel.type !== "has_property") return undefined;
+  const source = entityById(world, rel.source);
+  const target = entityById(world, rel.target);
+  if (!source || !target) return undefined;
+  if (source.type === "quantity" && target.type !== "quantity") {
+    return { ownerId: target.id, dimensionId: source.id };
+  }
+  return { ownerId: source.id, dimensionId: target.id };
 }
 
 // ────────────────────────────────────────────────────────── grammars
@@ -303,10 +372,37 @@ const comparison: Grammar = {
   id: "comparison",
   description: "parallel columns; the arrangement is the contrast, no arrow between poles",
   build({ world }) {
-    const comparative = world.relations
-      .filter((r) => relationFamily(r.type) === "comparative")
-      .sort((a, b) => (a.type === "contrasts_with" ? -1 : 0) - (b.type === "contrasts_with" ? -1 : 0));
-    let poles: [string, string] | null = comparative.length ? [comparative[0].source, comparative[0].target] : null;
+    const comparative = world.relations.filter((r) => relationFamily(r.type) === "comparative");
+
+    // An entity that is a PROPERTY of another is a dimension of it, never a
+    // peer to set against it. "Plan A costs more but finishes twice as
+    // quickly as Plan B" is a comparison of two PLANS measured on cost and
+    // speed — but the meaning layer readily produces the contrast between
+    // the two dimensions ("costs more BUT finishes quickly"), and taking
+    // that pair literally drew Plan A's cost beside Plan A's speed with
+    // Plan B nowhere on the sheet.
+    //
+    // So every comparative endpoint is lifted to whatever it is a property
+    // OF before poles are chosen. Two dimensions of the same subject then
+    // collapse to that one subject and stop being a candidate pair, while a
+    // dimension compared against a subject ("Plan A's cost vs Plan B")
+    // lifts into the subject-vs-subject comparison it was really making.
+    const ownerOfProperty = new Map<string, string>();
+    for (const rel of world.relations) {
+      const owned = hasPropertyOwnership(rel, world);
+      if (owned && !ownerOfProperty.has(owned.dimensionId)) ownerOfProperty.set(owned.dimensionId, owned.ownerId);
+    }
+    const lift = (id: string) => ownerOfProperty.get(id) ?? id;
+
+    const candidates = comparative
+      .map((rel) => ({ rel, a: lift(rel.source), b: lift(rel.target) }))
+      .filter((c) => c.a !== c.b && entityById(world, c.a) && entityById(world, c.b));
+
+    // An explicit contrast is the speaker setting two things against each
+    // other; greater_than/less_than is a measurement that may only touch one
+    // dimension. So an explicit contrast wins when both are present.
+    const chosen = candidates.find((c) => c.rel.type === "contrasts_with") ?? candidates[0];
+    let poles: [string, string] | null = chosen ? [chosen.a, chosen.b] : null;
 
     if (!poles) {
       const counted = active(world).filter((e) => e.quantity && e.importance !== "detail");
@@ -324,24 +420,58 @@ const comparison: Grammar = {
     const shown = new Set<string>(poles);
 
     // Each pole's own attributes, hung beneath it — a comparison of two bare
-    // names compares nothing.
+    // names compares nothing. has_property is read undirected: whichever end
+    // is the pole, the other end is the dimension that belongs in its column.
+    const perPole = Math.floor((REGION_BUDGET - 2) / 2);
     for (const [index, pole] of poles.entries()) {
-      const props = world.relations
-        .filter((r) => r.source === pole && (r.type === "has_property" || r.type === "greater_than" || r.type === "less_than"))
-        .filter((r) => entityById(world, r.target) && !shown.has(r.target))
-        .slice(0, Math.floor((REGION_BUDGET - 2) / 2));
-      for (const rel of props) {
-        shown.add(rel.target);
-        regions.push({ id: regionId(rel.target), role: "context", entityId: rel.target, order: index });
-        regions[index].childRegionIds!.push(regionId(rel.target));
+      let hung = 0;
+      for (const rel of world.relations) {
+        if (hung >= perPole) break;
+        const dimensionId = dimensionHungOn(rel, pole);
+        if (!dimensionId || !entityById(world, dimensionId) || shown.has(dimensionId)) continue;
+        shown.add(dimensionId);
+        regions.push({ id: regionId(dimensionId), role: "context", entityId: dimensionId, order: index });
+        regions[index].childRegionIds!.push(regionId(dimensionId));
         connections.push(connect(rel, "link"));
+        hung += 1;
       }
     }
 
+    const [poleA, poleB] = poles;
+    // Is the contrast between the poles stated in its own right, as a
+    // relation whose two ends ARE the poles? That is what decides whether a
+    // dimension-level relation that lifts onto the same pair is a
+    // restatement or the only statement there is.
+    const polesStatedDirectly = comparative.some(
+      (r) => (r.source === poleA && r.target === poleB) || (r.source === poleB && r.target === poleA),
+    );
     for (const rel of comparative) {
+      // A dimension-level relation that LIFTS onto the poles ("Plan A's cost
+      // vs Plan B") is usually the pole comparison wearing a different pair
+      // of ends, and drawing it too would restate the contrast against an
+      // endpoint that is not even one of the poles.
+      //
+      // "Usually" is the part that was wrong. It is a restatement only when
+      // it says nothing the pole comparison does not already say. Two things
+      // can make it say more, and they are exactly the two `connectionLabel`
+      // already recognises as unable to survive an arrangement: a magnitude
+      // ("twice as quickly") and a polarity ("costs MORE"). Dropped
+      // wholesale, "Plan A costs more but finishes twice as quickly as Plan
+      // B" produced two columns that said the plans were being compared and
+      // could not say which was faster, or by how much — the sentence's
+      // entire point, drawn as nothing.
+      //
+      // A lifted relation is also kept when the poles were never contrasted
+      // directly, because then it is the only statement of the comparison
+      // there is.
+      const [a, b] = [lift(rel.source), lift(rel.target)];
+      const wasLifted = a !== rel.source || b !== rel.target;
+      const liftsOntoPoles = (a === poleA && b === poleB) || (a === poleB && b === poleA);
+      const restatesThePoles = wasLifted && liftsOntoPoles && polesStatedDirectly && !connectionLabel(rel);
+      if (restatesThePoles) continue;
       if (shown.has(rel.source) && shown.has(rel.target)) connections.push(connect(rel, "comparison"));
     }
-    return { regions, connections, reason: `poles ${poles[0]} vs ${poles[1]}` };
+    return { regions, connections, reason: `poles ${poleA} vs ${poleB}` };
   },
 };
 

@@ -10,50 +10,15 @@
  * until a redeploy). A value here takes effect the moment it's committed
  * and deployed, on every environment, with no separate config step.
  *
- * Story Mode and Audio Replay are parked (2026-08-10) so product focus can
- * go entirely to Standard Mode, payments, and cost/latency. Both remain
- * fully implemented and untouched — components/Board.tsx's story-mode
- * branches, components/AudioReplayPanel.tsx, lib/story.ts, lib/storyV2.ts,
- * app/api/story/route.ts, app/api/audio/upload/route.ts, all still work.
- * This file only controls whether the UI offers a path to reach them.
- * Flip a value back to `true` and redeploy to bring a parked feature back —
- * no reconstruction needed.
+ * Story Mode, Audio Replay, and the old Reflex(Tier 2)/Scribe(Tier 3a)/
+ * Beat-Artist-Director-Choreographer-Math(Tier 3b/3c) pipeline were removed
+ * entirely in the Strip-Down (2026-08). There is one visual architecture now:
+ * speech → Expression Engine → Excalidraw. The flags that gated those
+ * removed systems are gone from this file, not just turned off — recover
+ * them from git history if a comparison baseline is ever wanted.
  */
 export const features = {
   standardMode: true,
-  storyMode: false,
-  audioReplay: false,
-  /**
-   * Tier 2 (lib/speculative.ts / components/Board.tsx's Reflex wiring).
-   * Flipping this off entirely skips recognition and rendering — no
-   * setTimeout is even scheduled — while leaving Tier 1 (writeLive) and Tier
-   * 3 (Scribe/Beat/Artist) untouched. Exists so Reflex-off-vs-on can be
-   * measured (see scripts/latency-benchmark.mjs) and so it can be pulled
-   * instantly without a code change if it ever measurably costs Tier 1
-   * anything (see the invariant comment at the top of writeLive).
-   */
-  reflex: true,
-  /**
-   * Director/Choreographer v0: recognize a spoken comparison between two
-   * concepts already on the board and reorganize their existing nodes into a
-   * side-by-side layout instead of drawing more content next to them. See
-   * lib/director.ts and lib/choreographerComparison.ts. Off means the
-   * detection call after applyActions never runs — zero behavior change,
-   * same pattern as `reflex`.
-   */
-  choreographerComparison: true,
-  /**
-   * Director V1: a persistent, patient structural-recognition layer that adds
-   * PROCESS (an ordered chain of concepts already on the board) alongside
-   * Comparison, and arbitrates between the two when a beat's evidence
-   * supports both. See lib/directorState.ts and lib/choreographerProcess.ts.
-   * Off means runBeat falls through to the exact `choreographerComparison`
-   * branch that existed before this flag — zero behavior change. On subsumes
-   * comparison's *decision* (still the same detectComparison/
-   * performComparison functions) so both capabilities can be arbitrated in
-   * one place instead of firing independently.
-   */
-  directorV1: true,
   /**
    * Live Speech Presentation V2 — a PROTECTED BASELINE, not an experiment
    * anymore. Manually compared against legacy Standard Mode and confirmed
@@ -127,6 +92,23 @@ export const features = {
    * or `?v2=1`).
    */
   expressionEngineV1: true,
+  /**
+   * The Expression Engine's anticipation pass (lib/expression/live.ts's
+   * `anticipate`): while a sentence is still being spoken, read what has
+   * been said so far with the real extractor and fold ITS ENTITIES ONLY, so
+   * the board keeps growing between the reflex mark and the settled
+   * structure instead of holding still for the three-to-four seconds that
+   * gap actually lasts.
+   *
+   * This is the one part of the engine that spends money to buy pacing: it
+   * adds up to three extra extraction calls per utterance, rationed to one
+   * per 1.4s and abandoned the moment the settled thought is on its way. Off
+   * means `anticipate` is never called at all — no request, no fold, no cost
+   * — and the engine behaves exactly as it did before it existed, same
+   * pattern as `reflex`. Turn it off first if extraction spend ever needs
+   * cutting.
+   */
+  expressionAnticipation: true,
 } as const;
 
 export type FeatureFlags = typeof features;
@@ -167,4 +149,39 @@ export function isExpressionDebugOnlyEnabled(): boolean {
   if (process.env.NODE_ENV === "production") return false;
   if (typeof window === "undefined") return false;
   return new URLSearchParams(window.location.search).get("debug") === "1";
+}
+
+/**
+ * Dev-only, `?capture=1`-gated: buffers every ExpressionTrace this session
+ * produces (lib/expression/capture.ts) so it can be downloaded and
+ * deterministically replayed offline (scripts/expression-live-replay.mjs)
+ * without repeating model extraction. A developer evaluation tool, never
+ * production — same shape as isExpressionDebugOnlyEnabled, no committed-flag
+ * path at all, so there is no way to turn this on for a real user by
+ * accident.
+ */
+export function isLiveCaptureModeEnabled(): boolean {
+  if (!isExpressionEngineV1Enabled()) return false;
+  if (process.env.NODE_ENV === "production") return false;
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("capture") === "1";
+}
+
+/**
+ * Dev-only, `?agent=1`-gated: attaches the board's `express_meaning` tool to
+ * the local agent bridge (lib/expression/agentBridge.ts +
+ * scripts/express-mcp-server.mjs), so an external agent — Claude Code, Codex,
+ * any MCP client — can submit meaning into THIS open session.
+ *
+ * A local development connector, never production: the bridge talks to a
+ * loopback port a developer started themselves, and the same three guards as
+ * isLiveCaptureModeEnabled mean there is no committed-flag path that could
+ * turn it on for a real user. `window.inpublic.tool(...)` works regardless —
+ * this flag gates only the network bridge, not the tool itself.
+ */
+export function isAgentBridgeEnabled(): boolean {
+  if (!isExpressionEngineV1Enabled()) return false;
+  if (process.env.NODE_ENV === "production") return false;
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("agent") === "1";
 }

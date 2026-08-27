@@ -4,6 +4,12 @@ node_modules/
 out/
 output/
 .playwright-cli/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+# Generated Expression Engine replay/audit output. Fixtures and runners stay tracked.
+scripts/fixtures/.*-out*/
 .env
 .env.local
 *.tsbuildinfo

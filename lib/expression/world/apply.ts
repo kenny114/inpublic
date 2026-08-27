@@ -33,26 +33,176 @@
  */
 
 import {
+  isLiveEntityStatus,
+  type DiscourseActResolution,
+  type DiscourseActType,
   type Entity,
+  type EntityStatus,
   type EntityType,
   type MeaningDelta,
+  type Metric,
+  type MetricPoint,
+  type Provenance,
+  type ReferenceResolution,
   type Relation,
   type RelationType,
   type WorldClaim,
   type WorldEntity,
+  type WorldMetric,
   type WorldOp,
   type WorldRelation,
   type WorldState,
 } from "../schemas";
+import { resolveReference } from "./references";
+import { decideTarget, retrieveTargetCandidates, toReferenceCandidates } from "./resolveTarget";
+import type { IdentityDecision } from "./identity";
+
+/**
+ * The discourse act's verb and the entity status it produces are
+ * deliberately spelled differently ("reject" the act vs "rejected" the
+ * resulting state, same as "suspend"/"suspended", "deemphasize"/
+ * "deemphasized") — this is the one place that mapping is spelled out
+ * explicitly rather than relied on to match by coincidence.
+ */
+const ACT_TO_STATUS: Record<Exclude<DiscourseActType, "invalidate">, EntityStatus> = {
+  reject: "rejected",
+  suspend: "suspended",
+  deemphasize: "deemphasized",
+  supersede: "superseded",
+  reactivate: "active",
+};
 
 const MAX_SALIENCE = 16;
 const MAX_ALIASES = 12;
+const MAX_PROVENANCE = 6;
 
 export interface ApplyResult {
   world: WorldState;
   ops: WorldOp[];
   /** local delta id -> global world id, for callers that need to follow one round's entities down the pipeline. */
   idMap: Map<string, string>;
+  /** One entry per ReferenceMention this round, whether it resolved or not — see lib/expression/world/references.ts. */
+  referenceResolutions: ReferenceResolution[];
+  /** One entry per claim this round that carried a stance ("I agree" / "that's not right"), resolved or not. */
+  stanceResolutions: StanceResolution[];
+  /** One entry per discourse act this round performed ("let's set that aside", "actually, forget it"), whether or not the target resolved. */
+  discourseActResolutions: DiscourseActResolution[];
+  /** One entry per entity this round attached quantitative meaning to — see mergeMetric below. */
+  metricResolutions: MetricResolution[];
+}
+
+export interface StanceResolution {
+  claimId: string;
+  type: "agrees" | "disagrees";
+  targetSurface: string;
+  targetClaimId: string | null;
+}
+
+export interface MetricResolution {
+  entityId: string;
+  action: "created" | "appended" | "unit_mismatch" | "target_set";
+  detail: string;
+}
+
+/** History is a display/memory budget, not a claim that older points stop being true — oldest points are dropped first, same policy as aliases and provenance. */
+const MAX_METRIC_HISTORY = 12;
+
+/**
+ * The extractor sees `recentContext`, not world state, so a bare
+ * continuation like "it's up to 500 now" gets read against everything the
+ * model can infer was just said — including the value from the PREVIOUS
+ * turn, which the model then restates alongside the new one even though the
+ * prompt asks it not to. Live-tested: "We're at 200." then "It's up to 500
+ * now." produced points [200, 500] on the second turn, not just [500] — and
+ * appending that verbatim would double the 200.
+ *
+ * This finds the longest run where the END of what we already have equals
+ * the START of what just arrived, and only appends what comes after that
+ * overlap. It is deliberately POSITIONAL, not "drop any duplicate value":
+ * a real return to an old number ("back down to 200") does not sit at the
+ * head of a restated run, so it still appends as a genuine new point.
+ */
+function dedupeOverlap(history: MetricPoint[], incoming: MetricPoint[]): MetricPoint[] {
+  const maxOverlap = Math.min(history.length, incoming.length);
+  for (let k = maxOverlap; k > 0; k -= 1) {
+    const tail = history.slice(history.length - k);
+    const head = incoming.slice(0, k);
+    if (tail.every((p, i) => p.value === head[i].value)) return incoming.slice(k);
+  }
+  return incoming;
+}
+
+/**
+ * Folds one segment's `Metric` (points stated just now) into the entity's
+ * accumulated `WorldMetric` (history stated across every turn that has
+ * touched this metric so far). Two rules matter more than the arithmetic:
+ *
+ *  - UNITS NEVER SILENTLY MIX. "Conversion is 4%" then, entirely separately,
+ *    "conversion is 200" (a count) must not become one history with percent
+ *    and count points side by side — that would make a rendered series
+ *    meaningless. A unit change is reported and the existing metric is left
+ *    untouched, the same "abstain rather than guess" rule reference
+ *    resolution already follows.
+ *  - HISTORY IS APPENDED, NEVER REPLACED (after dedupeOverlap strips any
+ *    restated prefix). That is the entire mechanism behind "10% -> 4% -> 6%"
+ *    surviving as one series built across three separate turns instead of
+ *    the third turn silently overwriting the first two, or double-counting
+ *    what the model re-mentioned for context.
+ */
+function mergeMetric(
+  entityId: string,
+  existing: WorldMetric | undefined,
+  incoming: Metric | undefined,
+  resolutions: MetricResolution[],
+): WorldMetric | undefined {
+  if (!incoming) return existing;
+
+  if (!existing) {
+    resolutions.push({
+      entityId,
+      action: "created",
+      detail: `${incoming.unit} metric started with ${incoming.points.length} point(s)${incoming.target ? " and a target" : ""}`,
+    });
+    return {
+      unit: incoming.unit,
+      currency: incoming.currency,
+      history: incoming.points.slice(-MAX_METRIC_HISTORY),
+      target: incoming.target,
+      direction: incoming.direction,
+      changePercent: incoming.changePercent,
+    };
+  }
+
+  if (existing.unit !== incoming.unit) {
+    resolutions.push({
+      entityId,
+      action: "unit_mismatch",
+      detail: `kept existing unit "${existing.unit}"; incoming "${incoming.unit}" was NOT merged into the same history`,
+    });
+    return existing;
+  }
+
+  const fresh = dedupeOverlap(existing.history, incoming.points);
+  const history = [...existing.history, ...fresh].slice(-MAX_METRIC_HISTORY);
+  resolutions.push({
+    entityId,
+    action: incoming.target && !existing.target ? "target_set" : "appended",
+    detail: `${fresh.length} new point(s) appended (${incoming.points.length} stated, ${incoming.points.length - fresh.length} already known), history now ${history.length}${incoming.target ? `; target set to ${incoming.target.value}` : ""}`,
+  });
+  return {
+    unit: existing.unit,
+    currency: incoming.currency ?? existing.currency,
+    history,
+    target: incoming.target ?? existing.target,
+    direction: incoming.direction ?? existing.direction,
+    changePercent: incoming.changePercent ?? existing.changePercent,
+  };
+}
+
+/** Appends one touch to a bounded, oldest-evicted provenance log. A no-op when this round carried no provenance at all. */
+function appendProvenance(existing: Provenance[] | undefined, provenance: Provenance | undefined): Provenance[] | undefined {
+  if (!provenance) return existing;
+  return [...(existing ?? []), provenance].slice(-MAX_PROVENANCE);
 }
 
 // ───────────────────────────────────────────────────── normalisation
@@ -110,6 +260,87 @@ function pronounTypes(label: string): EntityType[] | null {
 }
 
 /**
+ * The speaker, and the group the speaker speaks for.
+ *
+ * Stable ids rather than slugs of whatever word was said, so "I", "me" and
+ * "my" over a whole session are one entity and not three.
+ */
+/**
+ * Words a speaker uses while still reaching for the thing they mean.
+ *
+ * "I want to build something" names no thing — it names the SLOT where a
+ * thing is about to go, and a sentence or two later the speaker fills it
+ * ("...a startup"). Left alone the world treats those as two separate
+ * things and the board grows a node labelled "something" next to the real
+ * one, then another beside that, which is how one idea becomes four boxes.
+ *
+ * A closed list, on the same test as everything else closed in this engine:
+ * these words are placeholders in EVERY sentence that contains them alone.
+ * A placeholder with a real modifier ("something cheaper") is not here — it
+ * says something, and the speaker may well mean it as its own thing.
+ */
+const PLACEHOLDER_WORDS = new Set(["something", "anything", "thing", "things", "stuff", "somethings", "someone", "somebody"]);
+
+/** True when a label is nothing but placeholder words — a slot, not a thing. */
+export function isPlaceholderMention(text: string): boolean {
+  const words = normalizeMention(text).split(" ").filter(Boolean);
+  return words.length > 0 && words.length <= 2 && words.every((w) => PLACEHOLDER_WORDS.has(w));
+}
+
+/**
+ * True when `mention` is `frame` with its placeholder filled in.
+ *
+ * A speaker who has said "building something" has already committed to the
+ * frame — building — and left one slot open inside it. When the next
+ * sentence says "building a startup", every word they committed to is
+ * still there and the open slot now has a filler. That is one thought
+ * getting sharper, not a second thought that happens to rhyme with the
+ * first, and treating it as a second is how "something", "building
+ * something", "building a startup" and "startup" become four boxes for
+ * one idea.
+ *
+ * Deliberately strict in both directions: the frame must actually contain
+ * a placeholder word, everything else in it must survive verbatim into the
+ * mention, and the mention itself must be free of placeholders — it has to
+ * be the answer, not another guess. "building something" -> "building a
+ * startup" passes; "building something" -> "buying a startup" does not,
+ * because "building" did not survive.
+ */
+export function fillsPlaceholderFrame(frame: string, mention: string): boolean {
+  const frameWords = normalizeMention(frame).split(" ").filter(Boolean);
+  if (!frameWords.some((w) => PLACEHOLDER_WORDS.has(w))) return false;
+  const committed = frameWords.filter((w) => !PLACEHOLDER_WORDS.has(w));
+  if (!committed.length) return false;
+  const mentionWords = normalizeMention(mention).split(" ").filter(Boolean);
+  if (!mentionWords.length || mentionWords.some((w) => PLACEHOLDER_WORDS.has(w))) return false;
+  return committed.every((w) => mentionWords.includes(w));
+}
+
+export const SPEAKER_ENTITY_ID = "speaker";
+export const SPEAKER_GROUP_ENTITY_ID = "speaker-group";
+
+const FIRST_PERSON_SINGULAR = new Set(["i", "me", "my", "mine", "myself", "i'm", "i've", "i'll", "i'd"]);
+const FIRST_PERSON_PLURAL = new Set(["we", "us", "our", "ours", "ourselves", "we're", "we've", "we'll", "we'd"]);
+
+/**
+ * First person is not an unresolvable pronoun.
+ *
+ * "It" and "they" need an antecedent from earlier speech, which is why
+ * PRONOUN_TYPES exists and why a mention that finds nothing is dropped
+ * rather than drawn as a nameless box. "I" is categorically different: its
+ * referent is the person talking, and they are present before a single
+ * other word has been said. Dropping it was the reason a session that
+ * opened with "I" put nothing on the board until a full clause had been
+ * extracted.
+ */
+export function firstPersonEntity(label: string): { id: string; label: string; type: EntityType } | null {
+  const norm = normalizeMention(label);
+  if (FIRST_PERSON_SINGULAR.has(norm)) return { id: SPEAKER_ENTITY_ID, label: "I", type: "person" };
+  if (FIRST_PERSON_PLURAL.has(norm)) return { id: SPEAKER_GROUP_ENTITY_ID, label: "We", type: "group" };
+  return null;
+}
+
+/**
  * Types that are near enough to be the same thing.
  *
  * Found live: "traffic" was extracted as a `state` in one sentence and an
@@ -142,7 +373,7 @@ const TYPE_FAMILY: Record<EntityType, string> = {
   quantity: "abstract",
 };
 
-function typesCompatible(a: EntityType, b: EntityType): boolean {
+export function typesCompatible(a: EntityType, b: EntityType): boolean {
   // `concept` is the extractor's honest "I could not categorise this", so it
   // matches anything that does have a category.
   if (a === "concept" || b === "concept") return true;
@@ -151,6 +382,40 @@ function typesCompatible(a: EntityType, b: EntityType): boolean {
 
 function tokens(text: string): string[] {
   return normalizeMention(text).split(" ").filter(Boolean);
+}
+
+/**
+ * Function words common enough to appear in almost any sentence — "was",
+ * "that", "the meeting itself said" — which is exactly why they must never
+ * count as evidence of a topical match. Found live: a discourse act targeting
+ * "the growth marketer role" was reported as "ambiguous" against "incident
+ * from last week" purely because some claim about the incident happened to
+ * contain the word "was". A single shared function word is not a shared
+ * topic; only shared CONTENT words are.
+ */
+const STOPWORDS = new Set([
+  "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "of", "to", "for", "in", "on", "at",
+  "with", "and", "or", "but", "so", "we", "our", "ours", "your", "yours", "my", "mine", "his", "her", "hers",
+  "their", "theirs", "its", "it", "this", "that", "these", "those", "i", "you", "he", "she", "they", "them",
+  "us", "me", "him", "has", "have", "had", "do", "does", "did", "not", "no", "yes", "just", "really", "actually",
+  "still", "also", "then", "than", "from", "by", "as", "if", "when", "while", "about", "would", "could", "should",
+  "will", "can", "may", "might", "up", "down", "out", "off", "over", "under", "again", "once", "here", "there",
+  "all", "any", "both", "each", "few", "more", "most", "other", "some", "such", "only", "own", "same", "too",
+  "very", "s", "t", "now", "one", "two", "get", "got", "let", "lets",
+]);
+
+/** `tokens()` with function words dropped — the unit every topical-overlap comparison should be measured in. */
+export function contentWords(text: string): string[] {
+  return tokens(text).filter((w) => !STOPWORDS.has(w));
+}
+
+/** Overlap-coefficient style ratio over CONTENT words only — 0 when either side has no content words at all. */
+export function contentOverlapRatio(a: string, b: string): number {
+  const wa = new Set(contentWords(a));
+  const wb = new Set(contentWords(b));
+  if (!wa.size || !wb.size) return 0;
+  const shared = [...wa].filter((w) => wb.has(w)).length;
+  return shared / Math.max(wa.size, wb.size);
 }
 
 /**
@@ -182,7 +447,7 @@ function subsumes(a: string, b: string): boolean {
 // ──────────────────────────────────────────────────────── matching
 
 function isActive(entity: WorldEntity): boolean {
-  return entity.status !== "superseded";
+  return isLiveEntityStatus(entity.status);
 }
 
 /**
@@ -276,6 +541,30 @@ export function resolveMention(world: WorldState, mention: string, type: EntityT
   return null;
 }
 
+/**
+ * "I agree" / "that's not right" — finds which existing claim a stance's
+ * `targetSurface` (the model's own paraphrase, never a world id) most
+ * plausibly refers to. Same word-overlap technique
+ * lib/expression/world/references.ts's resolveTopicRecall uses for entities,
+ * over the claim pool instead. Returns null rather than a weak guess, same
+ * "unresolved beats wrong" rule as everywhere else reference resolution
+ * happens.
+ */
+function resolveStanceTarget(claims: WorldClaim[], targetSurface: string): string | null {
+  const targetWords = new Set(tokens(targetSurface));
+  if (!targetWords.size) return null;
+  let best: { id: string; score: number } | null = null;
+  for (const claim of claims) {
+    const claimWords = new Set(tokens(claim.text));
+    if (!claimWords.size) continue;
+    const overlap = [...targetWords].filter((w) => claimWords.has(w)).length;
+    if (!overlap) continue;
+    const score = overlap / Math.max(targetWords.size, claimWords.size);
+    if (!best || score > best.score) best = { id: claim.id, score };
+  }
+  return best && best.score >= 0.34 ? best.id : null;
+}
+
 // ──────────────────────────────────────────────────────── merging
 
 function mergeAliases(existing: string[], ...added: string[]): string[] {
@@ -295,13 +584,26 @@ function mergeAliases(existing: string[], ...added: string[]): string[] {
  */
 function sharperLabel(current: string, incoming: string): string {
   if (pronounTypes(incoming)) return current;
+  // Anything at all is sharper than a word that names nothing. Once the
+  // speaker has said what "something" was, the board must stop saying
+  // "something" — whether the vague word was the whole label or the open
+  // slot inside it. Merging the two and then keeping the vaguer wording
+  // would fix the box count and lose the point of fixing it.
+  if (isPlaceholderMention(current) && !isPlaceholderMention(incoming)) return incoming;
+  if (fillsPlaceholderFrame(current, incoming)) return incoming;
   if (normalizeMention(current) === normalizeMention(incoming)) return current;
   if (subsumes(current, incoming) && tokens(incoming).length > tokens(current).length) return incoming;
   if (pronounTypes(current)) return incoming;
   return current;
 }
 
-function mergeEntity(existing: WorldEntity, incoming: Entity, seq: number): WorldEntity {
+function mergeEntity(
+  existing: WorldEntity,
+  incoming: Entity,
+  seq: number,
+  provenance: Provenance | undefined,
+  metricResolutions: MetricResolution[],
+): WorldEntity {
   const attributes = [...(existing.attributes ?? [])];
   for (const attr of incoming.attributes ?? []) {
     const at = attributes.findIndex((a) => a.key === attr.key);
@@ -319,6 +621,8 @@ function mergeEntity(existing: WorldEntity, incoming: Entity, seq: number): Worl
     confidence: incoming.confidence ?? existing.confidence,
     aliases: mergeAliases(existing.aliases, incoming.label),
     lastTouchedSeq: seq,
+    provenance: appendProvenance(existing.provenance, provenance),
+    metric: mergeMetric(existing.id, existing.metric, incoming.metric, metricResolutions),
   };
 }
 
@@ -329,6 +633,7 @@ function entityChanged(a: WorldEntity, b: WorldEntity): boolean {
     a.description !== b.description ||
     JSON.stringify(a.quantity ?? null) !== JSON.stringify(b.quantity ?? null) ||
     JSON.stringify(a.attributes ?? []) !== JSON.stringify(b.attributes ?? []) ||
+    JSON.stringify(a.metric ?? null) !== JSON.stringify(b.metric ?? null) ||
     a.importance !== b.importance ||
     a.status !== b.status
   );
@@ -359,8 +664,13 @@ function recomputeImportance(entities: WorldEntity[], relations: WorldRelation[]
     degree.set(rel.source, (degree.get(rel.source) ?? 0) + 1);
     degree.set(rel.target, (degree.get(rel.target) ?? 0) + 1);
   }
+  // Deemphasized entities are excluded from the race for "primary" — that is
+  // the whole point of the status: an explicit, sticky decision to stop
+  // being the focus, which this degree/recency scoring must not silently
+  // overturn just because the graph still favours it. They still get a
+  // normal supporting/detail tier below via the ordinary `d >= 1` branch.
   const scored = entities
-    .filter(isActive)
+    .filter((e) => e.status === "active")
     .map((e) => ({
       id: e.id,
       score: (degree.get(e.id) ?? 0) * 3 + (e.lastTouchedSeq === seq ? 2 : 0) + (e.quantity ? 1 : 0),
@@ -372,7 +682,16 @@ function recomputeImportance(entities: WorldEntity[], relations: WorldRelation[]
     if (!isActive(entity)) return { ...entity, importance: "detail" as const };
     if (entity.id === primaryId) return { ...entity, importance: "primary" as const };
     const d = degree.get(entity.id) ?? 0;
-    return { ...entity, importance: d >= 1 ? ("supporting" as const) : ("detail" as const) };
+    if (d >= 1) return { ...entity, importance: "supporting" as const };
+    // A degree-0 entity that WAS the primary subject a moment ago just lost
+    // that status to something else this round — a correction or a topic
+    // shift, not a thing that never mattered. Dropping it straight to
+    // "detail" makes it invisible immediately (attachRelatedEntities skips
+    // detail entities), which reads as the old subject vanishing rather than
+    // being deemphasized. One round at "supporting" lets it stay on canvas,
+    // dimmed, before fading to "detail" if nothing connects it after that.
+    if (entity.importance === "primary") return { ...entity, importance: "supporting" as const };
+    return { ...entity, importance: "detail" as const };
   });
 }
 
@@ -385,24 +704,164 @@ function recomputeImportance(entities: WorldEntity[], relations: WorldRelation[]
  * half-attached edge is worse than a missing one: the composer would draw
  * it pointing at nothing.
  */
-export function applyDelta(world: WorldState, delta: MeaningDelta, seq: number): ApplyResult {
+export function applyDelta(
+  world: WorldState,
+  delta: MeaningDelta,
+  seq: number,
+  provenance?: Provenance,
+  // Precomputed by lib/expression/world/identity.ts's two-stage resolver —
+  // async, so it cannot run inside this deliberately synchronous function.
+  // Absent for every caller that has not opted in (every existing fixture
+  // and test), which reproduces today's plain resolveMention behaviour
+  // exactly. Keyed by the delta's own LOCAL entity id.
+  identityDecisions?: Map<string, IdentityDecision>,
+  /**
+   * Optional pre-resolved topic-recall mentions, keyed by the delta's local
+   * entity id. Pipeline fills this when a target judge ran against the world
+   * before apply; absent, resolveReference runs exactly as before.
+   */
+  precomputedRefs?: Map<string, ReferenceResolution>,
+): ApplyResult {
   const ops: WorldOp[] = [];
   const idMap = new Map<string, string>();
   let entities = [...world.entities];
   const taken = new Set(entities.map((e) => e.id));
   const touched: string[] = [];
+  const referenceResolutions: ReferenceResolution[] = [];
+  const stanceResolutions: StanceResolution[] = [];
+  const discourseActResolutions: DiscourseActResolution[] = [];
+  const metricResolutions: MetricResolution[] = [];
+  const refByEntityId = new Map((delta.referenceMentions ?? []).map((m) => [m.entityId, m]));
 
   // ---- entities ---------------------------------------------------
   for (const local of delta.entities) {
-    const match = resolveMention({ ...world, entities }, local.label, local.type);
-    if (match) {
-      idMap.set(local.id, match.id);
-      const merged = mergeEntity(match, local, seq);
-      const at = entities.findIndex((e) => e.id === match.id);
+    // Ordinal ("the second option") and topic-recall ("go back to the
+    // pricing problem") mentions resolve against groups and history, not
+    // against the salience stack resolveMention below uses — a different
+    // search, so they are dispatched separately. See
+    // lib/expression/world/references.ts for why a low-confidence result
+    // means "unattached", not "best guess".
+    const refMention = refByEntityId.get(local.id);
+    if (refMention) {
+      const resolution = precomputedRefs?.get(local.id) ?? resolveReference({ ...world, entities }, refMention);
+      referenceResolutions.push(resolution);
+      if (!resolution.chosenId || resolution.confidence === "low") continue;
+      const target = entities.find((e) => e.id === resolution.chosenId);
+      if (!target) continue;
+      idMap.set(local.id, target.id);
+      let merged = mergeEntity(target, local, seq, provenance, metricResolutions);
+      // Topic recall can find something archived (suspended, rejected,
+      // superseded — resolveTopicRecall deliberately searches all of them,
+      // because "go back to X" has to be able to name something no longer
+      // on screen regardless of WHY it left). But finding it is not the same
+      // as the speaker asking for it back: ordinary re-mentions
+      // (resolveMention, below) never touch `status`, and ordinal resolution
+      // can never target an archived entity in the first place
+      // (candidateGroups only considers live ones). A successful
+      // topic_recall is the one path where the utterance's own meaning —
+      // "go back to", "what we said earlier about" — IS a request to bring
+      // the topic back, so this is the one place restoration is automatic
+      // rather than requiring a further relation to be restated.
+      if (refMention.kind === "topic_recall" && !isActive(target)) {
+        merged = { ...merged, status: "active" };
+      }
+      const at = entities.findIndex((e) => e.id === target.id);
       entities[at] = merged;
-      if (entityChanged(match, merged)) ops.push({ kind: "UPDATE_ENTITY", entity: merged, prev: match });
-      touched.push(match.id);
+      if (entityChanged(target, merged)) ops.push({ kind: "UPDATE_ENTITY", entity: merged, prev: target });
+      touched.push(target.id);
       continue;
+    }
+
+    // First person, before every other kind of matching.
+    //
+    // It must precede resolveMention because that resolves a pronoun to the
+    // most salient entity of a compatible type — which for "I" would be
+    // whichever OTHER person the speaker last mentioned. The speaker is not
+    // a salience question; they are a fixed referent with a fixed id.
+    const firstPerson = firstPersonEntity(local.label);
+    if (firstPerson) {
+      const existing = entities.find((e) => e.id === firstPerson.id);
+      if (existing) {
+        idMap.set(local.id, existing.id);
+        const merged = mergeEntity(existing, { ...local, label: existing.label }, seq, provenance, metricResolutions);
+        const at = entities.findIndex((e) => e.id === existing.id);
+        entities[at] = merged;
+        if (entityChanged(existing, merged)) ops.push({ kind: "UPDATE_ENTITY", entity: merged, prev: existing });
+        touched.push(existing.id);
+        continue;
+      }
+      taken.add(firstPerson.id);
+      // "primary", not the "supporting" every other new entity gets: a
+      // speaker referring to themselves has made themselves the subject of
+      // the sentence, and the `scene` grammar needs a primary subject to
+      // build anything at all.
+      const created: WorldEntity = {
+        ...local,
+        id: firstPerson.id,
+        label: firstPerson.label,
+        type: firstPerson.type,
+        status: "active",
+        importance: "primary",
+        firstSeenSeq: seq,
+        lastTouchedSeq: seq,
+        aliases: mergeAliases([], local.label),
+        provenance: appendProvenance(undefined, provenance),
+        metric: mergeMetric(firstPerson.id, undefined, local.metric, metricResolutions),
+      };
+      entities.push(created);
+      idMap.set(local.id, created.id);
+      ops.push({ kind: "ADD_ENTITY", entity: created });
+      touched.push(created.id);
+      continue;
+    }
+
+    // The identity layer already decided this local entity's fate — trust
+    // it over resolveMention's own (much more literal) matching, but only
+    // when it named a "merge" target that still resolves to SOME entity
+    // (any status: identity.ts's own auto-merge gate already guarantees a
+    // deterministic merge never targets anything but a live entity, and a
+    // judge-confirmed merge into a suspended/rejected/superseded one is
+    // exactly the case `reactivate` and the status-preserving merge below
+    // exist for). A stale/invalid target falls through to today's
+    // resolveMention behaviour rather than erroring.
+    const decision = identityDecisions?.get(local.id);
+    if (decision?.action === "merge" && decision.targetId) {
+      const target = entities.find((e) => e.id === decision.targetId);
+      if (target) {
+        idMap.set(local.id, target.id);
+        let merged = mergeEntity(target, local, seq, provenance, metricResolutions);
+        // Only a SUSPENDED target ever reactivates, and only when the
+        // identity layer explicitly said so (a judge-confirmed re-mention,
+        // never a bare deterministic score). Rejected/superseded targets
+        // merge their content in — the world stops minting a second entity
+        // for an idea already ruled out — but keep their status exactly as
+        // it was: recallable is not the same as valid again.
+        if (decision.reactivate && target.status === "suspended") {
+          merged = { ...merged, status: "active" };
+        }
+        const at = entities.findIndex((e) => e.id === target.id);
+        entities[at] = merged;
+        if (entityChanged(target, merged)) ops.push({ kind: "UPDATE_ENTITY", entity: merged, prev: target });
+        touched.push(target.id);
+        continue;
+      }
+    }
+    // A "create"/"hold" decision skips resolveMention entirely — both
+    // explicitly want a new entity. Only "no decision at all" (a caller
+    // that never opted into the identity layer) or a "merge" whose target
+    // could not be found above (defensive; should not happen in practice)
+    // fall back to it.
+    if (!decision || decision.action === "merge") {
+      const match = resolveMention({ ...world, entities }, local.label, local.type);
+      if (match) {
+        idMap.set(local.id, match.id);
+        const merged = mergeEntity(match, local, seq, provenance, metricResolutions);
+        const at = entities.findIndex((e) => e.id === match.id);
+        entities[at] = merged;
+        if (entityChanged(match, merged)) ops.push({ kind: "UPDATE_ENTITY", entity: merged, prev: match });
+        touched.push(match.id);
+        continue;
+      }
     }
     // An unresolvable pronoun names something we have never heard of; it
     // would become a nameless box, so it is dropped rather than invented.
@@ -418,6 +877,10 @@ export function applyDelta(world: WorldState, delta: MeaningDelta, seq: number):
       firstSeenSeq: seq,
       lastTouchedSeq: seq,
       aliases: mergeAliases([], local.label),
+      provenance: appendProvenance(undefined, provenance),
+      // Overrides the `...local` spread's per-segment `{points}` shape with
+      // the world's accumulated `{history}` shape — see mergeMetric.
+      metric: mergeMetric(id, undefined, local.metric, metricResolutions),
     };
     entities.push(created);
     idMap.set(local.id, id);
@@ -477,9 +940,10 @@ export function applyDelta(world: WorldState, delta: MeaningDelta, seq: number):
         step: local.step ?? existing.step,
         confidence: local.confidence ?? existing.confidence,
         lastTouchedSeq: seq,
+        provenance: appendProvenance(existing.provenance, provenance),
       };
       relations[relations.indexOf(existing)] = merged;
-      if (JSON.stringify({ ...existing, lastTouchedSeq: 0 }) !== JSON.stringify({ ...merged, lastTouchedSeq: 0 })) {
+      if (JSON.stringify({ ...existing, lastTouchedSeq: 0, provenance: [] }) !== JSON.stringify({ ...merged, lastTouchedSeq: 0, provenance: [] })) {
         ops.push({ kind: "UPDATE_RELATION", relation: merged, prev: existing });
       }
       continue;
@@ -494,6 +958,7 @@ export function applyDelta(world: WorldState, delta: MeaningDelta, seq: number):
       target,
       firstSeenSeq: seq,
       lastTouchedSeq: seq,
+      provenance: appendProvenance(undefined, provenance),
     };
     relations.push(created);
     ops.push({ kind: "ADD_RELATION", relation: created });
@@ -511,10 +976,21 @@ export function applyDelta(world: WorldState, delta: MeaningDelta, seq: number):
   }
 
   // ---- claims -----------------------------------------------------
+  // Stance resolves against the world as it stood BEFORE this round's own
+  // claims are added — "I agree" has to find something that already
+  // existed, not a sibling claim from the same utterance, and it must not
+  // accidentally match itself.
+  const stanceTargets = world.claims;
   let claims = [...world.claims];
   const claimIds = new Set(claims.map((c) => c.id));
   for (const local of delta.claims) {
     const about = (local.about ?? []).map(resolveEndpoint).filter((id): id is string => Boolean(id) && activeIds.has(id!));
+    const targetClaimId = local.stance ? resolveStanceTarget(stanceTargets, local.stance.targetSurface) : null;
+    const recordStance = (claimId: string) => {
+      if (!local.stance) return;
+      stanceResolutions.push({ claimId, type: local.stance.type, targetSurface: local.stance.targetSurface, targetClaimId });
+    };
+
     const normalized = local.text.trim().toLowerCase();
     const existing = claims.find((c) => c.text.trim().toLowerCase() === normalized);
     if (existing) {
@@ -523,8 +999,12 @@ export function applyDelta(world: WorldState, delta: MeaningDelta, seq: number):
         about: about.length ? [...new Set([...(existing.about ?? []), ...about])].slice(0, 5) : existing.about,
         uncertain: local.uncertain ?? existing.uncertain,
         lastTouchedSeq: seq,
+        provenance: appendProvenance(existing.provenance, provenance),
+        stance: local.stance ?? existing.stance,
+        stanceTargetClaimId: targetClaimId ?? existing.stanceTargetClaimId,
       };
       claims[claims.indexOf(existing)] = merged;
+      recordStance(merged.id);
       if (JSON.stringify(existing.about ?? []) !== JSON.stringify(merged.about ?? [])) {
         ops.push({ kind: "UPDATE_CLAIM", claim: merged, prev: existing });
       }
@@ -532,6 +1012,7 @@ export function applyDelta(world: WorldState, delta: MeaningDelta, seq: number):
     }
     const id = uniqueId(slugify(local.text).slice(0, 32) || "claim", claimIds);
     claimIds.add(id);
+    recordStance(id);
     const created: WorldClaim = {
       id,
       text: local.text,
@@ -541,11 +1022,113 @@ export function applyDelta(world: WorldState, delta: MeaningDelta, seq: number):
       importance: "supporting",
       firstSeenSeq: seq,
       lastTouchedSeq: seq,
+      provenance: appendProvenance(undefined, provenance),
+      stance: local.stance,
+      stanceTargetClaimId: targetClaimId ?? undefined,
     };
     claims.push(created);
     ops.push({ kind: "ADD_CLAIM", claim: created });
   }
-  claims = claims.filter((c) => !(c.about ?? []).some((id) => supersededIds.has(id)) || !(c.about ?? []).length);
+  // Claims about a superseded entity are NOT dropped, unlike relations.
+  // A relation has to go — a dangling edge into a retracted node would draw
+  // wrong on a live picture right now. A claim is inert text with no
+  // geometry: buildAnnotations (lib/expression/planner/plan.ts) only
+  // attaches one to a region that is actually shown, and a superseded
+  // entity never has one, so an archived claim is already invisible without
+  // being deleted. Deleting it anyway would contradict this module's own
+  // "mark superseded, never delete, so the revision remains inspectable"
+  // rule, and it is specifically what resolveTopicRecall
+  // (lib/expression/world/references.ts) needs to find something like "the
+  // original problem" that never shared a word with its entity's own label
+  // — the claim recorded about it ("the main PROBLEM is low awareness") is
+  // the only trace of that wording, and archiving the entity must not erase it.
+
+  // ---- discourse acts -----------------------------------------------
+  //
+  // "Let's set that aside", "actually, forget the creator idea", "no,
+  // that's wrong", "make that $15 instead" — six distinct lifecycle
+  // transitions, each resolved against the world exactly as cautiously as
+  // every other free-text pointer in this module: a confident match acts, an
+  // ambiguous or absent one is left alone rather than guessed. Runs after
+  // entities/relations/claims are fully settled for this round (so a
+  // "supersede" can name a replacement created in the SAME utterance) and
+  // before importance is recomputed (so the new statuses are what
+  // importance actually scores).
+  for (const act of delta.discourseActs ?? []) {
+    if (act.type === "invalidate") {
+      const targetClaimId = resolveStanceTarget(claims, act.targetSurface);
+      if (!targetClaimId) {
+        discourseActResolutions.push({
+          type: act.type,
+          targetSurface: act.targetSurface,
+          candidates: [],
+          targetId: null,
+          confidence: "low",
+          applied: false,
+          reason: `no claim in the world matches "${act.targetSurface}"`,
+        });
+        continue;
+      }
+      const at = claims.findIndex((c) => c.id === targetClaimId);
+      const prevClaim = claims[at];
+      const invalidated: WorldClaim = { ...prevClaim, invalidated: true, lastTouchedSeq: seq, provenance: appendProvenance(prevClaim.provenance, provenance) };
+      claims[at] = invalidated;
+      ops.push({ kind: "UPDATE_CLAIM", claim: invalidated, prev: prevClaim });
+      discourseActResolutions.push({
+        type: act.type,
+        targetSurface: act.targetSurface,
+        candidates: [{ id: targetClaimId, label: prevClaim.text, score: 100, reason: "matched claim text" }],
+        targetId: targetClaimId,
+        confidence: "high",
+        applied: true,
+        reason: `invalidated claim "${prevClaim.text}"`,
+      });
+      continue;
+    }
+
+    const decision = decideTarget(
+      retrieveTargetCandidates({ ...world, entities }, act.targetSurface, { actType: act.type }),
+      act.targetSurface,
+      { actType: act.type },
+    );
+    const candidates = toReferenceCandidates(decision.candidates);
+    if (decision.confidence === "low" || !decision.chosenId) {
+      discourseActResolutions.push({
+        type: act.type,
+        targetSurface: act.targetSurface,
+        candidates,
+        targetId: null,
+        confidence: "low",
+        applied: false,
+        reason: decision.reason,
+      });
+      continue;
+    }
+
+    const targetId = decision.chosenId;
+    const at = entities.findIndex((e) => e.id === targetId);
+    const prevEntity = entities[at];
+    const nextStatus = ACT_TO_STATUS[act.type];
+    const supersededByEntityId = act.type === "supersede" && act.supersededByLocalId ? idMap.get(act.supersededByLocalId) : undefined;
+    const nextEntity: WorldEntity = {
+      ...prevEntity,
+      status: nextStatus,
+      lastTouchedSeq: seq,
+      provenance: appendProvenance(prevEntity.provenance, provenance),
+      supersededByEntityId: nextStatus === "superseded" ? supersededByEntityId : undefined,
+    };
+    entities[at] = nextEntity;
+    ops.push({ kind: "UPDATE_ENTITY", entity: nextEntity, prev: prevEntity });
+    discourseActResolutions.push({
+      type: act.type,
+      targetSurface: act.targetSurface,
+      candidates,
+      targetId,
+      confidence: decision.confidence,
+      applied: true,
+      reason: `${act.type} -> "${nextEntity.label}" (${decision.reason})`,
+    });
+  }
 
   // ---- importance + salience --------------------------------------
   const before = new Map(entities.map((e) => [e.id, e]));
@@ -593,10 +1176,60 @@ export function applyDelta(world: WorldState, delta: MeaningDelta, seq: number):
     },
     ops,
     idMap,
+    referenceResolutions,
+    stanceResolutions,
+    discourseActResolutions,
+    metricResolutions,
   };
 }
 
 /** Human-readable one-liner per op — the debug panel's "what changed" column. */
+/**
+ * Apply one already-resolved (non-invalidate) discourse act onto a world
+ * that applyDelta has already produced. Used by the pipeline's optional
+ * target-judge post-pass: applyDelta itself stays synchronous and still
+ * abstains on a tie; if a judge later picks an index, this is the one
+ * mutation that follows from that pick. Returns null when the target is
+ * gone — the caller then leaves the original UNAPPLIED resolution in place.
+ */
+export function applyResolvedDiscourseAct(
+  world: WorldState,
+  act: { type: Exclude<DiscourseActType, "invalidate">; targetSurface: string },
+  targetId: string,
+  seq: number,
+  provenance: Provenance | undefined,
+  candidates: ReferenceResolution["candidates"],
+  reason: string,
+): { world: WorldState; op: WorldOp; resolution: DiscourseActResolution } | null {
+  const at = world.entities.findIndex((e) => e.id === targetId);
+  if (at < 0) return null;
+  const prevEntity = world.entities[at];
+  const nextStatus = ACT_TO_STATUS[act.type];
+  const nextEntity: WorldEntity = {
+    ...prevEntity,
+    status: nextStatus,
+    lastTouchedSeq: seq,
+    provenance: appendProvenance(prevEntity.provenance, provenance),
+    supersededByEntityId: nextStatus === "superseded" ? prevEntity.supersededByEntityId : undefined,
+  };
+  const entities = [...world.entities];
+  entities[at] = nextEntity;
+  const op: WorldOp = { kind: "UPDATE_ENTITY", entity: nextEntity, prev: prevEntity };
+  return {
+    world: { ...world, entities },
+    op,
+    resolution: {
+      type: act.type,
+      targetSurface: act.targetSurface,
+      candidates,
+      targetId,
+      confidence: "medium",
+      applied: true,
+      reason: `${act.type} -> "${nextEntity.label}" (${reason})`,
+    },
+  };
+}
+
 export function describeWorldOp(op: WorldOp): string {
   switch (op.kind) {
     case "ADD_ENTITY":

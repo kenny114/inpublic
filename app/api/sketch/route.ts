@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { providerFor } from "@/lib/llm";
-import { SKETCH_MODEL } from "@/lib/expression/draw/agent";
+import { SKETCH_MODEL, SKETCH_MAX_OUTPUT_TOKENS } from "@/lib/expression/draw/agent";
 import { sketchFor } from "@/lib/expression/draw/resolve";
 import { guardProviderRequest, reconcileProviderCost, type ProviderUsage } from "@/lib/server/provider-guard";
 
@@ -39,7 +39,9 @@ export async function POST(req: Request) {
     provider: providerFor(SKETCH_MODEL),
     model: SKETCH_MODEL,
     requestBytes: Buffer.byteLength(body.type) + Buffer.byteLength(body.label),
-    maxOutputTokens: 800,
+    // The same budget drawSketch actually asks the provider for. These were
+    // 800 here and 6000 there, so every sketch was under-reserved by 7.5x.
+    maxOutputTokens: SKETCH_MAX_OUTPUT_TOKENS,
     // Same reasoning as app/api/express/route.ts: the text-first lab has no
     // listening session to lease, so it opts into the server-validated
     // local-dev capability. Fails outside NODE_ENV development regardless.

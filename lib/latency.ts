@@ -90,7 +90,46 @@ export type SampleKey =
    * `chunkToInkSample`). It avoids Deepgram timeline arithmetic but is still
    * non-causal during continuous audio.
    */
-  | "chunk_to_ink";
+  | "chunk_to_ink"
+  /**
+   * Wall-clock ms from a settled thought (expression/submitted) to the
+   * matching expression/updated|noop|failed. The dead-air window the pending
+   * affordance covers.
+   *
+   * NOTE (two-phase render, R1): this now ends at the FIRST STRUCTURAL
+   * COMMIT. Before the sketch call was moved off the critical path it ended
+   * after the Drawing Agent had answered for every new concept, so figures
+   * recorded before that change are not comparable to figures recorded
+   * after — the earlier ones include a 17-30s sketch fan-out that no longer
+   * blocks anything. See docs/EXPRESSION-ENGINE-R0-R1-R6-REPORT.md.
+   */
+  | "settled_to_expression"
+  /**
+   * The three stages the aggregate above used to hide, split apart so a
+   * session log can say where the time actually went
+   * (docs/EXPRESSION-ENGINE-FULL-AUDIT.md §8, unknown #1).
+   *
+   * `expression_extract` — the one model call that turns a settled thought
+   * into a MeaningDelta (/api/express, Haiku). Absent on the agent path,
+   * which supplies meaning directly.
+   */
+  | "expression_extract"
+  /** The nine deterministic layers: fold, intent, visibility, plan, compose, evaluate, diff. */
+  | "expression_deterministic"
+  /** syncExpressionCanvas + Excalidraw commit for the first structural frame. */
+  | "expression_sync"
+  /**
+   * `resolveSketches` for one round — the Drawing Agent fan-out. Since R1
+   * this runs AFTER the structural frame is on the sheet, so it is a measure
+   * of how late the decoration is, not of how late the diagram is.
+   */
+  | "expression_sketch"
+  /**
+   * Settled thought → first structural ink actually on the canvas. The
+   * number the product is judged on, and the one nothing measured before:
+   * `first_ink` marks the caption, not the diagram (audit §8, unknown #3).
+   */
+  | "expression_structure";
 
 export interface LatencySampleEvent {
   key: SampleKey;
@@ -146,6 +185,9 @@ export interface LatencySummary {
   chunkToInkP50: number | null;
   chunkToInkP95: number | null;
   chunkToInkMax: number | null;
+  /** Settled-thought → expression/updated (p50), ms. */
+  settledToExpressionP50: number | null;
+  settledToExpressionP95: number | null;
 }
 
 /**
@@ -303,6 +345,8 @@ export class LatencyRecorder {
       chunkToInkP50: this.quantile("chunk_to_ink", 0.5),
       chunkToInkP95: this.quantile("chunk_to_ink", 0.95),
       chunkToInkMax: this.max("chunk_to_ink"),
+      settledToExpressionP50: this.quantile("settled_to_expression", 0.5),
+      settledToExpressionP95: this.quantile("settled_to_expression", 0.95),
     };
   }
 
@@ -402,6 +446,8 @@ export function formatLatencySummary(summary: LatencySummary): string {
         { label: "Speech → Speculative mark", value: summary.speechToSpeculativeP50 },
         { label: "Speech → Scribe mark", value: summary.speechToScribeP50 },
         { label: "Speech → Structure", value: summary.speechToStructureP50 },
+        { label: "Settled thought → Expression", value: summary.settledToExpressionP50 },
+        { label: "Settled thought → Expression (p95)", value: summary.settledToExpressionP95 },
       ],
     },
     {

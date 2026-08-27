@@ -18,6 +18,7 @@
  */
 
 import {
+  isLiveEntityStatus,
   relationFamily,
   type ExpressionIntent,
   type IntentType,
@@ -52,7 +53,7 @@ const PRIORITY: IntentType[] = [
 ];
 
 function activeEntities(world: WorldState): WorldEntity[] {
-  return world.entities.filter((e) => e.status !== "superseded");
+  return world.entities.filter((e) => isLiveEntityStatus(e.status));
 }
 
 function familyCounts(relations: WorldRelation[]): Record<RelationFamily, number> {
@@ -244,7 +245,7 @@ interface Shape {
  * primary.
  */
 function pickFocus(world: WorldState, intent: IntentType, shape: Shape): string | undefined {
-  const exists = (id?: string) => (id && world.entities.some((e) => e.id === id && e.status !== "superseded") ? id : undefined);
+  const exists = (id?: string) => (id && world.entities.some((e) => e.id === id && isLiveEntityStatus(e.status)) ? id : undefined);
   switch (intent) {
     case "explain_causality":
       return exists(shape.causalChain[0]) ?? exists(primaryId(world));
@@ -261,7 +262,7 @@ function pickFocus(world: WorldState, intent: IntentType, shape: Shape): string 
 }
 
 function primaryId(world: WorldState): string | undefined {
-  return world.entities.find((e) => e.importance === "primary" && e.status !== "superseded")?.id;
+  return world.entities.find((e) => e.importance === "primary" && isLiveEntityStatus(e.status))?.id;
 }
 
 function describe(

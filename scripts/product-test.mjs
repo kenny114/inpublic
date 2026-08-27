@@ -37,12 +37,9 @@ const checks = [
   ["every demo names the script it was recorded from", ["demo-a", "demo-b", "demo-c"].every((id) => demos.includes(id)) && demos.includes("script:")],
   ["demo playback is quiet by default", demoPlayer.includes("muted") && demoPlayer.includes("loop") && demoPlayer.includes("IntersectionObserver")],
   ["demos honour reduced motion", demoPlayer.includes("prefers-reduced-motion")],
-  // Story Mode and Audio Replay are parked (lib/features.ts) — a
-  // product-surface shutdown, not a deletion. Standard Mode is the sole
-  // default; the other two remain fully implemented and gated off.
+  // Story Mode and Audio Replay were removed entirely in the Strip-Down.
+  // Standard Mode is the only mode.
   ["Standard Mode is the enabled default", features.standardMode === true],
-  ["Story Mode is parked via the features flag", features.storyMode === false],
-  ["Audio Replay is parked via the features flag", features.audioReplay === false],
   ["pricing shows exact Creator price", pricing.includes("$15") && pricing.includes("/month")],
   ["pricing keeps product quality identical", pricing.includes("Same models, canvas and export quality")],
   ["checkout return does not claim entitlement", pricing.includes("does not change access")],

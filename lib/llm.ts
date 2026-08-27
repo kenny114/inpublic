@@ -7,9 +7,31 @@ import Anthropic from "@anthropic-ai/sdk";
  * client.
  */
 
+/**
+ * A system prompt, optionally as Anthropic content blocks so a block can
+ * carry `cache_control` and be served from the provider's prompt cache.
+ *
+ * A plain string stays a plain string on the wire — nothing about the
+ * existing callers changes. The block form is Anthropic-only; the Google
+ * path flattens it back to text, because Gemini has no equivalent knob and
+ * a cache marker there is simply not a thing to send.
+ */
+export type SystemPrompt = string | SystemTextBlock[];
+
+export interface SystemTextBlock {
+  type: "text";
+  text: string;
+  cache_control?: { type: "ephemeral" };
+}
+
+/** Gemini takes one string; a cached block's marker has no meaning there. */
+function systemText(system: SystemPrompt): string {
+  return typeof system === "string" ? system : system.map((block) => block.text).join("\n\n");
+}
+
 export interface CompleteOptions {
   model: string;
-  system: string;
+  system: SystemPrompt;
   user: string;
   maxTokens: number;
   temperature: number;
@@ -127,7 +149,7 @@ async function* streamGoogle(opts: CompleteOptions): AsyncGenerator<string> {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: opts.system }] },
+        systemInstruction: { parts: [{ text: systemText(opts.system) }] },
         contents: [{ role: "user", parts: [{ text: opts.user }] }],
         generationConfig,
       }),
@@ -238,7 +260,7 @@ async function completeGoogle(opts: CompleteOptions): Promise<string> {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: opts.system }] },
+          systemInstruction: { parts: [{ text: systemText(opts.system) }] },
           contents: [{ role: "user", parts: [{ text: opts.user }] }],
           generationConfig,
         }),

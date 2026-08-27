@@ -18,6 +18,9 @@
  *   MeaningDelta      -> lib/expression/meaning/extract.ts   [model]
  *   WorldState        -> lib/expression/world/apply.ts       [deterministic]
  *   ExpressionIntent  -> lib/expression/intent/classify.ts   [deterministic]
+ *   CompositionPlan   -> lib/expression/composition/plan.ts  [deterministic]
+ *   CleanPlan         -> lib/expression/clean/plan.ts        [deterministic]
+ *   PresentationPlan  -> lib/expression/presentation/plan.ts [deterministic]
  *   ExpressionPlan    -> lib/expression/planner/plan.ts      [deterministic]
  *   ScenePlan         -> lib/expression/compose/compose.ts   [deterministic]
  *   RenderPatch       -> lib/expression/render/*             [deterministic]
@@ -38,6 +41,13 @@ const IdSchema = z.string().regex(ID, "id must be a short kebab-case slug");
  * differs between a typed sentence, a settled speech thought, and an AI
  * agent submitting meaning directly — every layer below is identical for
  * all three, which is the whole point of the agent-input milestone.
+ *
+ * `speakerId` and `timestamp` are caller-supplied session metadata, never
+ * something the model infers from text — a speech adapter already knows
+ * which mic/track an utterance came from, the same way it already knows
+ * `source`. They exist here, not on MeaningDelta, for the same reason
+ * `source` does: identity and timing are about where the words came from,
+ * which is a fact about the world, not part of what the words mean.
  */
 export const InputSegmentSchema = z
   .object({
@@ -46,9 +56,33 @@ export const InputSegmentSchema = z
     text: z.string().min(1).max(4000),
     /** Monotonic ordering hint; not a wall clock, so replays are deterministic. */
     seq: z.number().int().nonnegative(),
+    /** Stable id for who said this — a slug like "sarah", "kenny", "spk_2". Never inferred from the text itself. */
+    speakerId: z.string().max(48).optional(),
+    /** Wall-clock or meeting-relative time, in whatever unit the caller uses consistently. Carried, never interpreted, this far down. */
+    timestamp: z.number().finite().optional(),
   })
   .strict();
 export type InputSegment = z.infer<typeof InputSegmentSchema>;
+
+/**
+ * Where one semantic fact came from: who said it, when, and which raw
+ * segment(s) it traces back to. Attached to WorldEntity / WorldRelation /
+ * WorldClaim by lib/expression/world/apply.ts ONLY — the model never
+ * produces this, and it never reaches ExpressionPlan or ScenePlan. Identity
+ * and provenance are deliberately separate: the same entity merges across
+ * speakers exactly as it always has (lib/expression/world/apply.ts's
+ * resolveMention does not look at who is speaking), and provenance is a
+ * bounded append-only log of who has touched it, not a second identity key.
+ */
+export const ProvenanceSchema = z
+  .object({
+    speakerId: z.string().max(48).optional(),
+    timestamp: z.number().finite().optional(),
+    /** InputSegment id(s) this touch traces back to — usually one, occasionally more if a round merged several. */
+    sourceSegmentIds: z.array(z.string().max(64)).max(4),
+  })
+  .strict();
+export type Provenance = z.infer<typeof ProvenanceSchema>;
 
 // ─────────────────────────────────────────────────────────── meaning
 
@@ -83,6 +117,66 @@ export const QuantitySchema = z
   .strict();
 export type Quantity = z.infer<typeof QuantitySchema>;
 
+/**
+ * A metric — spoken quantitative information about a NAMED thing being
+ * measured over time, not a count of items. "200 visitors last week, 500
+ * this week" is one metric (traffic) with two points; it is deliberately
+ * NOT modelled as `EntitySchema.quantity`, which means "there are N of
+ * these things" (extent, drawn as repeated marks) — a metric's number is a
+ * MEASUREMENT, and drawing "500" as five hundred marks would be exactly the
+ * caption-box failure this representation exists to prevent.
+ */
+export const MetricUnitSchema = z.enum(["count", "percent", "currency", "ratio"]);
+export type MetricUnit = z.infer<typeof MetricUnitSchema>;
+
+export const MetricPointSchema = z
+  .object({
+    value: z.number().finite(),
+    /** The time/category dimension: "last week", "today", "Q3" — never required, but almost always what makes a series a series. */
+    label: z.string().max(40).optional(),
+    /** "around 500", "roughly 10%", "maybe $20k" — preserved, not rounded away or silently dropped. */
+    approximate: z.boolean().optional(),
+  })
+  .strict();
+export type MetricPoint = z.infer<typeof MetricPointSchema>;
+
+export const MetricSchema = z
+  .object({
+    unit: MetricUnitSchema,
+    /** currency unit only, e.g. "USD" or "$". */
+    currency: z.string().max(8).optional(),
+    /**
+     * This segment's own point(s), oldest first — a single value, or a
+     * before/after pair stated in the same breath. The world layer APPENDS
+     * these onto the entity's accumulated history; it never replaces it, so
+     * "conversion was 10%, then 4%, then 6%" builds one ordered series
+     * across three turns rather than three unrelated numbers.
+     *
+     * May be EMPTY — "our target is 12% conversion" states a target with no
+     * fresh value at all, and the model does not know the current value well
+     * enough to be trusted to restate it (it never sees the world). Forcing
+     * at least one point here would mean either inventing one or repeating
+     * whatever was last said, and a repeated point would double-count in the
+     * history. `superRefine` below is what actually stops an empty metric:
+     * at least one of points/target/direction/changePercent must carry
+     * something.
+     */
+    points: z.array(MetricPointSchema).max(6),
+    /** A stated goal or threshold: "our target is 12% conversion". */
+    target: MetricPointSchema.optional(),
+    /** Qualitative direction stated without necessarily giving both numbers: "traffic increased", "users fell". */
+    direction: z.enum(["increase", "decrease", "flat"]).optional(),
+    /** A stated relative change: "doubled" -> 100, "fell by about 20%" -> -20. Independent of `points` — the speaker may give only one of the two. */
+    changePercent: z.number().finite().optional(),
+  })
+  .strict()
+  .superRefine((metric, ctx) => {
+    if (!metric.points.length && !metric.target && metric.direction === undefined && metric.changePercent === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "a metric must state at least one of points/target/direction/changePercent" });
+    }
+  });
+export type Metric = z.infer<typeof MetricSchema>;
+
 export const AttributeSchema = z
   .object({
     key: z.string().min(1).max(32),
@@ -105,6 +199,8 @@ export const EntitySchema = z
     quantity: QuantitySchema.optional(),
     attributes: z.array(AttributeSchema).max(8).optional(),
     confidence: ConfidenceSchema.optional(),
+    /** Set whenever the speaker stated a measurement — see MetricSchema. Mutually exclusive with `quantity` in practice: one is extent, the other is a measurement over time. */
+    metric: MetricSchema.optional(),
   })
   .strict();
 export type Entity = z.infer<typeof EntitySchema>;
@@ -148,6 +244,8 @@ export const RelationTypeSchema = z.enum([
   // argumentative
   "supports",
   "refutes",
+  // intentional
+  "wants",
   // last resort
   "relates_to",
 ]);
@@ -230,10 +328,35 @@ export function relationFamily(type: RelationType): RelationFamily {
     case "supports":
     case "refutes":
       return "argumentative";
+    // A want is a directed tie between someone and a thing, with no sign,
+    // no order and no structure to it — the same shape `relates_to` has,
+    // and the same one the `relationship` grammar draws as a labelled link.
+    // It is a separate VERB rather than a `relates_to` because "wants" is
+    // what has to appear on the arrow; the family is what the classifier
+    // and the grammars read, and associative is what this behaves like.
+    case "wants":
     case "relates_to":
       return "associative";
   }
 }
+
+/**
+ * "I agree" / "that's not right" — a claim's stance toward an earlier one.
+ * `targetSurface` is the model's own words for what is being agreed or
+ * disputed (a quote or paraphrase, exactly like `supersededMentions` names a
+ * retraction in the speaker's own words) — never a world claim id. Resolving
+ * it to an actual WorldClaim is lib/expression/world/apply.ts's job, using
+ * the same deterministic text-matching resolveTopicRecall already does
+ * (lib/expression/world/references.ts), because "what claim does this
+ * paraphrase best match" is exactly that search over a different pool.
+ */
+export const ClaimStanceSchema = z
+  .object({
+    type: z.enum(["agrees", "disagrees"]),
+    targetSurface: z.string().min(1).max(160),
+  })
+  .strict();
+export type ClaimStance = z.infer<typeof ClaimStanceSchema>;
 
 /**
  * Meaning that is real but not structural — a reflection, an evaluation, an
@@ -249,9 +372,69 @@ export const ClaimSchema = z
     /** Hedged speech ("maybe", "I think") marks the claim rather than being dropped. */
     uncertain: z.boolean().optional(),
     confidence: ConfidenceSchema.optional(),
+    /** Set only when this claim explicitly agrees or disagrees with an earlier one. */
+    stance: ClaimStanceSchema.optional(),
   })
   .strict();
 export type Claim = z.infer<typeof ClaimSchema>;
+
+/**
+ * A mention the extractor recognised as pointing at something already
+ * discussed, by POSITION ("the second option", "the last idea", "the other
+ * one") or by TOPIC ("go back to the pricing problem", "what we said
+ * earlier about funding") rather than by pronoun or a restated name. The
+ * extractor's job stops at flagging which kind of pointer this is and what
+ * was said — resolving it against history is the deterministic world
+ * layer's job (lib/expression/world/references.ts), the same division of
+ * labour as pronouns: the model recognises the grammar, the world model
+ * decides the referent.
+ */
+export const ReferenceKindSchema = z.enum(["ordinal", "topic_recall"]);
+export type ReferenceKind = z.infer<typeof ReferenceKindSchema>;
+
+export const ReferenceMentionSchema = z
+  .object({
+    /** One of this delta's own entity ids — a placeholder standing in for whatever gets resolved. */
+    entityId: IdSchema,
+    /** The phrase actually spoken, verbatim: "the second option", "the original problem". */
+    surface: z.string().min(1).max(80),
+    kind: ReferenceKindSchema,
+    /** ordinal only. 0-based position: "the first" = 0, "the second" = 1. Omit for "the last" / "the other". */
+    ordinalIndex: z.number().int().min(0).max(9).optional(),
+    /** ordinal only. "the last one" / "the last idea" — counts from the end of the group instead of ordinalIndex. */
+    ordinalFromEnd: z.boolean().optional(),
+    /** ordinal only. "the other one" — the non-current member of a two-item group. */
+    ordinalOther: z.boolean().optional(),
+    /** topic_recall only. What is being recalled, e.g. "funding", "the pricing problem". Falls back to `surface` when absent. */
+    topicHint: z.string().max(80).optional(),
+    /** topic_recall only. A speaker named in the recall itself — "what SARAH said earlier about onboarding". The exact word used, not a resolved speakerId. */
+    speakerHint: z.string().max(48).optional(),
+  })
+  .strict();
+export type ReferenceMention = z.infer<typeof ReferenceMentionSchema>;
+
+/**
+ * "Let's set that aside", "actually, forget the creator idea", "go back to
+ * fundraising" — a discourse act names WHICH lifecycle transition the
+ * speaker just performed and WHAT it targets, in the speaker's own words.
+ * Same discipline as everywhere else in this file: the model identifies the
+ * grammar, never a world id — lib/expression/world/apply.ts resolves
+ * `targetSurface` deterministically (reusing the same text-matching
+ * resolveTopicRecall uses) and performs the actual state transition.
+ */
+export const DiscourseActTypeSchema = z.enum(["reject", "suspend", "deemphasize", "invalidate", "supersede", "reactivate"]);
+export type DiscourseActType = z.infer<typeof DiscourseActTypeSchema>;
+
+export const DiscourseActSchema = z
+  .object({
+    type: DiscourseActTypeSchema,
+    /** The model's own words for what this act targets — a claim's content for "invalidate", an entity's description for everything else. Never a world id. */
+    targetSurface: z.string().min(1).max(160),
+    /** supersede only: which of THIS delta's own entities is the replacement — a local id, resolved the same way MeaningDelta's other local-id fields are. */
+    supersededByLocalId: z.string().max(48).optional(),
+  })
+  .strict();
+export type DiscourseAct = z.infer<typeof DiscourseActSchema>;
 
 /**
  * What ONE input segment contributed. Ids here are local to this extraction
@@ -259,28 +442,60 @@ export type Claim = z.infer<typeof ClaimSchema>;
  * (lib/expression/world/apply.ts), which is what lets it decide "this is
  * the Mariam we already know" instead of the extractor deciding it blind.
  */
-export const MeaningDeltaSchema = z
-  .object({
-    entities: z.array(EntitySchema).max(12),
-    relations: z.array(RelationSchema).max(16),
-    claims: z.array(ClaimSchema).max(8),
-    /**
-     * Which entity this segment is ABOUT — the pronoun antecedent for the
-     * next segment, and the default focus for the expression planner.
-     */
-    topicEntityId: z.string().max(48).optional(),
-    /** The speaker's own emphasis, if any: "the big thing is...", "what really matters". */
-    emphasisEntityIds: z.array(z.string().max(48)).max(4).optional(),
-    /**
-     * Surface forms the speaker just took back ("actually, not the road — the
-     * bridge"). Resolved against the world by the same matcher that resolves
-     * every other mention, and marked superseded rather than deleted, so the
-     * revision stays inspectable instead of silently rewriting history.
-     */
-    supersededMentions: z.array(z.string().max(60)).max(4).optional(),
-    interpretation: z.string().max(240),
-  })
-  .strict();
+/**
+ * The plain object shape, kept as its own export because `.shape` is only
+ * available on a ZodObject — sanitizeDelta (lib/expression/meaning/extract.ts)
+ * validates one entity/relation/claim at a time via
+ * `MeaningDeltaShape.shape.entities.element`, and wrapping the schema below
+ * in `.superRefine` turns it into a ZodEffects that no longer exposes
+ * `.shape` at all.
+ */
+export const MeaningDeltaShape = z.object({
+  entities: z.array(EntitySchema).max(12),
+  relations: z.array(RelationSchema).max(16),
+  claims: z.array(ClaimSchema).max(8),
+  /**
+   * Which entity this segment is ABOUT — the pronoun antecedent for the
+   * next segment, and the default focus for the expression planner.
+   */
+  topicEntityId: z.string().max(48).optional(),
+  /** The speaker's own emphasis, if any: "the big thing is...", "what really matters". */
+  emphasisEntityIds: z.array(z.string().max(48)).max(4).optional(),
+  /**
+   * Surface forms the speaker just took back ("actually, not the road — the
+   * bridge"). Resolved against the world by the same matcher that resolves
+   * every other mention, and marked superseded rather than deleted, so the
+   * revision stays inspectable instead of silently rewriting history.
+   */
+  supersededMentions: z.array(z.string().max(60)).max(4).optional(),
+  /** Ordinal and topic-recall pointers this segment made — see ReferenceMentionSchema. */
+  referenceMentions: z.array(ReferenceMentionSchema).max(4).optional(),
+  /** Conversational revisions this segment performed — see DiscourseActSchema. */
+  discourseActs: z.array(DiscourseActSchema).max(4).optional(),
+  interpretation: z.string().max(240),
+}).strict();
+
+export const MeaningDeltaSchema = MeaningDeltaShape.superRefine((delta, ctx) => {
+  const entityIds = new Set(delta.entities.map((e) => e.id));
+  delta.referenceMentions?.forEach((mention, i) => {
+    if (!entityIds.has(mention.entityId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["referenceMentions", i, "entityId"],
+        message: "referenceMentions.entityId must be one of this delta's own entities",
+      });
+    }
+  });
+  delta.discourseActs?.forEach((act, i) => {
+    if (act.supersededByLocalId && !entityIds.has(act.supersededByLocalId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["discourseActs", i, "supersededByLocalId"],
+        message: "discourseActs.supersededByLocalId must be one of this delta's own entities",
+      });
+    }
+  });
+});
 export type MeaningDelta = z.infer<typeof MeaningDeltaSchema>;
 
 export const EMPTY_MEANING_DELTA: MeaningDelta = {
@@ -292,8 +507,48 @@ export const EMPTY_MEANING_DELTA: MeaningDelta = {
 
 // ─────────────────────────────────────────────────────────── world
 
-export const EntityStatusSchema = z.enum(["active", "superseded"]);
+/**
+ * The lifecycle a concept moves through as the conversation revises it —
+ * the reason "supersession" used to be the answer to every kind of
+ * retraction. A caption system only ever accumulates; a thought system
+ * changes its mind, and these are the distinct ways it does that:
+ *
+ *   active        the default — under current consideration.
+ *   deemphasized  still valid, still true, just no longer a priority. The
+ *                 ONLY status that stays "live" (drawable, holds its
+ *                 relations) — see isLiveEntityStatus. Distinct from a low
+ *                 `importance` tier: importance is recomputed from the graph
+ *                 every round, deemphasized is an explicit, sticky decision
+ *                 recomputeImportance must not silently undo.
+ *   suspended     preserved, but pulled out of current focus — "let's park
+ *                 that for now". Recoverable, expected to possibly return.
+ *   rejected      the speaker no longer accepts or is proposing it —
+ *                 "actually, forget that". Recoverable in principle (see
+ *                 `reactivate`), but nothing assumes it will be.
+ *   superseded    replaced by a SPECIFIC newer entity — see
+ *                 `WorldEntity.supersededByEntityId`. The one status that
+ *                 names its own replacement.
+ *
+ * suspended/rejected/superseded are all "archived": hidden from expression
+ * exactly like the old binary status already hid a superseded entity, never
+ * deleted, and reachable again — lib/expression/world/apply.ts resolves
+ * "reactivate" and topic-recall the same way regardless of which of the
+ * three archived it.
+ */
+export const EntityStatusSchema = z.enum(["active", "deemphasized", "suspended", "rejected", "superseded"]);
 export type EntityStatus = z.infer<typeof EntityStatusSchema>;
+
+/**
+ * The single predicate every grammar, the composer's inputs, salience, and
+ * importance recomputation share for "does this participate in expression
+ * right now". Centralised because this exact question used to be answered
+ * by nine separate `status !== "superseded"` checks scattered across the
+ * engine — fine while there were only two statuses, a correctness bug
+ * waiting to happen the moment a third one existed.
+ */
+export function isLiveEntityStatus(status: EntityStatus): boolean {
+  return status === "active" || status === "deemphasized";
+}
 
 export const ImportanceSchema = z.enum(["primary", "supporting", "detail"]);
 export type Importance = z.infer<typeof ImportanceSchema>;
@@ -304,6 +559,36 @@ export type Importance = z.infer<typeof ImportanceSchema>;
  * touched (which drives pronoun resolution and emphasis decay), and whether
  * the speaker has since revised it away.
  */
+/**
+ * A bounded, append-only log of who has touched this fact — never a second
+ * identity key. Two speakers asserting the same thing still merge into ONE
+ * entity/claim (identity resolution never looks at speakerId); this is
+ * where the record of "Sarah AND Kenny both touched this" lives once they
+ * have. Capped and oldest-evicted exactly like `aliases`, for the same
+ * reason: a fact's provenance history is evidence, not the fact itself, and
+ * does not need to grow without bound to stay useful.
+ */
+const WorldProvenance = z.array(ProvenanceSchema).max(6).optional();
+
+/**
+ * The world's own shape for a metric — an ACCUMULATED, ordered `history`
+ * rather than one segment's `points`. Every settled thought that mentions
+ * "conversion" again appends to this same array (lib/expression/world/apply.ts)
+ * instead of replacing it, which is the whole mechanism behind "10% ->
+ * 4% -> 6%" surviving as one series across three separate turns.
+ */
+export const WorldMetricSchema = z
+  .object({
+    unit: MetricUnitSchema,
+    currency: z.string().max(8).optional(),
+    history: z.array(MetricPointSchema).max(12),
+    target: MetricPointSchema.optional(),
+    direction: z.enum(["increase", "decrease", "flat"]).optional(),
+    changePercent: z.number().finite().optional(),
+  })
+  .strict();
+export type WorldMetric = z.infer<typeof WorldMetricSchema>;
+
 export const WorldEntitySchema = EntitySchema.extend({
   status: EntityStatusSchema,
   importance: ImportanceSchema,
@@ -311,12 +596,18 @@ export const WorldEntitySchema = EntitySchema.extend({
   lastTouchedSeq: z.number().int().nonnegative(),
   /** Surface forms this entity has been called, lowercased — the matcher's memory of "my mother" and "Mariam" being one person. */
   aliases: z.array(z.string().max(60)).max(12),
+  provenance: WorldProvenance,
+  /** Set only when status is "superseded" — which entity replaced this one. */
+  supersededByEntityId: IdSchema.optional(),
+  /** Overrides EntitySchema's per-segment `metric` with the world's accumulated shape — see WorldMetricSchema. */
+  metric: WorldMetricSchema.optional(),
 }).strict();
 export type WorldEntity = z.infer<typeof WorldEntitySchema>;
 
 export const WorldRelationSchema = RelationSchema.extend({
   firstSeenSeq: z.number().int().nonnegative(),
   lastTouchedSeq: z.number().int().nonnegative(),
+  provenance: WorldProvenance,
 }).strict();
 export type WorldRelation = z.infer<typeof WorldRelationSchema>;
 
@@ -324,6 +615,11 @@ export const WorldClaimSchema = ClaimSchema.extend({
   importance: ImportanceSchema,
   firstSeenSeq: z.number().int().nonnegative(),
   lastTouchedSeq: z.number().int().nonnegative(),
+  provenance: WorldProvenance,
+  /** Resolved counterpart to `stance.targetSurface` — absent when unresolved, exactly like ReferenceMention.chosenId. */
+  stanceTargetClaimId: IdSchema.optional(),
+  /** Set by an "invalidate" discourse act ("no, that's wrong"). The claim is kept, not deleted — same "archived, not erased" rule as entity status. */
+  invalidated: z.boolean().optional(),
 }).strict();
 export type WorldClaim = z.infer<typeof WorldClaimSchema>;
 
@@ -402,6 +698,52 @@ export type WorldOp =
   | { kind: "REMOVE_RELATION"; relationId: string }
   | { kind: "ADD_CLAIM"; claim: WorldClaim }
   | { kind: "UPDATE_CLAIM"; claim: WorldClaim; prev: WorldClaim };
+
+/**
+ * One candidate considered while resolving a ReferenceMention, kept whether
+ * or not it won — the instrumentation this exists for is as much about
+ * SECOND place (why something was NOT chosen, or why the choice was only
+ * "medium") as about first.
+ */
+export interface ReferenceCandidate {
+  id: string;
+  label: string;
+  score: number;
+  reason: string;
+}
+
+/**
+ * The outcome of resolving one ReferenceMention against WorldState —
+ * produced by lib/expression/world/references.ts, carried on
+ * ExpressionTrace for the debug panel. `chosenId: null` means the mention
+ * was deliberately left unattached rather than guessed: see the module doc
+ * for why "low confidence" and "not resolved" are the same outcome here.
+ */
+export interface ReferenceResolution {
+  surface: string;
+  kind: ReferenceKind;
+  candidates: ReferenceCandidate[];
+  chosenId: string | null;
+  confidence: Confidence;
+  reason: string;
+}
+
+/**
+ * The outcome of resolving one DiscourseAct — produced by
+ * lib/expression/world/apply.ts, carried on ExpressionTrace. `applied:
+ * false` means the target could not be confidently resolved, so — same rule
+ * as everywhere else reference resolution runs — nothing changed rather
+ * than changing the wrong thing.
+ */
+export interface DiscourseActResolution {
+  type: DiscourseActType;
+  targetSurface: string;
+  candidates: ReferenceCandidate[];
+  targetId: string | null;
+  confidence: Confidence;
+  applied: boolean;
+  reason: string;
+}
 
 // ─────────────────────────────────────────────────────────── intent
 
@@ -559,6 +901,145 @@ export const EMPTY_EXPRESSION_PLAN: ExpressionPlan = {
   reason: "nothing to express",
 };
 
+// ─────────────────────────────────────────────────────────── clean
+
+/**
+ * What the Clean Agent is allowed to say about a relation that may remain
+ * visible. Entity ids, not region ids — this constraint is about the world
+ * the picture is allowed to show, not about a particular layout.
+ */
+export const CleanRelationSchema = z
+  .object({
+    from: IdSchema,
+    to: IdSchema,
+    label: z.string().max(32).optional(),
+  })
+  .strict();
+export type CleanRelation = z.infer<typeof CleanRelationSchema>;
+
+/**
+ * The Clean Agent's decision: what the board is allowed to look like after
+ * this thought. No geometry. The planner, composer and renderer may only
+ * realise this set — they must not add or keep anything it rejected.
+ *
+ * `reason` is diagnostic (debug panel / trace), the same category as
+ * ExpressionPlan.reason: the picture does not depend on it.
+ */
+export const CleanPlanSchema = z
+  .object({
+    /** Absent only when there is nothing live to organise around. */
+    primaryId: IdSchema.optional(),
+    keep: z.array(IdSchema).max(6),
+    demote: z.array(IdSchema).max(24),
+    remove: z.array(IdSchema).max(48),
+    promote: z.array(IdSchema).max(6),
+    allowedRelations: z.array(CleanRelationSchema).max(16),
+    maxNodes: z.literal(6),
+    reason: z.string().max(200),
+  })
+  .strict();
+export type CleanPlan = z.infer<typeof CleanPlanSchema>;
+
+export const EMPTY_CLEAN_PLAN: CleanPlan = {
+  keep: [],
+  demote: [],
+  remove: [],
+  promote: [],
+  allowedRelations: [],
+  maxNodes: 6,
+  reason: "nothing to clean",
+};
+
+// ──────────────────────────────────────────────────── composition
+
+/**
+ * One hop on the story spine. Entity ids, not region ids — this is the
+ * path the viewer should follow, decided before any grammar or layout.
+ */
+export const CompositionEdgeSchema = z
+  .object({
+    from: IdSchema,
+    to: IdSchema,
+    label: z.string().max(32).optional(),
+  })
+  .strict();
+export type CompositionEdge = z.infer<typeof CompositionEdgeSchema>;
+
+/**
+ * The Composition Agent's decision: the single story of this thought.
+ * One primary, one spine. Everything else is attached to that spine,
+ * demoted, or removed. Clean and the renderer may only realise this set.
+ *
+ * No geometry. `reason` is diagnostic, same category as CleanPlan.reason.
+ */
+export const CompositionPlanSchema = z
+  .object({
+    /** Absent only when there is nothing live to organise a story around. */
+    primaryId: IdSchema.optional(),
+    /** The one main path, usually 1–3 edges (2–4 nodes). */
+    spine: z.array(CompositionEdgeSchema).max(4),
+    allowed: z.array(IdSchema).max(12),
+    demote: z.array(IdSchema).max(24),
+    remove: z.array(IdSchema).max(48),
+    reason: z.string().max(200),
+  })
+  .strict();
+export type CompositionPlan = z.infer<typeof CompositionPlanSchema>;
+
+export const EMPTY_COMPOSITION_PLAN: CompositionPlan = {
+  spine: [],
+  allowed: [],
+  demote: [],
+  remove: [],
+  reason: "nothing to compose",
+};
+
+// ────────────────────────────────────────────────── presentation
+
+/**
+ * How the story should be SHOWN — still no coordinates. The composer
+ * realises `layout`; the renderer realises `emphasis`. Neither may add
+ * a node this plan dropped for clarity.
+ */
+export const PresentationLayoutSchema = z.enum(["vertical-spine", "left-to-right", "central-primary", "hierarchy"]);
+export type PresentationLayout = z.infer<typeof PresentationLayoutSchema>;
+
+export const PresentationWeightSchema = z.enum(["heavy", "medium", "light"]);
+export type PresentationWeight = z.infer<typeof PresentationWeightSchema>;
+
+export const PresentationEmphasisSchema = z
+  .object({
+    primary: PresentationWeightSchema,
+    support: PresentationWeightSchema,
+    periphery: PresentationWeightSchema,
+  })
+  .strict();
+export type PresentationEmphasis = z.infer<typeof PresentationEmphasisSchema>;
+
+export const PresentationPlanSchema = z
+  .object({
+    layout: PresentationLayoutSchema,
+    emphasis: PresentationEmphasisSchema,
+    /** Entity ids dropped for visual clarity — a subset of what Clean kept. */
+    simplifications: z.array(IdSchema).max(12),
+    notes: z.string().max(200),
+  })
+  .strict();
+export type PresentationPlan = z.infer<typeof PresentationPlanSchema>;
+
+export const EMPTY_PRESENTATION_PLAN: PresentationPlan = {
+  layout: "central-primary",
+  emphasis: { primary: "heavy", support: "medium", periphery: "light" },
+  simplifications: [],
+  notes: "nothing to present",
+};
+
+export const DEFAULT_PRESENTATION_EMPHASIS: PresentationEmphasis = {
+  primary: "heavy",
+  support: "medium",
+  periphery: "light",
+};
+
 // ──────────────────────────────────────────────────────── primitives
 
 /**
@@ -578,6 +1059,18 @@ export const VisualPrimitiveSchema = z.enum([
   "state_marker",
   "moment",
   "text_label",
+  /**
+   * The metric vocabulary — deliberately three, not "one per chart type".
+   * metric_value covers both a single number AND a before/after pair (one
+   * or two points read inline, "200 -> 500"); metric_series is an ordered
+   * run of three or more; metric_gauge is the one shape that needs its own
+   * drawing because a target makes it a comparison against a threshold, not
+   * a value. Two-metric comparison is not a fourth primitive — it is two of
+   * these placed as poles by the existing `comparison` grammar.
+   */
+  "metric_value",
+  "metric_series",
+  "metric_gauge",
 ]);
 export type VisualPrimitive = z.infer<typeof VisualPrimitiveSchema>;
 
@@ -608,6 +1101,23 @@ export const SceneObjectSchema = z
     sketchKey: z.string().optional(),
     /** For quantity_array / figure_group: how many marks to draw. */
     count: z.number().int().min(1).max(24).optional(),
+    /**
+     * Set when the entity behind this object carries `confidence: "low"` —
+     * a hedge ("maybe", "hypothetically") the speaker made explicit. Computed
+     * here from WorldEntity.confidence, never from a model at this layer:
+     * the same "style hint, not geometry" category as `weight`. Renderers
+     * read it to draw dashed/faint rather than solid.
+     */
+    tentative: z.boolean().optional(),
+    /**
+     * Set only for metric_value / metric_series / metric_gauge — the actual
+     * numbers to draw. Not geometry: a value, a unit and a target are
+     * content the same way `label` and `count` already are, and this is
+     * still the composer choosing WHAT to hand the renderer, never a
+     * coordinate. Trimmed from WorldMetric.history to whatever the chosen
+     * primitive actually displays (compose.ts).
+     */
+    metric: WorldMetricSchema.optional(),
     x: z.number().finite(),
     y: z.number().finite(),
     w: z.number().finite().positive(),
@@ -620,7 +1130,20 @@ export const SceneObjectSchema = z
   .strict();
 export type SceneObject = z.infer<typeof SceneObjectSchema>;
 
-export const ConnectorStyleSchema = z.enum(["arrow", "line", "bracket", "none"]);
+/**
+ * How a connector is DRAWN, which is a semantic decision the composer makes
+ * — not a stylistic one a renderer may reinterpret.
+ *
+ * `tension` is the opposition mark: a symmetric zigzag between two things
+ * the speaker set against each other. It exists because neither of the two
+ * existing symmetric options can carry a contrast. Nothing at all leans on
+ * the poles happening to sit in a row — true for the comparison layout,
+ * false the moment the same contrast turns up inside a scene — and a plain
+ * line says only "these are connected", which is exactly as true of two
+ * things that agree. An arrow is not available to it: `contrasts_with` has
+ * no direction, and drawing one would assert a claim the speaker never made.
+ */
+export const ConnectorStyleSchema = z.enum(["arrow", "line", "bracket", "tension", "none"]);
 export type ConnectorStyle = z.infer<typeof ConnectorStyleSchema>;
 
 export const SceneConnectorSchema = z
@@ -631,6 +1154,8 @@ export const SceneConnectorSchema = z
     toObjectId: IdSchema,
     style: ConnectorStyleSchema,
     label: z.string().max(32).optional(),
+    /** Set when the world relation behind this connector carries `confidence: "low"`. Same rationale as SceneObject.tentative. */
+    tentative: z.boolean().optional(),
     /** Start and end in scene coordinates; the composer routes, the renderer only draws. */
     points: z.array(z.tuple([z.number().finite(), z.number().finite()])).min(2).max(6),
   })

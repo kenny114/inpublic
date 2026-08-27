@@ -1,0 +1,12 @@
+# Evaluation Context
+
+Evaluation asks whether meaning survives into a coherent, usable, continuing visual world. It should eventually measure meaning survival, correct object identity, correct relationships, visual form appropriateness, readability, clipping, spatial coherence, persistence, canvas drift, continuation quality, repair quality, and browser behavior.
+
+Use the smallest evaluation mode that can answer the question:
+
+- Deterministic fixture tests verify semantic folding, planning, geometry, patching, and invariants with fixed inputs. They belong in the automated test suite; reusable cases may be specified in `scenarios/`.
+- Browser smoke tests verify a few critical integrated browser behaviors against a real mounted canvas. They are a narrow safety net, not broad visual judgment.
+- Live model evaluation measures behavior that depends on real model output, latency, ambiguity, or session continuity. Record runs and findings in `reports/`; promote stable failures to `regressions/`.
+- Human visual evaluation judges appropriateness, legibility, hierarchy, coherence, and whether the result communicates what a person intended. Record the scenario, artifact, judgment, and rationale.
+
+Do not collapse these into one score. A deterministic pass cannot establish visual quality, and a compelling screenshot cannot establish identity, persistence, or browser correctness.

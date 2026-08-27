@@ -19,7 +19,7 @@
  */
 
 import type { ExpressionTrace } from "../pipeline";
-import { relationFamily, type RelationType, type WorldState } from "../schemas";
+import { isLiveEntityStatus, relationFamily, type RelationType, type WorldState } from "../schemas";
 import { normalizeMention } from "../world/apply";
 
 /**
@@ -77,7 +77,7 @@ export interface Failure {
 // ─────────────────────────────────────────────────────────── lookup
 
 function liveEntities(world: WorldState) {
-  return world.entities.filter((e) => e.status !== "superseded");
+  return world.entities.filter((e) => isLiveEntityStatus(e.status));
 }
 
 /**
@@ -341,8 +341,8 @@ export function attributeContinuity(traces: ExpressionTrace[]): Failure | null {
   for (let i = 1; i < traces.length; i += 1) {
     const before = liveEntities(traces[i - 1].world);
     const after = new Set(liveEntities(traces[i].world).map((e) => e.id));
-    const superseded = new Set(traces[i].world.entities.filter((e) => e.status === "superseded").map((e) => e.id));
-    const vanished = before.filter((e) => !after.has(e.id) && !superseded.has(e.id));
+    const archived = new Set(traces[i].world.entities.filter((e) => !isLiveEntityStatus(e.status)).map((e) => e.id));
+    const vanished = before.filter((e) => !after.has(e.id) && !archived.has(e.id));
     if (vanished.length) {
       return {
         failureClass: "CONTINUITY",

@@ -1,14 +1,12 @@
 /**
- * The Story Mode / Audio Replay product-surface shutdown, tested directly.
+ * The remaining feature flags and the Expression Engine's dev-override
+ * resolution, tested directly.
  *
  *   node --import ./scripts/ts-register.mjs scripts/features-test.mjs
  *
- * Confirms the flags themselves, AND the one piece of pure clamping logic
- * that isn't just "don't render a button" — lib/preferences.ts's
- * readPreferences(), which must not let a stale localStorage value (set
- * before Story Mode was parked) silently route "New session" back into it.
- * Everything else (the UI gating) is React-rendered and not covered by
- * this node-script test style, same limitation as the rest of this suite.
+ * Also confirms lib/preferences.ts's readPreferences(), which must not let a
+ * stale localStorage value (set before Story Mode was removed) silently
+ * route "New session" back into a mode that no longer exists.
  */
 
 import assert from "node:assert/strict";
@@ -28,10 +26,6 @@ function section(title) {
 section("feature flags");
 
 check("standardMode is enabled", features.standardMode === true);
-check("storyMode is parked", features.storyMode === false);
-check("audioReplay is parked", features.audioReplay === false);
-check("choreographerComparison is enabled", features.choreographerComparison === true);
-check("directorV1 is enabled", features.directorV1 === true);
 
 section("validated stack is the committed production default (docs/VALIDATED-STACK-PRODUCTION-ACTIVATION-V1.md)");
 

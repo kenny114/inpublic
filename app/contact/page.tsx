@@ -1,4 +1,3 @@
 import { SiteHeader } from "@/components/SiteHeader";
 import { DISCORD_URL } from "@/lib/product";
-import { features } from "@/lib/features";
-export default function ContactPage() { return <main><SiteHeader /><article className="section-shell max-w-3xl"><p className="eyebrow">Contact</p><h1 className="mt-3 text-4xl font-semibold">Talk with the InPublic team.</h1><p className="mt-5 leading-7 text-zinc-600">For early-access feedback, bug reports, feature requests{features.storyMode ? ", and Story Mode experiments" : ""}, use the community link.</p><a href={DISCORD_URL} target="_blank" rel="noreferrer" className="button-primary mt-8">Open Discord</a></article></main>; }
+export default function ContactPage() { return <main><SiteHeader /><article className="section-shell max-w-3xl"><p className="eyebrow">Contact</p><h1 className="mt-3 text-4xl font-semibold">Talk with the InPublic team.</h1><p className="mt-5 leading-7 text-zinc-600">For early-access feedback, bug reports, feature requests, use the community link.</p><a href={DISCORD_URL} target="_blank" rel="noreferrer" className="button-primary mt-8">Open Discord</a></article></main>; }

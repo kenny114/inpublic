@@ -12,14 +12,12 @@ import { SessionDetailsPanel } from "@/components/SessionDetailsPanel";
 import { useSessionSummaries } from "@/hooks/useSessionSummaries";
 import { deleteSession, duplicateSession, loadSessionById, renameSession, restoreDeletedSession, setSessionStarred, type PersistedSession } from "@/lib/persist";
 import { deriveTitle, formatDuration, formatRelative, statusOf, type SessionSummary } from "@/lib/sessions";
-import { features } from "@/lib/features";
-
 const filters = ["All sessions", "Standard Mode", "Story Mode", "Recorded", "Unrecorded", "Starred"] as const;
 type Filter = (typeof filters)[number];
-// Story Mode is parked (lib/features.ts) — the filter chip is hidden from
-// the main sessions view, but "All sessions" still includes any existing
-// story sessions (matches() below is untouched), so they stay findable.
-const visibleFilters = features.storyMode ? filters : filters.filter((name) => name !== "Story Mode");
+// Story Mode was removed entirely — the filter chip is hidden from the main
+// sessions view, but "All sessions" still includes any existing story
+// sessions (matches() below is untouched), so they stay findable.
+const visibleFilters = filters.filter((name) => name !== "Story Mode");
 
 const sorts = { recent: "Recently edited", newest: "Newest first", oldest: "Oldest first" } as const;
 type Sort = keyof typeof sorts;

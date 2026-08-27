@@ -6,7 +6,6 @@
  */
 
 import { resolveIcon } from "./icons";
-import { labelSpot, routeArrow } from "./routing";
 import type { SceneElement } from "./scene";
 
 export type Op =
@@ -337,6 +336,14 @@ function swoosh(width: number): number[][] {
 /** The words being spoken right now. Between a note and a word in weight —
  *  it carries the page, so it has to read on camera. */
 export const LIVE_SIZE = SIZE.word;
+/**
+ * When the expression engine owns the sheet, live captions sit in a right
+ * rail instead of competing for the centre. Narrower and smaller than the
+ * primary live line so the diagram stays the thing you look at.
+ */
+export const LIVE_CAPTION_RAIL_W = 248;
+export const LIVE_CAPTION_SIZE = 16;
+export const LIVE_CAPTION_GAP = 10;
 
 /**
  * Break a run of speech into lines that fit the sheet. Excalidraw only wraps
@@ -345,7 +352,7 @@ export const LIVE_SIZE = SIZE.word;
  */
 export function wrapSpeech(
   text: string,
-  size = LIVE_SIZE,
+  size: number = LIVE_SIZE,
   maxW = CONTENT_W,
 ): string {
   const words = text.split(/\s+/).filter(Boolean);
@@ -395,9 +402,11 @@ export async function buildLiveLine(
    * identity across every interim instead of being replaced ~5x/second.
    */
   id?: string,
+  opts?: { fontSize?: number; maxW?: number; opacity?: number },
 ): Promise<LiveLine> {
   const { convertToExcalidrawElements } = await import("@excalidraw/excalidraw");
-  const wrapped = wrapSpeech(text);
+  const fontSize = opts?.fontSize ?? LIVE_SIZE;
+  const wrapped = wrapSpeech(text, fontSize, opts?.maxW);
   const elements = convertToExcalidrawElements([
     {
       ...(id ? { id } : {}),
@@ -405,9 +414,10 @@ export async function buildLiveLine(
       x,
       y,
       text: wrapped,
-      fontSize: LIVE_SIZE,
+      fontSize,
       fontFamily: HAND,
       strokeColor: settled ? INK : SOFT,
+      ...(opts?.opacity !== undefined ? { opacity: opts.opacity } : {}),
     },
   ] as never) as unknown as SceneElement[];
 
@@ -416,8 +426,8 @@ export async function buildLiveLine(
   const lines = wrapped.split("\n").length;
   return {
     elements,
-    w: (first?.width as number) || textW(wrapped, LIVE_SIZE),
-    h: (first?.height as number) || lines * LIVE_SIZE * 1.25,
+    w: (first?.width as number) || textW(wrapped, fontSize),
+    h: (first?.height as number) || lines * fontSize * 1.25,
   };
 }
 
@@ -585,115 +595,6 @@ export async function buildReferenceBox(
   const node = elements.find((el) => el.type === "rectangle");
   if (!node) return null;
   return { elements, nodeId: node.id };
-}
-
-export interface BuiltRelationship {
-  arrow: SceneElement;
-  /** Label text element, if the relationship is named. */
-  extras: SceneElement[];
-  /** `boundElements` additions the caller must patch onto the two nodes. */
-  bindPatches: { id: string; boundElements: unknown[] }[];
-}
-
-/**
- * A real Excalidraw binding between two existing elements.
- *
- * `convertToExcalidrawElements` can only bind elements created in the *same*
- * call — its `oldToNewElementIdMap` does not span calls — so an arrow to
- * something drawn a minute ago has to set `startBinding`/`endBinding` itself
- * and register on both nodes' `boundElements`. That registration is what makes
- * Excalidraw re-route the arrow when either node moves.
- */
-export async function buildBoundArrow(
-  arrowId: string,
-  from: SceneElement,
-  to: SceneElement,
-  label: string,
-  /**
-   * Everything else on the page. The arrow routes around these — without them
-   * it draws a straight line through whatever the speaker had already written
-   * between the two things it connects.
-   */
-  obstacles: SceneElement[] = [],
-): Promise<BuiltRelationship | null> {
-  const { convertToExcalidrawElements } = await import("@excalidraw/excalidraw");
-
-  const rect = (el: SceneElement) => ({
-    x: el.x,
-    y: el.y,
-    width: el.width,
-    height: el.height,
-    // The caller tags the live transcript rows. They span the sheet, so
-    // treating them as impassable leaves no route at all on a busy page.
-    soft: el.softObstacle === true,
-  });
-  const route = routeArrow(
-    rect(from),
-    rect(to),
-    obstacles
-      .filter((el) => el.id !== from.id && el.id !== to.id)
-      .filter((el) => el.type !== "arrow" && el.type !== "frame")
-      .filter((el) => (el.width ?? 0) > 0 && (el.height ?? 0) > 0)
-      .map(rect),
-  );
-  const { start, end } = route;
-
-  const built = convertToExcalidrawElements([
-    {
-      id: arrowId,
-      type: "arrow",
-      x: start.x,
-      y: start.y,
-      points: route.points,
-      strokeColor: SOFT,
-      strokeWidth: 1,
-      roughness: 2,
-    },
-  ] as never) as unknown as SceneElement[];
-
-  const arrow = built.find((el) => el.type === "arrow");
-  if (!arrow) return null;
-
-  const GAP = 4;
-  arrow.startBinding = { elementId: from.id, focus: 0, gap: GAP };
-  arrow.endBinding = { elementId: to.id, focus: 0, gap: GAP };
-
-  const extras: SceneElement[] = [];
-  if (label) {
-    const mid = labelSpot(route);
-    extras.push(
-      ...(convertToExcalidrawElements([
-        {
-          type: "text",
-          x: mid.x - textW(label, 14) / 2,
-          y: mid.y,
-          text: label,
-          fontSize: 14,
-          fontFamily: HAND,
-          strokeColor: SOFT,
-        },
-      ] as never) as unknown as SceneElement[]),
-    );
-  }
-
-  const ref = { id: arrow.id, type: "arrow" };
-  return {
-    arrow,
-    extras,
-    bindPatches: [
-      {
-        id: from.id,
-        boundElements: [
-          ...((from.boundElements as unknown[]) ?? []),
-          ref,
-        ],
-      },
-      {
-        id: to.id,
-        boundElements: [...((to.boundElements as unknown[]) ?? []), ref],
-      },
-    ],
-  };
 }
 
 export interface BuiltOp {

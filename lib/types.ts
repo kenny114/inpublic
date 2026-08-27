@@ -442,15 +442,128 @@ export type LogEvent =
        */
       t: number;
       type: "expression";
-      event: "updated" | "rendered" | "invented-relation";
+      /**
+       * `agent-tool` marks a turn that arrived over the agent bridge
+       * (lib/expression/agentBridge.ts) rather than from the microphone. The
+       * run itself is logged by the same `submitted`/`updated`/`noop`/
+       * `failed` events a spoken turn writes — this only records that the
+       * call came from outside the tab, which nothing downstream can recover.
+       */
+      event:
+        | "submitted"
+        | "updated"
+        | "noop"
+        | "failed"
+        | "rendered"
+        | "invented-relation"
+        | "page-turn"
+        | "agent-tool"
+        | "sketch";
+      /**
+       * `event: "updated" | "noop" | "failed"` — wall-clock ms from the
+       * earliest settled thought in this run (`expression/submitted`) to this
+       * outcome. The dead-air window the pending affordance covers.
+       */
+      settledToUpdatedMs?: number;
+      /**
+       * `event: "updated"` — the one model call that produced this round's
+       * meaning (/api/express). Absent on the agent path, which supplies a
+       * MeaningDelta directly and runs no model.
+       */
+      extractMs?: number;
+      /**
+       * `event: "updated"` — Anthropic prompt-cache accounting for that same
+       * extraction call. The ~4k-token extraction system prompt carries one
+       * ephemeral cache breakpoint, so a healthy session writes the cache on
+       * its first turn (`cacheCreationTokens > 0`) and reads it on every
+       * turn after (`cacheReadTokens > 0`). Both zero across a session means
+       * the cache is not engaging and the prompt is being paid for in full
+       * every utterance. Absent on the agent path, which runs no model.
+       */
+      cacheCreationTokens?: number;
+      cacheReadTokens?: number;
+      /** `event: "updated"` — the nine deterministic layers, fold through diff. */
+      deterministicMs?: number;
+      /**
+       * `event: "rendered"` — syncExpressionCanvas + commit for this frame,
+       * and (on the structural frame only) wall-clock ms from the earliest
+       * settled thought in this run to structural ink actually on the sheet.
+       * The three of these plus `extractMs` are what let a session log say
+       * where a round's time went, which the aggregate settledToUpdatedMs
+       * could never do (docs/EXPRESSION-ENGINE-FULL-AUDIT.md §8, unknown #1).
+       */
+      syncMs?: number;
+      settledToStructureMs?: number;
+      /**
+       * `event: "rendered"` — which of the two-phase commits this was.
+       * "structure" is the frame the diagram appears in, written without
+       * waiting on the Drawing Agent; "sketch" is the later, camera-free
+       * commit that upgrades those same nodes once their strokes arrive.
+       * See components/Board.tsx applyExpressionUpdate.
+       */
+      phase?: "structure" | "sketch";
+      /**
+       * `event: "sketch"` — one sketchKey's outcome in one resolve pass.
+       * `outcome` is a client-cache hit, a completed fetch, or a fetch that
+       * produced nothing; `ms` is the fetch's wall clock; `rejectedReason` is
+       * set when the strokes arrived but the renderer's quality gate will
+       * fall back to a plain node anyway — i.e. a model call paid for and
+       * discarded, which was previously invisible (audit §8, unknown #5).
+       * `superseded` marks a sketch commit dropped because a newer
+       * expression run had already replaced the scene it belonged to.
+       */
+      sketchKey?: string;
+      outcome?: "cache_hit" | "fetched" | "missing";
+      ms?: number;
+      strokes?: number;
+      rejectedReason?: string;
+      superseded?: boolean;
+      /** `event: "page-turn"` — when overflow was considered but the page did not turn. */
+      suppressed?: boolean;
+      suppressReason?: string;
+      /** `event: "submitted"` — the settled thought handed to the controller, before any pipeline work. */
+      thoughtId?: string;
+      /** `event: "submitted"` — the text of that thought, so the log alone shows what the engine was asked to express. */
+      text?: string;
       intent?: string;
       grammar?: string;
+      /**
+       * `event: "updated"` — whether this round extended the diagram already
+       * on the canvas ("patch": same grammar, so the composer anchored the
+       * new scene onto the old one and unchanged objects kept their exact
+       * coordinates) or composed a fresh one ("full": first scene of the
+       * session, or the grammar changed). Diagnostic only: it reports what
+       * the composer did, it does not ask for anything.
+       */
+      mode?: "patch" | "full";
       reason?: string;
       preservation?: number;
       problems?: string[];
       interpretation?: string;
       patch?: string[];
       detail?: string;
+      /**
+       * `event: "page-turn"` only — the full instrumentation record for one
+       * automatic page-turn decision by the expression engine's own overflow
+       * check (lib/canvas/excalidraw/sync.ts's onOverflow, wired in
+       * components/Board.tsx's applyExpressionUpdate). See
+       * docs/EXPRESSION-ENGINE-LIVE-EVAL-1-REPORT.md, finding #6 — every field
+       * here is one the brief asked to instrument, so a page-turn-churn
+       * question can be answered from the log alone.
+       */
+      trigger?: "overflow";
+      msSincePreviousTurn?: number | null;
+      activeTopic?: string | null;
+      topicChanged?: boolean;
+      pageOccupancy?: number;
+      pageCapacity?: number;
+      newSemanticEntities?: number;
+      newVisibleEntities?: number;
+      removedVisibleEntities?: number;
+      planValidationFailed?: boolean;
+      scenePlanDiff?: string[];
+      renderOperationCount?: number;
+      overflow?: { neededW: number; neededH: number; pen: { originX: number; originY: number; x: number; y: number; lineH: number }; pageIndex: number };
     }
   | {
       /**

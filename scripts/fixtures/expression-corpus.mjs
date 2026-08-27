@@ -102,7 +102,7 @@ add(
 
 add("pronoun continues the subject", "identity", [
   T("My mother's name is Mariam.", {
-    entities: [E("speaker", "person", "the speaker"), E("mariam", "person", "Mariam")],
+    entities: [E("speaker", "person", "I"), E("mariam", "person", "Mariam")],
     relations: [R("mariam", "role_of", "speaker", { role: "mother" })],
     topicEntityId: "mariam",
   }),
@@ -239,6 +239,33 @@ add("three-step login flow", "sequence", [
   }),
 ], { intent: "show_sequence", grammar: "sequence" });
 
+// A sequence built one step per turn, which is how speech actually arrives.
+// By the last turn the first step is live but no longer recent, and the
+// visual horizon used to drop it — so the grammar saw two steps and drew a
+// process that begins at "load projects", reading as complete while stating
+// something the speaker never said. Every step in the world must reach the
+// canvas (lib/expression/planner/visibility.ts, keepOrderedChainsWhole).
+add("a sequence assembled one step per turn", "sequence", [
+  T("First the user signs in.", {
+    entities: [E("signin", "action", "sign in")],
+    topicEntityId: "signin",
+  }),
+  T("Then we load their projects.", {
+    entities: [E("signin", "action", "sign in"), E("load", "action", "load projects")],
+    relations: [R("signin", "precedes", "load", { step: 0 })],
+    topicEntityId: "load",
+  }),
+  T("And finally we open the dashboard.", {
+    entities: [E("load", "action", "load projects"), E("dash", "action", "open dashboard")],
+    relations: [R("load", "precedes", "dash", { step: 1 })],
+    topicEntityId: "dash",
+  }),
+], {
+  intent: "show_sequence",
+  grammar: "sequence",
+  entitiesDrawn: ["sign-in", "load-projects", "open-dashboard"],
+});
+
 add("morning routine", "sequence", [
   T("I wake up, then I run, then I shower.", {
     entities: [E("wake", "action", "wake up"), E("run", "action", "run"), E("shower", "action", "shower")],
@@ -302,7 +329,41 @@ add("plan A versus plan B", "comparison", [
     entities: [E("a", "concept", "Plan A"), E("b", "concept", "Plan B")],
     relations: [R("a", "contrasts_with", "b"), R("a", "greater_than", "b", { magnitude: 2 })],
   }),
-], { intent: "compare", grammar: "comparison" });
+], { intent: "compare", grammar: "comparison", comparisonPoles: ["plan-a", "plan-b"] });
+
+// The delta the REAL extractor produces for this sentence, malformed edges
+// and all: it measures cost and speed as their own entities, and compares
+// each against Plan B — a cost set against a plan. The poles must still come
+// out Plan A vs Plan B, lifted through has_property, rather than two
+// dimensions of Plan A with Plan B nowhere on the sheet.
+add("plan A versus plan B, measured on dimensions", "comparison", [
+  T("Plan A costs more but finishes twice as quickly as Plan B.", {
+    entities: [
+      E("a", "concept", "Plan A"),
+      E("b", "concept", "Plan B"),
+      E("a-cost", "quantity", "Plan A cost"),
+      E("a-speed", "quantity", "Plan A speed"),
+    ],
+    relations: [
+      R("a", "contrasts_with", "b"),
+      R("a", "has_property", "a-cost"),
+      R("a", "has_property", "a-speed"),
+      R("a-cost", "greater_than", "b", { magnitude: 1 }),
+      R("a-speed", "greater_than", "b", { magnitude: 2 }),
+    ],
+    topicEntityId: "a",
+  }),
+], { intent: "compare", grammar: "comparison", comparisonPoles: ["plan-a", "plan-b"] });
+
+// The same sentence with NO ownership stated — the shape the extractor
+// produced before the prompt required has_property. The dimension-level
+// contrast is all there is, so it is honestly the best available pair.
+add("dimensions in tension within one subject", "comparison", [
+  T("Plan A costs more but finishes twice as quickly.", {
+    entities: [E("a-cost", "quantity", "Plan A cost"), E("a-speed", "quantity", "Plan A speed")],
+    relations: [R("a-cost", "contrasts_with", "a-speed")],
+  }),
+], { grammar: "comparison", comparisonPoles: ["plan-a-cost", "plan-a-speed"] });
 
 add("rent versus buy", "comparison", [
   T("Renting is cheaper now, buying is cheaper later.", {
@@ -628,7 +689,7 @@ add("detail arrives late", "multi-turn", [
 // ─────────────────────────────────────────────── everyday speech, mixed
 
 const everyday = [
-  ["I moved to Berlin last year.", [E("speaker", "person", "the speaker"), E("berlin", "place", "Berlin")], [R("speaker", "located_at", "berlin", { spatial: "near" })]],
+  ["I moved to Berlin last year.", [E("speaker", "person", "I"), E("berlin", "place", "Berlin")], [R("speaker", "located_at", "berlin", { spatial: "near" })]],
   ["The server ran out of disk.", [E("server", "object", "the server"), E("disk", "concept", "disk space")], [R("server", "depends_on", "disk")]],
   ["My sister runs a bakery.", [E("sister", "person", "my sister"), E("bakery", "object", "a bakery")], [R("sister", "role_of", "bakery", { role: "owner" })]],
   ["Three of the four tests fail.", [E("failing", "group", "failing tests", { quantity: { value: 3 } }), E("all", "group", "tests", { quantity: { value: 4 } })], [R("failing", "part_of", "all")]],
@@ -642,7 +703,7 @@ const everyday = [
   ["The kitchen is below the studio.", [E("kitchen", "place", "kitchen"), E("studio", "place", "studio")], [R("kitchen", "located_at", "studio", { spatial: "below" })]],
   ["Design owns the component library.", [E("design", "group", "design"), E("library", "object", "component library")], [R("design", "contains", "library")]],
   ["Rest makes you faster, not slower.", [E("rest", "concept", "rest"), E("speed", "concept", "being faster")], [R("rest", "causes", "speed")]],
-  ["I want to learn to sail.", [E("speaker", "person", "the speaker"), E("sailing", "action", "learning to sail")], [R("speaker", "relates_to", "sailing")]],
+  ["I want to learn to sail.", [E("speaker", "person", "I"), E("sailing", "action", "learning to sail")], [R("speaker", "wants", "sailing")]],
   ["The invoice is larger than the estimate.", [E("invoice", "object", "the invoice"), E("estimate", "object", "the estimate")], [R("invoice", "greater_than", "estimate")]],
   ["Two teams share one repo.", [E("teams", "group", "two teams", { quantity: { value: 2 } }), E("repo", "object", "the repo")], [R("teams", "depends_on", "repo")]],
   ["She studied physics, then switched to law.", [E("she", "person", "she"), E("physics", "concept", "physics"), E("law", "concept", "law")], [R("physics", "precedes", "law", { step: 0 })]],
@@ -657,7 +718,7 @@ const everyday = [
   ["Read the error before you fix it.", [E("read", "action", "reading the error"), E("fix", "action", "fixing it")], [R("read", "precedes", "fix", { step: 0 })]],
   ["The dataset has four columns.", [E("dataset", "object", "the dataset"), E("columns", "group", "columns", { quantity: { value: 4 } })], [R("columns", "part_of", "dataset")]],
   ["Silence in a review usually means confusion.", [E("silence", "state", "silence in a review"), E("confusion", "state", "confusion")], [R("silence", "causes", "confusion", { confidence: "low" })]],
-  ["My father taught me to cook.", [E("father", "person", "my father"), E("speaker", "person", "the speaker"), E("cooking", "action", "cooking")], [R("father", "role_of", "speaker", { role: "father" }), R("father", "causes", "cooking")]],
+  ["My father taught me to cook.", [E("father", "person", "my father"), E("speaker", "person", "I"), E("cooking", "action", "cooking")], [R("father", "role_of", "speaker", { role: "father" }), R("father", "causes", "cooking")]],
   ["The API is stable, the SDK isn't.", [E("api", "object", "the API"), E("sdk", "object", "the SDK")], [R("api", "contrasts_with", "sdk")]],
   ["Six weeks of work, two days of demo.", [E("work", "concept", "work", { quantity: { value: 6, unit: "weeks" } }), E("demo", "concept", "demo", { quantity: { value: 2, unit: "days" } })], [R("work", "greater_than", "demo")]],
   ["Cold starts are why it feels slow.", [E("cold", "event", "cold starts"), E("slow", "state", "feeling slow")], [R("cold", "causes", "slow")]],

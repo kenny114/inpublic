@@ -91,7 +91,7 @@ export type OperationType =
   | "form_comparison"
   /** 3-6 existing concepts reorganized into an ordered chain. See lib/directorState.ts. */
   | "form_process"
-  /** An Expression Engine scene reconciled onto the sheet (lib/expression/render/excalidrawSync.ts). */
+  /** An Expression Engine scene reconciled onto the sheet (lib/canvas/excalidraw/sync.ts). */
   | "expression_engine";
 
 /**

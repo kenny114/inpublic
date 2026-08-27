@@ -114,9 +114,27 @@ export function SavedStatus({ state }: { state: SaveState }) {
   );
 }
 
-export function RecordingStatus({ active, busy, connecting, error }: { active: boolean; busy: boolean; connecting: boolean; error: boolean }) {
-  const text = error ? "Microphone needs attention" : connecting ? "Connecting to microphone…" : busy ? "Understanding and adding to your canvas…" : active ? "Listening…" : "Ready when you are";
-  return <span className={`ui-recording-status ${error ? "error" : active ? "active" : ""}`} role="status"><i />{text}</span>;
+export function RecordingStatus({ active, busy, connecting, error, expressing }: { active: boolean; busy: boolean; connecting: boolean; error: boolean; expressing?: boolean }) {
+  const text = error
+    ? "Microphone needs attention"
+    : connecting
+      ? "Connecting to microphone…"
+      : expressing
+        ? "Expressing…"
+        : busy
+          ? "Understanding and adding to your canvas…"
+          : active
+            ? "Listening…"
+            : "Ready when you are";
+  return (
+    <span
+      className={`ui-recording-status ${error ? "error" : expressing ? "expressing" : active ? "active" : ""}`}
+      role="status"
+    >
+      <i />
+      {text}
+    </span>
+  );
 }
 
 export function Toast({ message, actionLabel, onAction, onDismiss, duration = 6000 }: { message: string; actionLabel?: string; onAction?: () => void; onDismiss: () => void; duration?: number }) {

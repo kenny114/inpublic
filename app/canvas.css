@@ -122,6 +122,33 @@
 .canvas-speak-secondary:hover { background: #f5f6f8; }
 .canvas-speak-primary:disabled { opacity: .5; }
 
+.canvas-expressing {
+  position: fixed;
+  z-index: 70;
+  top: calc(70px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border: 1px solid var(--ui-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .9);
+  color: #5c6068;
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: .01em;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+.canvas-expressing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ui-accent);
+  animation: ui-expressing-pulse 1.6s ease-in-out infinite;
+}
+
 .canvas-transcript {
   position: fixed;
   z-index: 60;
@@ -448,6 +475,8 @@
   .canvas-speaking-control,
   .canvas-recording-dock,
   .canvas-interface-preview { transition: none; }
+  .canvas-expressing i,
+  .ui-recording-status.expressing i { animation: none; }
 }
 
 /* Below this width, controls stack vertically instead of hugging the
@@ -467,6 +496,7 @@
   .canvas-back,
   .canvas-account-trigger { width: 44px; height: 44px; }
 
+  .canvas-expressing { top: calc(var(--canvas-topbar-h, 58px) + 10px); }
   .canvas-speaking-control { width: calc(100vw - 20px); flex-wrap: wrap; justify-content: center; }
   .canvas-speaking-control .ui-recording-status { order: -2; min-width: 0; flex: 1; }
   .canvas-mode-control { order: -1; }

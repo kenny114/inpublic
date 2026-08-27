@@ -13,6 +13,7 @@
  */
 
 import { providerRequestHeaders } from "../../usage-client";
+import type { CompletionUsage } from "../../llm";
 import { MeaningDeltaSchema, EMPTY_MEANING_DELTA, type MeaningDelta } from "../schemas";
 
 /**
@@ -50,6 +51,12 @@ export async function requestMeaningDelta(
   text: string,
   recentContext: string[] = [],
   signal?: AbortSignal,
+  /**
+   * Prompt-cache accounting for this call, read off the response headers
+   * app/api/express/route.ts sets. Never affects the returned delta — a
+   * missing or unparseable header just means no numbers this round.
+   */
+  onUsage?: (usage: CompletionUsage) => void,
 ): Promise<MeaningDelta> {
   const devHeaders = await developmentAuthorization(signal);
   let res: Response;
@@ -64,6 +71,19 @@ export async function requestMeaningDelta(
     return EMPTY_MEANING_DELTA;
   }
   if (!res.ok) return EMPTY_MEANING_DELTA;
+
+  if (onUsage) {
+    const header = (name: string) => {
+      const value = Number(res.headers.get(name));
+      return Number.isFinite(value) ? value : 0;
+    };
+    onUsage({
+      inputTokens: header("x-inpublic-input-tokens"),
+      outputTokens: 0,
+      cacheCreationInputTokens: header("x-inpublic-cache-creation-tokens"),
+      cacheReadInputTokens: header("x-inpublic-cache-read-tokens"),
+    });
+  }
 
   let json: unknown;
   try {

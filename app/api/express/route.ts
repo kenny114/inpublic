@@ -65,7 +65,22 @@ export async function POST(req: Request) {
       usage = value;
     });
     await reconcileProviderCost(guard, "succeeded", usage);
-    return NextResponse.json(delta);
+    console.log(
+      `[express] ${EXPRESSION_MODEL} input=${usage.inputTokens ?? 0} cache_creation=${
+        usage.cacheCreationInputTokens ?? 0
+      } cache_read=${usage.cacheReadInputTokens ?? 0}`,
+    );
+    // Headers, not body: the response body is a MeaningDelta and the client
+    // validates it with MeaningDeltaSchema, which would strip an extra key
+    // anyway. Diagnostic only — the client logs them beside extractMs so a
+    // session log can show the extraction prompt being cached (or not).
+    return NextResponse.json(delta, {
+      headers: {
+        "x-inpublic-cache-creation-tokens": String(usage.cacheCreationInputTokens ?? 0),
+        "x-inpublic-cache-read-tokens": String(usage.cacheReadInputTokens ?? 0),
+        "x-inpublic-input-tokens": String(usage.inputTokens ?? 0),
+      },
+    });
   } catch (err) {
     await reconcileProviderCost(guard, "failed", usage);
     console.error("[express]", err);
