@@ -63,6 +63,72 @@ export const CommunicationDecisionSchema = z.discriminatedUnion("type", [
 ]);
 export type CommunicationDecision = z.infer<typeof CommunicationDecisionSchema>;
 
+export const CommunicationOutcomeSchema = z
+  .object({
+    status: z.enum(["applied", "noop", "rejected", "spoken"]),
+    reason: z.string().max(240),
+  })
+  .strict();
+export type CommunicationOutcome = z.infer<typeof CommunicationOutcomeSchema>;
+
+export const CommunicationStageSchema = z.enum(["establish", "develop", "transform", "conclude"]);
+export type CommunicationStage = z.infer<typeof CommunicationStageSchema>;
+
+export const CommunicationStateSchema = z
+  .object({
+    stage: CommunicationStageSchema,
+    visualEstablished: z.boolean(),
+    currentForm: PresentationFormSchema.optional(),
+    activeEntityIds: z.array(IdSchema).max(64),
+    deliveredMessages: z.array(z.string().max(600)).max(32),
+    visualRevision: z.number().int().nonnegative(),
+    semanticRevision: z.number().int().nonnegative(),
+    lastDecision: CommunicationDecisionSchema.optional(),
+    lastOutcome: CommunicationOutcomeSchema.optional(),
+  })
+  .strict();
+export type CommunicationState = z.infer<typeof CommunicationStateSchema>;
+
+export const SemanticDeltaSummarySchema = z
+  .object({
+    addedEntityIds: z.array(IdSchema).max(64),
+    updatedEntityIds: z.array(IdSchema).max(64),
+    removedEntityIds: z.array(IdSchema).max(64),
+    addedRelationIds: z.array(IdSchema).max(128),
+    updatedRelationIds: z.array(IdSchema).max(128),
+    removedRelationIds: z.array(IdSchema).max(128),
+    addedClaimIds: z.array(IdSchema).max(48),
+    updatedClaimIds: z.array(IdSchema).max(48),
+    removedClaimIds: z.array(IdSchema).max(48),
+    changed: z.boolean(),
+  })
+  .strict();
+export type SemanticDeltaSummary = z.infer<typeof SemanticDeltaSummarySchema>;
+
+export const VisualDeltaSummarySchema = z
+  .object({
+    addedEntityIds: z.array(IdSchema).max(64),
+    removedEntityIds: z.array(IdSchema).max(64),
+    presentationChange: z
+      .object({ from: PresentationFormSchema.optional(), to: PresentationFormSchema })
+      .strict()
+      .optional(),
+    focusTarget: IdSchema.optional(),
+    canvasChanged: z.boolean(),
+    noCanvasChange: z.boolean(),
+  })
+  .strict();
+export type VisualDeltaSummary = z.infer<typeof VisualDeltaSummarySchema>;
+
+export const TransformationCandidateSchema = z
+  .object({
+    currentForm: PresentationFormSchema.optional(),
+    compatibleForms: z.array(PresentationFormSchema).min(1).max(4),
+    reason: z.string().min(1).max(160),
+  })
+  .strict();
+export type TransformationCandidate = z.infer<typeof TransformationCandidateSchema>;
+
 /** One prior turn, compact — enough for the model to avoid repeating a visual it already tried. */
 export const CommunicationHistoryEntrySchema = z
   .object({
@@ -81,15 +147,18 @@ export const CommunicationContextSchema = z
     world: AgentWorldViewSchema,
     canvas: AgentCanvasViewSchema,
     history: z.array(CommunicationHistoryEntrySchema).max(8),
-    progress: z
-      .object({
-        messagesSpoken: z.array(z.string().max(600)).max(8),
-        previousDecision: CommunicationDecisionSchema.optional(),
-        canvasChanged: z.boolean(),
-        semanticStateChanged: z.boolean(),
-        feedback: z.literal("This message has already been delivered.").optional(),
-      })
-      .strict(),
+    state: CommunicationStateSchema,
+    semanticDelta: SemanticDeltaSummarySchema,
+    visualDelta: VisualDeltaSummarySchema,
+    transformationCandidate: TransformationCandidateSchema.optional(),
+    feedback: z
+      .enum([
+        "This message has already been delivered.",
+        "No existing visual expression is available to recompose. Establish the visual world first.",
+        "Speech did not establish a visual expression. The visual world is still empty.",
+        "Recomposition changed presentation only. It did not add the current message to semantic memory.",
+      ])
+      .optional(),
     step: z.number().int().positive(),
     remainingSteps: z.number().int().min(0).max(8),
   })
@@ -100,6 +169,10 @@ export type CommunicationDecisionProvider = (context: CommunicationContext) => P
 
 export interface CommunicationStepTrace {
   step: number;
+  state: CommunicationState;
+  semanticDelta: SemanticDeltaSummary;
+  visualDelta: VisualDeltaSummary;
+  transformationCandidate?: TransformationCandidate;
   decision: CommunicationDecision | { type: "invalid_decision" | "provider_error"; reason: string };
   outcome?: { status: "applied" | "noop" | "rejected" | "spoken"; reason: string };
   sceneRevisionBefore?: string;
@@ -122,11 +195,14 @@ export interface CommunicationRunTrace {
   budget: number;
   shapingCalls: number;
   decisionCalls: number;
+  initialState: CommunicationState;
+  finalState: CommunicationState;
   steps: CommunicationStepTrace[];
 }
 
+type CommunicationRunResultBase = { state: CommunicationState; trace: CommunicationRunTrace };
 export type CommunicationRunResult =
-  | { status: "completed"; trace: CommunicationRunTrace }
-  | { status: "blocked"; reason: string; trace: CommunicationRunTrace }
-  | { status: "step_limit"; trace: CommunicationRunTrace }
-  | { status: "stalled"; reason: string; trace: CommunicationRunTrace };
+  | (CommunicationRunResultBase & { status: "completed" })
+  | (CommunicationRunResultBase & { status: "blocked"; reason: string })
+  | (CommunicationRunResultBase & { status: "step_limit" })
+  | (CommunicationRunResultBase & { status: "stalled"; reason: string });

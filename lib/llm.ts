@@ -6,7 +6,11 @@ import { zodToJsonSchema } from "zod-to-json-schema";
  * Thin provider shim. Model id decides the provider: anything starting with
  * "gemini" goes to Google, everything else to Anthropic — unless
  * `LLM_PROVIDER=ollama` is set, in which case every call is routed to a local
- * Ollama server instead, regardless of which model id the caller passed.
+ * Ollama server instead, regardless of which model id the caller passed, or
+ * `LLM_PROVIDER=groq`/`LLM_PROVIDER=nvidia` is set, in which case every call
+ * is routed to that hosted API instead. GROQ_ALLOW_FALLBACK=1 /
+ * NVIDIA_ALLOW_FALLBACK=1 let a rate-limited hosted call fail over to the
+ * other hosted provider.
  * Cloud keys are read from the environment inside route handlers only — never
  * shipped to the client.
  */
@@ -44,10 +48,11 @@ export interface CompleteOptions {
   /** Provider-reported usage, delivered after the response completes. */
   onUsage?: (usage: CompletionUsage) => void;
   /**
-   * Ollama only: a JSON schema (typically derived from the caller's existing
-   * zod schema via `toOllamaFormat`) passed as the request's `format`, to help
-   * the local model emit valid JSON. This is assistance for the model, not a
-   * trust boundary — callers must still `.safeParse` the result themselves.
+   * Ollama/Groq only: a JSON schema (typically derived from the caller's
+   * existing zod schema via `toOllamaFormat`) passed as the request's
+   * `format` (Ollama) or `response_format` (Groq), to help the model emit
+   * valid JSON. This is assistance for the model, not a trust boundary —
+   * callers must still `.safeParse` the result themselves.
    */
   jsonSchema?: Record<string, unknown>;
   /** Test-only seam: inject a fetch stub instead of hitting a real Ollama server. */
@@ -67,21 +72,46 @@ export interface CompletionUsage {
   totalDurationMs?: number;
 }
 
-export type Provider = "google" | "anthropic" | "ollama";
+export type Provider = "google" | "anthropic" | "ollama" | "groq" | "nvidia";
 
 export function providerFor(model: string): Provider {
   if (process.env.LLM_PROVIDER === "ollama") return "ollama";
+  if (process.env.LLM_PROVIDER === "groq") return "groq";
+  if (process.env.LLM_PROVIDER === "nvidia") return "nvidia";
   return model.toLowerCase().startsWith("gemini") ? "google" : "anthropic";
 }
 
 export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
 export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen3:4b";
 
+export const GROQ_BASE_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
+export const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+
+export const NVIDIA_BASE_URL = process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
+export const NVIDIA_MODEL = process.env.NVIDIA_MODEL || "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning";
+
 /** Thrown when the local Ollama server can't be reached. Never silently swallowed. */
 export class LocalProviderUnavailableError extends Error {
   constructor(cause: unknown) {
     super(`Ollama at ${OLLAMA_BASE_URL} is unavailable: ${String(cause)}`);
     this.name = "LocalProviderUnavailableError";
+  }
+}
+
+/**
+ * Thrown when a hosted free-tier provider (Groq/NVIDIA) is still rate-limited
+ * or overloaded (429 or 503) after exhausting its own retry-with-backoff.
+ * Distinct from a generic error so `complete`/`completeStream` can recognize
+ * specifically this condition and choose to fail over to the other hosted
+ * provider, without masking unrelated errors (bad request, auth) as if they
+ * were rate limits.
+ */
+export class RemoteProviderRateLimitedError extends Error {
+  readonly provider: "groq" | "nvidia";
+  constructor(provider: "groq" | "nvidia", cause: unknown) {
+    super(`${provider} is still rate-limited/overloaded after retrying: ${String(cause)}`);
+    this.name = "RemoteProviderRateLimitedError";
+    this.provider = provider;
   }
 }
 
@@ -130,7 +160,37 @@ export async function complete(opts: CompleteOptions): Promise<string> {
     }
   }
   remoteCallCount += 1;
+  if (provider === "groq" || provider === "nvidia") {
+    return completeHostedWithFallback(provider, opts);
+  }
   return provider === "google" ? completeGoogle(opts) : completeAnthropic(opts);
+}
+
+/**
+ * Groq and NVIDIA are both free-tier hosted providers with real rate limits
+ * (Groq: tokens/minute; NVIDIA: requests/minute). GROQ_ALLOW_FALLBACK=1 /
+ * NVIDIA_ALLOW_FALLBACK=1 let a still-rate-limited call fail over to the
+ * other one instead of failing outright — same opt-in shape as
+ * OLLAMA_ALLOW_FALLBACK, just between two hosted providers instead of
+ * local-to-cloud.
+ */
+async function completeHostedWithFallback(provider: "groq" | "nvidia", opts: CompleteOptions): Promise<string> {
+  const primary = provider === "groq" ? completeGroq : completeNvidia;
+  try {
+    return await primary(opts);
+  } catch (err) {
+    if (!(err instanceof RemoteProviderRateLimitedError)) throw err;
+    const flag = provider === "groq" ? "GROQ_ALLOW_FALLBACK" : "NVIDIA_ALLOW_FALLBACK";
+    if (process.env[flag] !== "1") throw err;
+    const other = provider === "groq" ? "nvidia" : "groq";
+    const hasOtherKey = Boolean(process.env[other === "groq" ? "GROQ_API_KEY" : "NVIDIA_API_KEY"]);
+    const fallback = hasOtherKey ? other : "anthropic";
+    console.warn(`[llm] ${err.message} — falling back to ${fallback} (${flag}=1)`);
+    remoteCallCount += 1;
+    if (fallback === "groq") return completeGroq(opts);
+    if (fallback === "nvidia") return completeNvidia(opts);
+    return completeAnthropic(opts);
+  }
 }
 
 /**
@@ -158,7 +218,29 @@ export async function* completeStream(
   remoteCallCount += 1;
   if (provider === "google") {
     yield* streamGoogle(opts);
+  } else if (provider === "groq" || provider === "nvidia") {
+    yield* streamHostedWithFallback(provider, opts);
   } else {
+    yield* streamAnthropic(opts);
+  }
+}
+
+async function* streamHostedWithFallback(provider: "groq" | "nvidia", opts: CompleteOptions): AsyncGenerator<string> {
+  const primary = provider === "groq" ? streamGroq : streamNvidia;
+  try {
+    yield* primary(opts);
+    return;
+  } catch (err) {
+    if (!(err instanceof RemoteProviderRateLimitedError)) throw err;
+    const flag = provider === "groq" ? "GROQ_ALLOW_FALLBACK" : "NVIDIA_ALLOW_FALLBACK";
+    if (process.env[flag] !== "1") throw err;
+    const other = provider === "groq" ? "nvidia" : "groq";
+    const hasOtherKey = Boolean(process.env[other === "groq" ? "GROQ_API_KEY" : "NVIDIA_API_KEY"]);
+    const fallback = hasOtherKey ? other : "anthropic";
+    console.warn(`[llm] ${err.message} — falling back to ${fallback} (${flag}=1)`);
+    remoteCallCount += 1;
+    if (fallback === "groq") { yield* streamGroq(opts); return; }
+    if (fallback === "nvidia") { yield* streamNvidia(opts); return; }
     yield* streamAnthropic(opts);
   }
 }
@@ -386,6 +468,301 @@ async function completeGoogle(opts: CompleteOptions): Promise<string> {
   }
 
   return text;
+}
+
+/**
+ * Groq reports the wait as a compound duration string like "1m2.9s" or
+ * "615ms" in `x-ratelimit-reset-tokens`/`-requests`, not a plain seconds
+ * count `retry-after` would give. Parses that format into milliseconds.
+ */
+function parseGroqDuration(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const match = value.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?(?:(\d+)ms)?$/);
+  if (!match) return undefined;
+  const [, h, m, s, ms] = match;
+  const total = (Number(h) || 0) * 3_600_000 + (Number(m) || 0) * 60_000 + (Number(s) || 0) * 1000 + (Number(ms) || 0);
+  return total > 0 ? total : undefined;
+}
+
+/**
+ * Both Groq (tokens/minute) and NVIDIA (requests/minute, plus a shared-worker
+ * 503 "local total request limit reached" on the free preview endpoint)
+ * enforce real limits that a multi-call eval loop trips easily. Retries on
+ * 429/503, preferring the exact reset time a provider reports over guessing
+ * with plain exponential backoff. Returns the still-failing response after
+ * exhausting retries rather than throwing — callers decide how to surface it.
+ */
+async function fetchWithRateLimitRetry(url: string, init: RequestInit, maxRetries = 8): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetch(url, init);
+    const retryable = res.status === 429 || res.status === 503;
+    if (!retryable || attempt >= maxRetries) return res;
+    // Per https://console.groq.com/docs/rate-limits, `retry-after` (plain
+    // seconds) is the authoritative wait once a 429 has actually happened;
+    // Groq's reset-* headers are for proactive monitoring and are a
+    // fallback. NVIDIA's NIM API sends neither reset-* headers nor a
+    // reliable retry-after, so it falls through to plain backoff.
+    const retryAfterSeconds = Number(res.headers.get("retry-after"));
+    const reported = (retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : undefined)
+      ?? parseGroqDuration(res.headers.get("x-ratelimit-reset-tokens"))
+      ?? parseGroqDuration(res.headers.get("x-ratelimit-reset-requests"));
+    const waitMs = Math.min((reported ?? 2 ** attempt * 1000) + 250, 65_000);
+    await res.text(); // drain the body before retrying
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+}
+
+function groqMessages(opts: CompleteOptions): { role: string; content: string }[] {
+  return [
+    { role: "system", content: systemText(opts.system) },
+    { role: "user", content: opts.user },
+  ];
+}
+
+/**
+ * Even at reasoning_effort "low", Groq's reasoning models (gpt-oss, qwen3.x)
+ * still spend some of max_tokens on a reasoning pass before real content —
+ * observed enough on real communicator prompts to occasionally exhaust a
+ * caller's max_tokens budget entirely, which Groq's JSON-mode validation
+ * then reports as a 400 "Failed to validate JSON" (empty failed_generation)
+ * rather than a truncated response. Mirrors GOOGLE_THINKING_HEADROOM below.
+ */
+const HOSTED_REASONING_HEADROOM = 1500;
+
+/**
+ * Groq's chat completions API is OpenAI-compatible. Its strict `json_schema`
+ * mode requires the root schema to be a plain object — it rejects a top-level
+ * `oneOf`/`anyOf`, which is exactly what zod discriminated unions (used by
+ * most schemas passed here, e.g. CommunicationDecisionSchema) compile to.
+ * `json_object` mode has no such restriction; the caller's system prompt
+ * already spells out the exact shape in prose, and `.safeParse` remains the
+ * real trust boundary regardless — same as the Ollama `format` field.
+ */
+function groqResponseFormat(jsonSchema: Record<string, unknown> | undefined) {
+  if (!jsonSchema) return undefined;
+  return { type: "json_object" };
+}
+
+interface GroqChatResponse {
+  choices?: { message?: { content?: string } }[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  x_groq?: { id?: string };
+}
+
+function groqUsageFrom(json: {
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  x_groq?: { id?: string };
+}): CompletionUsage {
+  return {
+    providerRequestId: json.x_groq?.id,
+    inputTokens: json.usage?.prompt_tokens ?? 0,
+    outputTokens: json.usage?.completion_tokens ?? 0,
+  };
+}
+
+async function completeGroq(opts: CompleteOptions): Promise<string> {
+  const key = process.env.GROQ_API_KEY;
+  if (!key) throw new Error("GROQ_API_KEY is not set");
+
+  const res = await fetchWithRateLimitRetry(`${GROQ_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: groqMessages(opts),
+      temperature: opts.temperature,
+      max_tokens: opts.maxTokens + HOSTED_REASONING_HEADROOM,
+      response_format: groqResponseFormat(opts.jsonSchema),
+      // Reasoning models on Groq (gpt-oss, qwen3.x) spend part of maxTokens
+      // on a "reasoning" pass before real content, same issue as Ollama's
+      // qwen3 think block — reusing the existing allowThinking flag keeps
+      // that uniform across providers instead of adding a second knob.
+      reasoning_effort: opts.allowThinking ? undefined : "low",
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    if (res.status === 429 || res.status === 503) throw new RemoteProviderRateLimitedError("groq", body);
+    throw new Error(`Groq ${res.status}: ${body}`);
+  }
+  const json = (await res.json()) as GroqChatResponse;
+  opts.onUsage?.(groqUsageFrom(json));
+  return (json.choices?.[0]?.message?.content ?? "").trim();
+}
+
+async function* streamGroq(opts: CompleteOptions): AsyncGenerator<string> {
+  const key = process.env.GROQ_API_KEY;
+  if (!key) throw new Error("GROQ_API_KEY is not set");
+
+  const res = await fetchWithRateLimitRetry(`${GROQ_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: groqMessages(opts),
+      temperature: opts.temperature,
+      max_tokens: opts.maxTokens + HOSTED_REASONING_HEADROOM,
+      response_format: groqResponseFormat(opts.jsonSchema),
+      reasoning_effort: opts.allowThinking ? undefined : "low",
+      stream: true,
+      stream_options: { include_usage: true },
+    }),
+  });
+  if (res.status === 429 || res.status === 503) throw new RemoteProviderRateLimitedError("groq", await res.text());
+  if (!res.ok || !res.body) {
+    throw new Error(`Groq stream ${res.status}: ${res.body ? await res.text() : "no body"}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      let json: {
+        choices?: { delta?: { content?: string } }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+        x_groq?: { id?: string };
+      };
+      try {
+        json = JSON.parse(payload);
+      } catch {
+        continue; // partial JSON across chunks
+      }
+      const delta = json.choices?.[0]?.delta?.content;
+      if (delta) yield delta;
+      if (json.usage) opts.onUsage?.(groqUsageFrom(json));
+    }
+  }
+}
+
+/** NVIDIA's NIM API is also OpenAI-compatible chat completions. */
+function nvidiaMessages(opts: CompleteOptions): { role: string; content: string }[] {
+  return [
+    { role: "system", content: systemText(opts.system) },
+    { role: "user", content: opts.user },
+  ];
+}
+
+/** Same top-level oneOf/anyOf restriction as Groq's strict mode — see groqResponseFormat. */
+function nvidiaResponseFormat(jsonSchema: Record<string, unknown> | undefined) {
+  if (!jsonSchema) return undefined;
+  return { type: "json_object" };
+}
+
+interface NvidiaChatResponse {
+  id?: string;
+  choices?: { message?: { content?: string } }[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+}
+
+function nvidiaUsageFrom(json: {
+  id?: string;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+}): CompletionUsage {
+  return {
+    providerRequestId: json.id,
+    inputTokens: json.usage?.prompt_tokens ?? 0,
+    outputTokens: json.usage?.completion_tokens ?? 0,
+  };
+}
+
+async function completeNvidia(opts: CompleteOptions): Promise<string> {
+  const key = process.env.NVIDIA_API_KEY;
+  if (!key) throw new Error("NVIDIA_API_KEY is not set");
+
+  const res = await fetchWithRateLimitRetry(`${NVIDIA_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: NVIDIA_MODEL,
+      messages: nvidiaMessages(opts),
+      temperature: opts.temperature,
+      max_tokens: opts.maxTokens + HOSTED_REASONING_HEADROOM,
+      response_format: nvidiaResponseFormat(opts.jsonSchema),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    if (res.status === 429 || res.status === 503) throw new RemoteProviderRateLimitedError("nvidia", body);
+    throw new Error(`NVIDIA ${res.status}: ${body}`);
+  }
+  const json = (await res.json()) as NvidiaChatResponse;
+  opts.onUsage?.(nvidiaUsageFrom(json));
+  return (json.choices?.[0]?.message?.content ?? "").trim();
+}
+
+async function* streamNvidia(opts: CompleteOptions): AsyncGenerator<string> {
+  const key = process.env.NVIDIA_API_KEY;
+  if (!key) throw new Error("NVIDIA_API_KEY is not set");
+
+  const res = await fetchWithRateLimitRetry(`${NVIDIA_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: NVIDIA_MODEL,
+      messages: nvidiaMessages(opts),
+      temperature: opts.temperature,
+      max_tokens: opts.maxTokens + HOSTED_REASONING_HEADROOM,
+      response_format: nvidiaResponseFormat(opts.jsonSchema),
+      stream: true,
+      stream_options: { include_usage: true },
+    }),
+  });
+  if (res.status === 429 || res.status === 503) throw new RemoteProviderRateLimitedError("nvidia", await res.text());
+  if (!res.ok || !res.body) {
+    throw new Error(`NVIDIA stream ${res.status}: ${res.body ? await res.text() : "no body"}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      let json: {
+        id?: string;
+        choices?: { delta?: { content?: string } }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      try {
+        json = JSON.parse(payload);
+      } catch {
+        continue; // partial JSON across chunks
+      }
+      const delta = json.choices?.[0]?.delta?.content;
+      if (delta) yield delta;
+      if (json.usage) opts.onUsage?.(nvidiaUsageFrom(json));
+    }
+  }
 }
 
 interface OllamaChatResponse {

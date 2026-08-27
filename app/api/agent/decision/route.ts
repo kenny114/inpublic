@@ -32,12 +32,13 @@ export async function POST(request: Request) {
   }
 
   const modelProvider = providerFor(VISUAL_AGENT_MODEL);
-  // Ollama is a free local process with no cost/rate-limit exposure to
-  // protect — the billing guard exists for the cloud providers it was built
-  // for (see lib/server/provider-guard.ts's provider_rate_cards lookup),
-  // which have no row for a local model and would 503 with rate_card_missing.
+  // Ollama is a free local process, and neither Groq nor NVIDIA has a
+  // provider_rate_cards row (see lib/server/provider-guard.ts) — none of the
+  // three has cost/rate-limit exposure the billing guard was built to
+  // protect, and routing any of them through it would 503 with
+  // rate_card_missing.
   let guard: GuardContext | null = null;
-  if (modelProvider !== "ollama") {
+  if (modelProvider !== "ollama" && modelProvider !== "groq" && modelProvider !== "nvidia") {
     const guarded = await guardProviderRequest(request, {
       feature: "visual-agent",
       provider: modelProvider,

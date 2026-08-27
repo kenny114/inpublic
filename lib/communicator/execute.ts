@@ -23,6 +23,8 @@ export interface CommunicationExecution {
 export interface ExecuteOptions {
   world: WorldState;
   dispatcher: VisualActionDispatcher;
+  visualEstablished: boolean;
+  shapeIntent?: typeof shapeVisualIntent;
   onShapingUsage?: (usage: CompletionUsage) => void;
 }
 
@@ -57,6 +59,13 @@ export async function executeCommunicationDecision(
     ...(intent.spatial ? { spatial: intent.spatial } : {}),
   };
   if (decision.type === "recompose") {
+    if (!options.visualEstablished) {
+      return {
+        status: "noop",
+        reason: "No existing visual expression is available to recompose. Establish the visual world first.",
+        presentationIntent: presentation,
+      };
+    }
     const result = await options.dispatcher.dispatch({ type: "recompose_expression", presentation });
     return {
       status: result.status,
@@ -67,7 +76,7 @@ export async function executeCommunicationDecision(
   }
 
   const { scope: _unvalidatedScope, emphasis: _unvalidatedEmphasis, ...meaningIntent } = intent;
-  const meaning = await shapeVisualIntent(
+  const meaning = await (options.shapeIntent ?? shapeVisualIntent)(
     { ...meaningIntent, ...(presentation.scope ? { scope: presentation.scope } : {}) },
     { world: options.world, onUsage: options.onShapingUsage },
   );

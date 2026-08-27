@@ -42,11 +42,11 @@ export async function POST(req: Request) {
   const recentContext = sanitizeRecentContext(body.recentContext);
 
   const modelProvider = providerFor(EXPRESSION_MODEL);
-  // Ollama is a free local process — no cost/rate-limit exposure to protect,
-  // and provider_rate_cards has no row for a local model (see
-  // app/api/agent/decision/route.ts for the same reasoning).
+  // Ollama is a free local process, and neither Groq nor NVIDIA has a
+  // provider_rate_cards row — none has cost/rate-limit exposure to protect
+  // (see app/api/agent/decision/route.ts for the same reasoning).
   let guard: GuardContext | null = null;
-  if (modelProvider !== "ollama") {
+  if (modelProvider !== "ollama" && modelProvider !== "groq" && modelProvider !== "nvidia") {
     const guarded = await guardProviderRequest(req, {
       feature: "expression-engine",
       provider: modelProvider,

@@ -15,6 +15,11 @@ export {
   VisualCommunicationIntentSchema,
   VisualFormSchema,
   CommunicationContextSchema,
+  CommunicationStateSchema,
+  CommunicationStageSchema,
+  SemanticDeltaSummarySchema,
+  VisualDeltaSummarySchema,
+  TransformationCandidateSchema,
 } from "./types";
 export type {
   CommunicationDecision,
@@ -26,4 +31,19 @@ export type {
   CommunicationRunResult,
   CommunicationRunTrace,
   CommunicationStepTrace,
+  CommunicationState,
+  CommunicationStage,
+  CommunicationOutcome,
+  SemanticDeltaSummary,
+  VisualDeltaSummary,
+  TransformationCandidate,
 } from "./types";
+export {
+  deriveStage,
+  deriveTransformationCandidate,
+  initialCommunicationState,
+  meaningfulVisualExists,
+  summarizeSemanticDelta,
+  summarizeVisualDelta,
+  visibleSemanticEntityIds,
+} from "./state";
