@@ -179,13 +179,15 @@ export interface AgentStepTrace {
 export interface AgentRunTrace {
   instruction: string;
   budget: number;
+  modelCalls: number;
   steps: AgentStepTrace[];
   presence: AgentPresenceTraceEvent[];
 }
 
 export interface AgentPresenceTraceEvent {
   step: number;
-  phase: "run_started" | "observation_ready" | "decision_started" | "action_started" | "action_completed" | "run_finished";
+  phase: "run_started" | "observation_ready" | "decision_started" | "decision_completed" | "action_started" | "action_completed" | "reobservation_completed" | "run_finished";
+  atMs: number;
   state: AgentPresenceState;
   outcome?: AgentRunResult["status"];
 }
@@ -205,6 +207,7 @@ interface AgentRunResultBase {
 export type AgentRunResult =
   | (AgentRunResultBase & { status: "completed" })
   | (AgentRunResultBase & { status: "blocked"; reason: string })
+  | (AgentRunResultBase & { status: "cancelled"; reason: string })
   | (AgentRunResultBase & { status: "step_limit" })
   | (AgentRunResultBase & { status: "stalled"; reason: string });
 
@@ -216,6 +219,8 @@ export interface VisualAgentRunOptions {
 export interface VisualAgent {
   run(instruction: string, options?: VisualAgentRunOptions): Promise<AgentRunResult>;
   isRunning(): boolean;
+  /** Stops future decisions/actions; an action already in flight is allowed to settle and remains valid. */
+  cancel(reason?: string): boolean;
 }
 
 export interface PreviousAgentTurn {

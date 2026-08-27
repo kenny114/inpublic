@@ -40,6 +40,24 @@ export type LogEvent =
   | { t: number; type: "transcript"; text: string; rawTranscript?: string; normalizedTranscript?: string; displayTranscript?: string }
   | {
       t: number;
+      type: "interaction";
+      event: "routed" | "running" | "completed" | "cancelled" | "failed";
+      thoughtId: string;
+      route: "express" | "manipulate" | "present" | "ignore";
+      reason: string;
+      speechFinalToRouteMs: number;
+      speechFinalToFirstVisualChangeMs?: number;
+      expressRouteToFirstVisualChangeMs?: number;
+      agentRouteToFirstDecisionMs?: number;
+      agentDecisionToActionResultMs?: number;
+      agentActionToReobservationMs?: number;
+      totalAgentRunMs?: number;
+      routingModelCalls: number;
+      modelCalls: number;
+      agentSteps: number;
+    }
+  | {
+      t: number;
       type: "thought-boundary";
       reason:
         | "terminal_complete"

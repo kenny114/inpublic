@@ -13,6 +13,7 @@
 - Expression's versioned persistence schema and validation: `lib/expression/persistence.ts`; Session carries its output as `PersistedSession.expressionState` but must not interpret entity-resolution semantics.
 - Exact-id semantic action primitives: `lib/expression/actions.ts`. Geometry-free public action validation and semantic/presentation routing: `lib/visual-actions/`.
 - Bounded observe-decide-act orchestration, compact model context, strict decisions, result feedback, and stop behavior: `lib/agent/`.
+- Settled-input routing between direct Expression and world-aware Agent, interruption/coalescing policy, and end-to-end interaction timing: `lib/interaction/`.
 - Application wiring: `components/Board.tsx`; do not add new domain logic there.
 
 ## Dependency rules
@@ -24,5 +25,7 @@ LLMs produce semantic intent, never raw canvas geometry. Meaning and state remai
 Agent may depend on WorldState types, ScenePlan identity, CanvasObservation, and the VisualAction dispatcher. Meaning, Expression, Canvas, and VisualAction must not depend on Agent. Agent decisions contain one existing VisualAction or a terminal state; the deterministic loop must re-observe after every action, enforce a hard budget, and return a structured terminal result. Provider prompting stays separate from loop execution. Continuous speech retains the direct Expression path.
 
 Agent may emit lifecycle state and semantic presence targets through the Canvas-owned presence port. It must not resolve geometry. Presence must remain absent from WorldState, ScenePlan, CanvasObservation revisions, VisualAction, persistence, editor tools, cursor state, collaborators, and undo. Presence signals are deterministic loop facts and cannot add a provider call or delay action execution.
+
+LiveInteraction may depend on Expression's live entry and Agent, but neither lower layer may depend on LiveInteraction. It owns routing only: uncertain/new meaning defaults to direct Expression, while explicit existing-world manipulation/presentation uses Agent. Routing must remain model-free unless measured evidence justifies another call. Interim speech must not enter LiveInteraction or Agent. Human input may cancel stale agent work; cancellation preserves already-applied valid state, stops future work, and clears presence.
 
 Before adding a substantial capability, read `/planning/CONTEXT.md`, define its owner, and write a spec or ADR when the change establishes behavior or architecture.

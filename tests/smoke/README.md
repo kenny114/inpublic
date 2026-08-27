@@ -8,15 +8,17 @@ E2E framework.
 Run: `npm run test:smoke` (starts `next dev` on port 3100 automatically if
 not already running).
 
-## Why every test uses `window.inpublic.express({ delta })`
+## Why tests use deterministic development seams
 
-`lib/expression/entry.ts`'s `express({ delta })` path skips meaning
+Most tests use `lib/expression/entry.ts`'s `express({ delta })` path, which skips meaning
 extraction entirely and feeds structured meaning straight into the world
 fold — no Deepgram connection, no LLM call, fully deterministic. It's the
 same debug hook `window.inpublic.express` exposes (`components/Board.tsx`,
 dev-only), and it drives the *real* pipeline: world fold → intent →
 composition/clean/presentation → compose → evaluate/repair → RenderPatch →
-Excalidraw. Nothing here is a mock of the engine.
+Excalidraw. Nothing here is a mock of the engine. Agent and live-interaction
+tests inject scripted decisions through their development seams; they exercise
+the real bounded loop and dispatcher without a paid provider.
 
 ## What's covered
 
@@ -46,6 +48,11 @@ Excalidraw. Nothing here is a mock of the engine.
 - `visual-agent.spec.ts` — the bounded agent consumes the live world/canvas,
   executes one scripted geometry-free action, re-observes the resulting real
   canvas, and stops without a paid model call.
+- `agent-presence.spec.ts` — mounted lifecycle and semantic attention remain
+  ephemeral, non-interfering, and cleaned up.
+- `live-interaction.spec.ts` — one scenario exercises both settled branches:
+  direct Expression for new meaning, then visible Agent/VisualAction execution
+  for an existing-world correction, with unchanged viewport and idle cleanup.
 
 ## What's NOT covered, and why
 
@@ -55,6 +62,6 @@ instead uses the existing development replay authorization plus a narrow
 `restore=1` flag to drive Board's real `loadSession`/`restoreSession` path
 against real IndexedDB with guest cloud sync disabled.
 
-Live Deepgram speech and any live LLM call are out of scope by design (per
-the strip-down prompt) — `express({ delta })` is the correct substitute, not
-a shortcut around them.
+Live Deepgram speech and any live LLM call remain out of scope by design.
+Structured meaning and scripted decisions are the deterministic substitutes,
+not shortcuts around the production orchestration paths.

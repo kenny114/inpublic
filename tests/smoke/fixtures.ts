@@ -71,13 +71,14 @@ declare global {
         };
       }>;
       runVisualAgent(instruction: string, options?: { maxSteps?: number; decisions?: unknown[]; decisionDelayMs?: number }): Promise<{
-        status: "completed" | "blocked" | "step_limit" | "stalled";
+        status: "completed" | "blocked" | "step_limit" | "stalled" | "cancelled";
         steps: number;
         reason?: string;
         trace: {
           presence: Array<{
             step: number;
             phase: string;
+            atMs: number;
             state: { status: string; target?: { entityId: string }; gesture?: string };
             outcome?: string;
           }>;
@@ -96,6 +97,39 @@ declare global {
           canvas: SmokeCanvasObservation;
         };
       }>;
+      interact(text: string, options?: { meaning?: unknown; maxSteps?: number; decisions?: unknown[]; decisionDelayMs?: number }): Promise<{
+        status: "completed" | "cancelled" | "failed";
+        intent: "express" | "manipulate" | "present" | "ignore";
+        reason?: string;
+        trace: {
+          status: "routed" | "running" | "completed" | "cancelled" | "failed";
+          routingReason: string;
+          agentStatus?: string;
+          metrics: {
+            speechFinalToRouteMs: number;
+            speechFinalToFirstVisualChangeMs?: number;
+            expressRouteToFirstVisualChangeMs?: number;
+            agentRouteToFirstDecisionMs?: number;
+            agentDecisionToActionResultMs?: number;
+            agentActionToReobservationMs?: number;
+            totalAgentRunMs?: number;
+            routingModelCalls: 0;
+            modelCalls: number;
+            agentSteps: number;
+          };
+        };
+      }>;
+      interactionLast(): {
+        intent: string;
+        status: string;
+        metrics: {
+          speechFinalToFirstVisualChangeMs?: number;
+          routingModelCalls: 0;
+          modelCalls: number;
+          agentSteps: number;
+        };
+      } | null;
+      interactionTraces(): Array<{ intent: string; status: string }>;
       agentLastRun(): { status: string; steps: number } | null;
       agentPresence(): {
         status: string;

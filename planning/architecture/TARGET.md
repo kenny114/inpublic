@@ -3,9 +3,35 @@
 The target is a live visual expressive agent with a closed observation/action loop. This is a conceptual ownership map only.
 
 ```text
-                Instruction
-                     │
-                     ▼
+                       LIVE INPUT
+                           │
+                 ┌─────────┴─────────┐
+                 ▼                   ▼
+              interim              settled
+                 │                   │
+                 ▼                   ▼
+        fast live expression  interaction routing
+                                     │
+                         ┌───────────┴───────────┐
+                         ▼                       ▼
+                    Expression               VisualAgent ◄── WorldState
+                         │                       ▲
+                         │                       └──────── CanvasObservation
+                         │                       │
+                         │                       ▼
+                         │                  VisualAction
+                         └───────────┬───────────┘
+                                     ▼
+                                   Canvas
+                                     │
+                                     ▼
+                                 Excalidraw
+                                     │
+                                     ▼
+                            CanvasObservation
+
+World-aware loop detail:
+
   WorldState ────► VisualAgent ◄──── CanvasObservation ─────┐
                    │       │                                │
  lifecycle +       │       ▼                                │
@@ -36,7 +62,7 @@ The target is a live visual expressive agent with a closed observation/action lo
             CanvasObservation ─────────────┘
 ```
 
-The first bounded Agent loop now exists for explicit instructions. It reads compact semantic and structural canvas views, chooses one strict geometry-free action, delegates execution, re-observes, and stops under deterministic budgets/stall rules. The existing `MeaningDelta` → `WorldState` → visual intent → deterministic planning → `ScenePlan` → `RenderPatch` path and Canvas focus execution remain the only mutation routes beneath it.
+The bounded Agent loop is now invoked by settled live routing for explicit existing-world instructions. It reads compact semantic and structural canvas views, chooses one strict geometry-free action, delegates execution, re-observes, and stops under deterministic budgets/stall/cancellation rules. Ordinary speech stays on the existing `MeaningDelta` → `WorldState` → visual intent → deterministic planning → `ScenePlan` → `RenderPatch` path. Those paths share one WorldState and the existing Canvas mutation routes.
 
 Session now durably owns both the versioned Expression `WorldState` snapshot and canvas/project snapshot. They restore independently from one project version. A future observation/action loop may compare those truths, but current restoration performs no reconciliation.
 
@@ -60,7 +86,11 @@ Owns Excalidraw integration, scene application, observation, viewport, canvas id
 
 ### Agent
 
-Owns observe, compact context, decision validation, action selection, bounded continuation, ActionResult feedback, lifecycle signals, trace, and stop orchestration. It may identify a presence target semantically but does not own target geometry or display timing. It reuses Meaning, Expression, VisualAction, and Canvas rather than duplicating them. Future work may add product invocation policy, richer supported actions, evaluation, and deliberate drift handling without moving those lower-layer responsibilities into Agent.
+Owns observe, compact context, decision validation, action selection, bounded continuation, cancellation, ActionResult feedback, lifecycle signals, trace, and stop orchestration. It may identify a presence target semantically but does not own target geometry or display timing. It reuses Meaning, Expression, VisualAction, and Canvas rather than duplicating them. Future work may add richer supported actions and deliberate drift handling without moving those lower-layer responsibilities into Agent.
+
+### Live Interaction
+
+Owns settled-input routing between direct Expression and world-aware Agent, human-priority supersession, one-active/one-latest-pending policy, and cross-path interaction metrics. It does not interpret interim speech, extract meaning, choose geometry, dispatch actions, or own WorldState.
 
 ### Session
 
@@ -70,4 +100,4 @@ Owns durable project and session state, including versioned Expression semantic 
 
 Owns UI and wiring only. `Board.tsx` remains wiring during gradual extraction, not a destination for new domain logic.
 
-Generic drift repair, semantic recovery from canvas, continuous-speech agent routing, multi-agent roles, background autonomy, and model-generated action batches remain outside the target until separately specified. The implemented loop is explicit, bounded, and instruction-scoped.
+Generic drift repair, semantic recovery from canvas, multi-agent roles, background autonomy, and model-generated action batches remain outside the target until separately specified. The implemented routing and loop are settled-input scoped, conservative, cancellable, and bounded.

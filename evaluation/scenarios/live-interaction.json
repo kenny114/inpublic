@@ -1,0 +1,37 @@
+[
+  {
+    "id": "build",
+    "category": "build",
+    "transcript": "A release has three supports: testing, observability, and rollback.",
+    "expectedRoute": "express",
+    "expected": "One direct Expression turn creates the concept and its supporting ideas without an agent call."
+  },
+  {
+    "id": "connect",
+    "category": "connect",
+    "transcript": "Connect the second problem to the cost issue.",
+    "expectedRoute": "manipulate",
+    "expected": "The agent resolves the intended existing identities and adds exactly one relationship."
+  },
+  {
+    "id": "correct",
+    "category": "correct",
+    "transcript": "Change Alice to Alicia.",
+    "expectedRoute": "manipulate",
+    "expected": "The existing Alice entity is updated in place and no duplicate person appears."
+  },
+  {
+    "id": "remove",
+    "category": "remove",
+    "transcript": "Remove the second reason.",
+    "expectedRoute": "manipulate",
+    "expected": "Only the referenced reason is removed from semantic and visual state."
+  },
+  {
+    "id": "continue",
+    "category": "continue naturally",
+    "transcript": "The checkout flow has a payment problem. Connect this to the security issue.",
+    "expectedRoute": "mixed",
+    "expected": "New meaning uses Expression, a later reference uses the agent, and a manual canvas move is visible to agent observation."
+  }
+]

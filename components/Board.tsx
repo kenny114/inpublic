@@ -138,6 +138,7 @@ import {
   type VisualAgent,
 } from "@/lib/agent";
 import { requestVisualAgentDecision } from "@/lib/agent/client";
+import { createLiveInteractionOrchestrator, type LiveInteractionInput, type LiveInteractionOrchestrator } from "@/lib/interaction";
 import { createVisualActionDispatcher } from "@/lib/visual-actions";
 import { ExpressionLiveController, type ExpressionLiveUpdate } from "@/lib/expression/live";
 import { createExpressionEntry, type ExpressionEntry, type ExpressRequest } from "@/lib/expression/entry";
@@ -725,6 +726,7 @@ export default function Board({
   const applyExpressionUpdateRef = useRef<((update: ExpressionLiveUpdate) => void) | null>(null);
   const expressionControllerRef = useRef<ExpressionLiveController | undefined>(undefined);
   const visualAgentRef = useRef<VisualAgent | undefined>(undefined);
+  const liveInteractionRef = useRef<LiveInteractionOrchestrator | undefined>(undefined);
   const lastVisualAgentRunRef = useRef<AgentRunResult | null>(null);
   /**
    * The agent entry point (lib/expression/entry.ts), over the SAME controller
@@ -2366,6 +2368,7 @@ export default function Board({
    * that" erased the whole page. Undo is now a pop off the operation history.
    */
   const doUndo = useCallback(() => {
+    liveInteractionRef.current?.cancel("human undo");
     const board = boardRef.current;
     const op = board.lastMeaningful();
     if (!op) {
@@ -2390,6 +2393,7 @@ export default function Board({
 
   /** "Moving on to the next part" — turn to a clean sheet. */
   const doClear = useCallback(() => {
+    liveInteractionRef.current?.cancel("human clear");
     // Never delete. The finished page stays where it is, dimmed, so I can pan
     // back to it during the video.
     elementsRef.current = elementsRef.current.map((el) =>
@@ -2753,6 +2757,7 @@ export default function Board({
       undo.removedElements = removedElements;
       recordOperation("expression_engine", undo, { sourceText: trace.world.interpretation ?? "" });
       commit();
+      liveInteractionRef.current?.noteVisualChange(update.consumedIds, Date.now());
       structureWritten = true;
 
       const syncMs = Date.now() - syncStartedAt;
@@ -2884,14 +2889,44 @@ export default function Board({
   }, []);
   settleExpressionPendingRef.current = settleExpressionPending;
 
-  /** Buffers this settled thought into the Expression Engine's debounced cadence — see lib/expression/live.ts. */
-  const handleSettledExpression = useCallback((thought: SettledThought) => {
-    expressionPendingIdsRef.current.add(thought.id);
-    expressionSubmittedAtRef.current.set(thought.id, Date.now());
+  /** Direct branch selected by LiveInteractionOrchestrator; retains Expression's existing coalescing controller. */
+  const submitSettledExpression = useCallback((input: LiveInteractionInput) => {
+    expressionPendingIdsRef.current.add(input.id);
+    expressionSubmittedAtRef.current.set(input.id, Date.now());
     setExpressionPending(true);
-    log({ type: "expression", event: "submitted", thoughtId: thought.id, text: thought.text });
-    expressionControllerRef.current?.submit({ id: thought.id, text: thought.text });
+    log({ type: "expression", event: "submitted", thoughtId: input.id, text: input.text });
+    return expressionControllerRef.current!.express({
+      id: input.id,
+      text: input.text,
+      delta: input.meaning,
+      source: "human_speech",
+    });
   }, [log]);
+
+  if (liveInteractionRef.current === undefined && visualAgentRef.current) {
+    liveInteractionRef.current = createLiveInteractionOrchestrator({
+      express: submitSettledExpression,
+      agent: visualAgentRef.current,
+      onTrace: (trace) => log({
+        type: "interaction",
+        event: trace.status,
+        thoughtId: trace.id,
+        route: trace.intent,
+        reason: trace.reason ?? trace.routingReason,
+        ...trace.metrics,
+      }),
+    });
+  }
+
+  /** The only settled-speech routing entry. Interim speech never calls this. */
+  const handleSettledInteraction = useCallback((thought: SettledThought) => {
+    void liveInteractionRef.current?.submit({
+      id: thought.id,
+      text: thought.text,
+      settledAtMs: thought.settledAt,
+      source: "speech",
+    });
+  }, []);
 
 
   /**
@@ -3044,7 +3079,7 @@ export default function Board({
             await writeLive(thought.text, true, isLastVisibleWrite ? finalTiming : undefined);
             stampThoughtInk(thought.id);
             log({ type: "v2", event: "pop-suppressed" });
-            if (xeEnabled) handleSettledExpression(thought);
+            if (xeEnabled) handleSettledInteraction(thought);
           }
           if (v3PendingText) await writeLive(v3PendingText, false, finalTiming);
         })();
@@ -3076,7 +3111,7 @@ export default function Board({
         });
       }
     },
-    [correct, log, now, runVoiceCommand, stampThoughtInk, v2Enabled, writeLive],
+    [correct, handleSettledInteraction, log, now, runVoiceCommand, stampThoughtInk, v2Enabled, writeLive],
   );
 
   const flushPresentationBoundary = useCallback(async () => {
@@ -3125,9 +3160,9 @@ export default function Board({
       await writeLive(thought.text, true);
       stampThoughtInk(thought.id);
       log({ type: "v2", event: "pop-suppressed" });
-      if (xeEnabled) handleSettledExpression(thought);
+      if (xeEnabled) handleSettledInteraction(thought);
     }
-  }, [handleSettledExpression, log, now, stampThoughtInk, writeLive, xeEnabled]);
+  }, [handleSettledInteraction, log, now, stampThoughtInk, writeLive, xeEnabled]);
 
   const handleInterim = useCallback(
     (text: string, audioEndMs: number, streamEpoch: number, confidence = 0, timing?: DeepgramResultTiming) => {
@@ -3219,7 +3254,7 @@ export default function Board({
         // for a settled WORD — two consecutive interims agreeing, which the
         // block above has already established and which costs ~100-300ms
         // rather than the clause boundary plus debounce plus model call that
-        // handleSettledExpression pays. Nothing is drawn unless the reflex
+        // handleSettledInteraction pays. Nothing is drawn unless the reflex
         // is certain, and the settled thought still follows behind it and
         // still owns the structure. This is what makes "as soon as I start
         // speaking" and "when I say 'I'" literally true instead of
@@ -3657,6 +3692,7 @@ export default function Board({
   }, [demoStudio, guest]);
 
   useEffect(() => () => {
+    liveInteractionRef.current?.cancel("board unmounted");
   }, []);
 
   /** Put a saved session back on the canvas. */
@@ -3833,7 +3869,7 @@ export default function Board({
         }
         const lines = Array.isArray(input) ? input : [input];
         lines.forEach((text, i) =>
-          handleSettledExpression({ id: `spoken-${Date.now()}-${i}`, text } as SettledThought),
+          handleSettledInteraction({ id: `spoken-${Date.now()}-${i}`, text, settledAt: Date.now() } as SettledThought),
         );
         // Long enough for the controller's debounce plus one model round-trip.
         await new Promise((resolve) => setTimeout(resolve, 6000));
@@ -4009,6 +4045,30 @@ export default function Board({
         lastVisualAgentRunRef.current = result;
         return result;
       },
+      /** Deterministic/live settled-input router. `meaning` and `decisions` are test seams only. */
+      interact: async (
+        text: string,
+        options: { meaning?: LiveInteractionInput["meaning"]; maxSteps?: number; decisions?: unknown[]; decisionDelayMs?: number } = {},
+      ) => {
+        const scripted = options.decisions ? createScriptedDecisionProvider(options.decisions) : undefined;
+        return liveInteractionRef.current!.submit({
+          id: `interaction-${Date.now()}`,
+          text,
+          settledAtMs: Date.now(),
+          source: "typed",
+          meaning: options.meaning,
+        }, {
+          maxSteps: options.maxSteps,
+          decisionProvider: scripted
+            ? async (context) => {
+                if (options.decisionDelayMs) await sleep(Math.max(0, options.decisionDelayMs));
+                return scripted(context);
+              }
+            : undefined,
+        });
+      },
+      interactionLast: () => liveInteractionRef.current?.lastTrace() ?? null,
+      interactionTraces: () => liveInteractionRef.current?.traces() ?? [],
       /** Most recent structured agent trace; no hidden model reasoning. */
       agentLastRun: () => lastVisualAgentRunRef.current,
       /** Canvas-owned ephemeral presence. Coordinates here are debug output, never model input. */
@@ -4043,7 +4103,7 @@ export default function Board({
     doClear,
     doUndo,
     drainRenderQueue,
-    handleSettledExpression,
+    handleSettledInteraction,
     markPerceivedStall,
     writeLive,
     xeEnabled,

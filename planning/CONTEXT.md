@@ -6,7 +6,7 @@ InPublic turns meaning into live visual expression. The product goal is a live v
 
 Today the primary runtime is speech through Deepgram, wired by `Board`, into the Expression Engine and then Excalidraw. The engine's durable foundation is semantic model output, `WorldState`, deterministic geometry, incremental `RenderPatch` rendering, an evaluate/repair layer, and a centralized text-model provider.
 
-Current structural canvas perception is consumed by one bounded visual-agent loop for explicit instructions. `WorldState` is durable across reload/project reopen. The Agent sees compact WorldState plus actual CanvasObservation, returns one strict geometry-free `VisualAction` or a terminal decision, executes through the deterministic dispatcher, re-observes, and stops under budget/stall rules. Canvas now renders that loop's ephemeral lifecycle and semantic-target attention without adding canvas elements, semantic state, editor state, or model calls. Known gaps are: no generic Canvas/WorldState reconciliation; no semantic placement constraints; no continuous-speech agent policy; no external agent bridge; `Board.tsx` still owns too much wiring; visual diff caches do not survive reload; and browser coverage remains intentionally focused.
+Settled live input now enters one `LiveInteractionOrchestrator`. Ordinary new meaning retains the coalesced direct Expression path; explicit existing-world manipulation, correction, inspection, and presentation enter the bounded VisualAgent. Routing is deterministic and model-free. Interim speech keeps immediate ink, reflex, and anticipation and never invokes the full agent. One agent run plus one latest pending instruction is allowed; newer human input cancels stale work without rolling back valid applied actions. `WorldState` remains durable across reload/project reopen, continuing agent steps re-observe actual Canvas state, and Canvas renders ephemeral lifecycle/semantic attention without adding canvas elements, semantic state, editor state, or model calls. Known gaps are: no generic Canvas/WorldState reconciliation; no semantic placement constraints; conservative command phrasing coverage; no external agent bridge; `Board.tsx` still owns too much wiring; visual diff caches do not survive reload; and browser coverage remains intentionally focused.
 
 The target conceptual ownership boundaries are Speech, Meaning, Expression, Canvas, Agent, Session, and App. Define ownership and dependency direction before extracting code. Do not move the repository wholesale into those names.
 
@@ -27,3 +27,6 @@ The target conceptual ownership boundaries are Speech, Meaning, Expression, Canv
 - Phase 8 agent-core checkpoint commit: `ddddef7eadca4b35d4d941837b89e27fa0437e56`
 - Tag: `inpublic-agent-core-v0`
 - Phase 9 begins from that clean checkpoint.
+- Phase 9 checkpoint commit: `a9414f54ba0fa03fcf02c191c249290aade2516c`
+- Tag: `inpublic-agent-presence-v0`
+- Phase 10 begins from that clean checkpoint.

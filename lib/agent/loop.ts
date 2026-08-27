@@ -78,6 +78,7 @@ function repeatedOutcome(
 
 export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgent {
   let running = false;
+  let activeRun: { cancelled: boolean; reason: string } | null = null;
 
   const finalState = (): AgentFinalState => {
     const world = options.source.getWorld();
@@ -116,22 +117,30 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
     reason?: string,
   ): AgentRunResult => {
     const base = { status, steps, trace, final: finalState() };
-    if (status === "blocked" || status === "stalled") return { ...base, status, reason: reason ?? status };
+    if (status === "blocked" || status === "cancelled" || status === "stalled") return { ...base, status, reason: reason ?? status };
     return base as AgentRunResult;
   };
 
   return {
     isRunning: () => running,
+    cancel(reason = "superseded by newer human input") {
+      if (!activeRun || activeRun.cancelled) return false;
+      activeRun.cancelled = true;
+      activeRun.reason = reason;
+      return true;
+    },
     async run(instruction: string, runOptions: VisualAgentRunOptions = {}): Promise<AgentRunResult> {
       const text = instruction.trim();
       const maxSteps = budget(runOptions.maxSteps);
-      const trace: AgentRunTrace = { instruction: text.slice(0, 2000), budget: maxSteps, steps: [], presence: [] };
+      const trace: AgentRunTrace = { instruction: text.slice(0, 2000), budget: maxSteps, modelCalls: 0, steps: [], presence: [] };
       if (running) return result("blocked", 0, trace, "visual agent is already running");
       if (!text || text.length > 2000) return result("blocked", 0, trace, "instruction must contain 1 to 2000 characters");
       const provider = runOptions.decisionProvider ?? options.decisionProvider;
       if (!provider) return result("blocked", 0, trace, "no decision provider is configured");
 
       running = true;
+      const runState = { cancelled: false, reason: "cancelled" };
+      activeRun = runState;
       let actions = 0;
       let outcome: AgentRunResult["status"] = "blocked";
       let previousTurn: PreviousAgentTurn | undefined;
@@ -143,17 +152,20 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
         step = actions + 1,
       ) => {
         options.presence?.setState(state);
-        trace.presence.push({ step, phase, state });
+        trace.presence.push({ step, phase, atMs: Date.now(), state });
       };
       const finish = (status: AgentRunResult["status"], reason?: string): AgentRunResult => {
         outcome = status;
         return result(status, actions, trace, reason);
       };
+      const cancelled = (): AgentRunResult | null => runState.cancelled ? finish("cancelled", runState.reason) : null;
       try {
         signal("run_started", { status: "observing", gesture: "none" }, 0);
         // One final decision is allowed after the action budget so the model
         // can confirm completion. A further act is not executed.
         for (let decisionIndex = 0; decisionIndex <= maxSteps; decisionIndex += 1) {
+          const beforeObservation = cancelled();
+          if (beforeObservation) return beforeObservation;
           signal("observation_ready", { status: "observing", gesture: "none" });
           const world = options.source.getWorld();
           const scene = options.source.getScene();
@@ -170,7 +182,10 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
             remainingSteps: Math.max(0, maxSteps - actions),
           });
           signal("decision_started", { status: "thinking", gesture: "none" });
+          trace.modelCalls += 1;
           const attempt = await requestValidatedDecision(provider, context);
+          const afterDecision = cancelled();
+          if (afterDecision) return afterDecision;
           if (attempt.status !== "valid") {
             const stepTrace: AgentStepTrace = {
               step: actions + 1,
@@ -185,6 +200,7 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
           }
 
           const decision = attempt.decision;
+          signal("decision_completed", { status: "thinking", gesture: "none" });
           const stepTrace: AgentStepTrace = { step: actions + 1, observed, decision };
           trace.steps.push(stepTrace);
           if (decision.type === "done") return finish("completed");
@@ -193,6 +209,8 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
 
           const acting = actionPresence(decision.action, world);
           signal("action_started", acting);
+          const beforeAction = cancelled();
+          if (beforeAction) return beforeAction;
           const actionResult = await options.dispatcher.dispatch(decision.action);
           actions += 1;
           const feedback = actionFeedback(actionResult);
@@ -210,8 +228,12 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
             return finish("blocked", "canvas observation became unavailable after action execution");
           }
           const resulting = agentRevisions(resultingWorld, resultingScene, resultingObservation);
+          signal("reobservation_completed", { status: "observing", gesture: "none" }, actions);
           stepTrace.actionResult = feedback;
           stepTrace.resulting = resulting;
+
+          const afterAction = cancelled();
+          if (afterAction) return afterAction;
 
           const observedKey = JSON.stringify(observed);
           if (
@@ -239,9 +261,11 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
         trace.presence.push({
           step: actions,
           phase: "run_finished",
+          atMs: Date.now(),
           state: { status: "idle", gesture: "none" },
           outcome,
         });
+        if (activeRun === runState) activeRun = null;
         running = false;
       }
     },
