@@ -5,12 +5,14 @@
 
 import type { CanvasObservation, CanvasRuntime } from "../canvas";
 import type { SemanticVisualAction } from "../expression/actions";
-import type { SemanticActionExecution } from "../expression/pipeline";
+import type { ExpressionTrace, SemanticActionExecution } from "../expression/pipeline";
 import { isLiveEntityStatus, type ScenePlan, type WorldState } from "../expression/schemas";
+import type { PresentationIntent } from "../expression/presentation/intent";
 import { VisualActionSchema, type FocusVisualAction, type VisualAction, type VisualActionType } from "./schema";
 
 export interface SemanticActionRuntime {
   executeSemanticAction(action: SemanticVisualAction): Promise<SemanticActionExecution>;
+  recomposeExpression(presentation: PresentationIntent): Promise<SemanticActionExecution>;
   getWorld(): WorldState;
   getScene(): ScenePlan;
 }
@@ -26,6 +28,7 @@ interface ActionResultBase {
   before: VisualActionSnapshot;
   after: VisualActionSnapshot;
   reason: string;
+  expressionTrace?: ExpressionTrace;
 }
 
 export type VisualActionResult =
@@ -59,6 +62,7 @@ function actionTypeOf(input: unknown): VisualActionType | "unknown" {
     "relate_entities",
     "remove_relation",
     "focus",
+    "recompose_expression",
   ]);
   return typeof type === "string" && supported.has(type as VisualActionType)
     ? (type as VisualActionType)
@@ -206,14 +210,33 @@ export function createVisualActionDispatcher(
       const action: VisualAction = parsed.data;
       try {
         if (action.type === "focus") return presentationFocus(action, runtime, canvas, before);
+        if (action.type === "recompose_expression") {
+          const result = await runtime.recomposeExpression(action.presentation);
+          const after = snapshot(runtime, canvas);
+          if (result.status === "applied") {
+            return { status: "applied", category: "presentation", actionType: action.type, reason: result.reason, before, after, expressionTrace: result.trace };
+          }
+          if (result.status === "noop") {
+            return { status: "noop", category: "presentation", actionType: action.type, reason: result.reason, before, after, expressionTrace: result.trace };
+          }
+          return {
+            status: "rejected",
+            category: "presentation",
+            code: result.code,
+            actionType: action.type,
+            reason: result.reason,
+            before,
+            after,
+          };
+        }
 
         const result = await runtime.executeSemanticAction(action);
         const after = snapshot(runtime, canvas);
         if (result.status === "applied") {
-          return { status: "applied", category: "semantic", actionType: action.type, reason: result.reason, before, after };
+          return { status: "applied", category: "semantic", actionType: action.type, reason: result.reason, before, after, expressionTrace: result.trace };
         }
         if (result.status === "noop") {
-          return { status: "noop", category: "semantic", actionType: action.type, reason: result.reason, before, after };
+          return { status: "noop", category: "semantic", actionType: action.type, reason: result.reason, before, after, expressionTrace: result.trace };
         }
         return {
           status: "rejected",
@@ -228,7 +251,7 @@ export function createVisualActionDispatcher(
         const after = snapshot(runtime, canvas);
         return {
           status: "rejected",
-          category: action.type === "focus" ? "presentation" : "semantic",
+          category: action.type === "focus" || action.type === "recompose_expression" ? "presentation" : "semantic",
           code: "runtime_error",
           actionType: action.type,
           reason: error instanceof Error ? error.message : String(error),

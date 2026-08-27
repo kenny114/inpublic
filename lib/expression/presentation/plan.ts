@@ -28,6 +28,7 @@ import {
   type WorldState,
 } from "../schemas";
 import type { BoardSnapshot } from "../clean/snapshot";
+import type { PresentationIntent } from "./intent";
 
 /** Off-spine attachments a spine layout will tolerate before they compete. */
 const MAX_OFF_SPINE = 2;
@@ -40,6 +41,7 @@ export interface PresentationInput {
   intent: ExpressionIntent;
   composition: CompositionPlan | null;
   clean: CleanPlan | null;
+  request?: PresentationIntent;
 }
 
 function live(world: WorldState): WorldEntity[] {
@@ -121,6 +123,17 @@ function spineRelationTypes(world: WorldState, composition: CompositionPlan | nu
  * tree; everything else gathers around one subject.
  */
 function pickLayout(input: PresentationInput, keep: string[]): PresentationLayout {
+  switch (input.request?.form) {
+    case "process":
+      return "left-to-right";
+    case "causal":
+      return "vertical-spine";
+    case "comparison":
+    case "magnitude":
+    case "tension":
+    case "spatial":
+      return "central-primary";
+  }
   const ids = new Set(keep);
   const spine = input.composition?.spine ?? [];
   const types = spineRelationTypes(input.world, input.composition);
@@ -165,10 +178,14 @@ function pickSimplifications(input: PresentationInput, keep: string[], primaryId
 }
 
 export function planPresentation(input: PresentationInput): PresentationPlan {
-  const keep = input.clean?.keep ?? input.composition?.allowed ?? [];
+  const keep = input.request?.scope?.entityIds ?? input.clean?.keep ?? input.composition?.allowed ?? [];
   if (!keep.length && !input.composition?.primaryId) return EMPTY_PRESENTATION_PLAN;
 
-  const primaryId = input.clean?.primaryId ?? input.composition?.primaryId;
+  const primaryId =
+    input.request?.emphasis?.primaryEntityIds?.find((id) => keep.includes(id)) ??
+    input.clean?.primaryId ??
+    input.composition?.primaryId ??
+    keep[0];
   const spineIds = spineNodeIds(input.composition);
   const layout = pickLayout(input, keep);
   const simplifications = pickSimplifications(input, keep, primaryId, spineIds);

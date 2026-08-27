@@ -5,5 +5,5 @@ export type {
   VisualActionResult,
   VisualActionSnapshot,
 } from "./dispatcher";
-export { FocusVisualActionSchema, VisualActionSchema } from "./schema";
-export type { FocusVisualAction, VisualAction, VisualActionType } from "./schema";
+export { FocusVisualActionSchema, RecomposeExpressionVisualActionSchema, VisualActionSchema } from "./schema";
+export type { FocusVisualAction, RecomposeExpressionVisualAction, VisualAction, VisualActionType } from "./schema";

@@ -47,6 +47,7 @@ import {
   type WorldRelation,
   type WorldState,
 } from "../schemas";
+import type { PresentationIntent } from "../presentation/intent";
 
 const GAP_X = 72;
 const GAP_Y = 88;
@@ -701,6 +702,74 @@ function layoutAnnotations(placed: Map<string, Placed>, plan: ExpressionPlan): v
   }
 }
 
+/** Magnitude reads as aligned extent; comparison reads as parallel columns. */
+function layoutMagnitude(placed: Map<string, Placed>, plan: ExpressionPlan): void {
+  const rows = topLevel(placed).sort((a, b) => (a.region.order ?? 0) - (b.region.order ?? 0));
+  let y = 0;
+  for (const row of rows) {
+    row.x = 0;
+    row.y = y;
+    y += cell(row.baseH) + Math.round(GAP_Y * 0.55);
+  }
+  layoutStragglers(placed, plan, rows, Math.max(...rows.map((row) => row.w), 0) + GAP_X, 0);
+}
+
+/**
+ * Realise the tiny presentation-level spatial vocabulary. These distances
+ * are composer policy, never model output and never semantic `located_at`.
+ */
+function applyRequestedSpatialArrangement(placed: Map<string, Placed>, request: PresentationIntent | undefined): void {
+  const arrangement = request?.spatial?.arrangement;
+  if (!arrangement) return;
+  const scoped = request.scope?.entityIds;
+  const selected = topLevel(placed).filter(
+    (candidate) => !scoped?.length || (candidate.region.entityId && scoped.includes(candidate.region.entityId)),
+  );
+  if (selected.length < 2) return;
+
+  const move = (item: Placed, x: number, y: number) => {
+    const dx = x - item.x;
+    const dy = y - item.y;
+    item.x = x;
+    item.y = y;
+    for (const child of placed.values()) {
+      if (isDescendant(child, item, placed)) {
+        child.x += dx;
+        child.y += dy;
+      }
+    }
+  };
+
+  if (arrangement === "separated") {
+    let x = 0;
+    selected.forEach((item, index) => {
+      move(item, x, index % 2 === 0 ? 0 : Math.round(GAP_Y * 0.8));
+      x += cell(item.baseW) + GAP_X * 3;
+    });
+    return;
+  }
+
+  if (arrangement === "clustered") {
+    const columns = Math.ceil(Math.sqrt(selected.length));
+    const cellW = Math.max(...selected.map((item) => cell(item.baseW))) + 18;
+    const cellH = Math.max(...selected.map((item) => cell(item.baseH))) + 18;
+    selected.forEach((item, index) => {
+      move(item, (index % columns) * cellW, Math.floor(index / columns) * cellH);
+    });
+    return;
+  }
+
+  const requestedPrimary = request.emphasis?.primaryEntityIds?.[0];
+  const centre = selected.find((item) => item.region.entityId === requestedPrimary) ?? selected[0];
+  move(centre, 0, 0);
+  const others = selected.filter((item) => item !== centre);
+  const radius = arrangement === "surrounding" ? 300 : 185;
+  others.forEach((item, index) => {
+    const angle = -Math.PI / 2 + (index * Math.PI * 2) / others.length;
+    move(item, Math.round(Math.cos(angle) * radius), Math.round(Math.sin(angle) * radius));
+  });
+}
+
 // ──────────────────────────────────────────────────── post-passes
 
 /**
@@ -881,6 +950,8 @@ export interface ComposeOptions {
   previousLayout?: PresentationLayout | null;
   /** How this scene should be shown. Membership is already decided; this picks the form. */
   presentation?: PresentationPlan | null;
+  /** High-level caller preference. Geometry remains owned and resolved here. */
+  presentationIntent?: PresentationIntent;
   primaryId?: string;
   spineIds?: string[];
   demote?: string[];
@@ -1007,8 +1078,10 @@ export function compose(world: WorldState, plan: ExpressionPlan, options: Compos
       layoutFlow(placed, plan);
       break;
     case "comparison":
-    case "quantity":
       layoutPoles(placed, plan, world);
+      break;
+    case "quantity":
+      layoutMagnitude(placed, plan);
       break;
     case "hierarchy":
     case "grouping":
@@ -1024,6 +1097,7 @@ export function compose(world: WorldState, plan: ExpressionPlan, options: Compos
       break;
   }
 
+  applyRequestedSpatialArrangement(placed, options.presentationIntent);
   layoutAnnotations(placed, plan);
   honourSpatialRelations(placed, world);
   separate(placed);

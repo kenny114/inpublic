@@ -187,6 +187,11 @@ function connect(rel: WorldRelation, kind: Connection["kind"]): Connection {
   };
 }
 
+/** Public accountability helper for explicit presentation recomposition. */
+export function connectionForRelation(rel: WorldRelation, kind: Connection["kind"]): Connection {
+  return connect(rel, kind);
+}
+
 function chainRegions(ids: string[], role: Region["role"]): Region[] {
   return ids.map((id, index) => ({ id: regionId(id), role, entityId: id, order: index }));
 }
@@ -405,7 +410,7 @@ const comparison: Grammar = {
     let poles: [string, string] | null = chosen ? [chosen.a, chosen.b] : null;
 
     if (!poles) {
-      const counted = active(world).filter((e) => e.quantity && e.importance !== "detail");
+      const counted = active(world).filter((e) => e.quantity);
       if (counted.length >= 2) poles = [counted[0].id, counted[1].id];
     }
     if (!poles || !entityById(world, poles[0]) || !entityById(world, poles[1])) {

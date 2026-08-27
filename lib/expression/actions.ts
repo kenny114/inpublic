@@ -25,9 +25,14 @@ import {
   type WorldState,
 } from "./schemas";
 import { normalizeMention, recomputeImportance } from "./world/apply";
+import { PresentationIntentSchema } from "./presentation/intent";
 
 export const ExpressVisualActionSchema = z
-  .object({ type: z.literal("express"), meaning: MeaningDeltaSchema })
+  .object({
+    type: z.literal("express"),
+    meaning: MeaningDeltaSchema,
+    presentation: PresentationIntentSchema.optional(),
+  })
   .strict();
 
 export const UpdateEntityChangesSchema = z

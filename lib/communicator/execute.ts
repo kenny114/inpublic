@@ -6,8 +6,9 @@
  */
 
 import type { VisualActionDispatcher, VisualActionResult } from "../visual-actions";
-import type { WorldState } from "../expression/schemas";
+import type { MeaningDelta, WorldState } from "../expression/schemas";
 import type { CompletionUsage } from "../llm";
+import type { PresentationIntent } from "../expression/presentation/intent";
 import { shapeVisualIntent } from "./shape";
 import type { CommunicationDecision } from "./types";
 
@@ -15,6 +16,8 @@ export interface CommunicationExecution {
   status: "applied" | "noop" | "rejected" | "spoken";
   reason: string;
   action?: VisualActionResult;
+  meaningDelta?: MeaningDelta;
+  presentationIntent?: PresentationIntent;
 }
 
 export interface ExecuteOptions {
@@ -24,16 +27,9 @@ export interface ExecuteOptions {
 }
 
 /**
- * `visualize` and `recompose` both resolve through the same shape → express
- * path in this v0. They are semantically different requests (recompose asks
- * for the SAME facts under new organization/emphasis; visualize asks for
- * genuinely new content) but the deterministic composer has no first-class
- * "re-render this WorldState under a different grammar, unchanged" entry
- * point today — see the spec's Known Limitations. Passing `aboutEntityIds`
- * on a recompose intent is what steers the shaping call toward restating
- * existing entities (reusing their id/label) rather than inventing new ones,
- * which is the closest honest approximation available without adding a new
- * production capability.
+ * New visualization shapes semantic meaning without seeing visual form, then
+ * sends meaning and presentation to Expression together. Recomposition skips
+ * shaping and invokes Expression on the unchanged current WorldState.
  */
 export async function executeCommunicationDecision(
   decision: CommunicationDecision,
@@ -51,10 +47,39 @@ export async function executeCommunicationDecision(
   }
 
   const intent = decision.intent;
-  const meaning = await shapeVisualIntent(intent, { world: options.world, onUsage: options.onShapingUsage });
+  const semanticIds = new Set(options.world.entities.map((entity) => entity.id));
+  const scopedIds = intent.scope?.entityIds.filter((id) => semanticIds.has(id));
+  const primaryIds = intent.emphasis?.primaryEntityIds?.filter((id) => semanticIds.has(id));
+  const presentation: PresentationIntent = {
+    form: intent.form,
+    ...(scopedIds?.length ? { scope: { entityIds: scopedIds } } : {}),
+    ...(primaryIds?.length ? { emphasis: { primaryEntityIds: primaryIds } } : {}),
+    ...(intent.spatial ? { spatial: intent.spatial } : {}),
+  };
+  if (decision.type === "recompose") {
+    const result = await options.dispatcher.dispatch({ type: "recompose_expression", presentation });
+    return {
+      status: result.status,
+      reason: result.reason,
+      action: result,
+      presentationIntent: presentation,
+    };
+  }
+
+  const { scope: _unvalidatedScope, emphasis: _unvalidatedEmphasis, ...meaningIntent } = intent;
+  const meaning = await shapeVisualIntent(
+    { ...meaningIntent, ...(presentation.scope ? { scope: presentation.scope } : {}) },
+    { world: options.world, onUsage: options.onShapingUsage },
+  );
   if (!meaning.entities.length) {
     return { status: "rejected", reason: `shaping produced no entities for goal "${intent.goal}"` };
   }
-  const result = await options.dispatcher.dispatch({ type: "express", meaning });
-  return { status: result.status, reason: result.reason, action: result };
+  const result = await options.dispatcher.dispatch({ type: "express", meaning, presentation });
+  return {
+    status: result.status,
+    reason: result.reason,
+    action: result,
+    meaningDelta: meaning,
+    presentationIntent: presentation,
+  };
 }

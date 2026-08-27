@@ -27,6 +27,7 @@
 import { applyCleanToPlan } from "../clean/apply";
 import {
   ANNOTATION_BUDGET,
+  connectionForRelation,
   GRAMMARS,
   GRAMMAR_FOR_INTENT,
   REGION_BUDGET,
@@ -56,6 +57,7 @@ import {
   type VisibilityAssignment,
   type VisibilityOptions,
 } from "./visibility";
+import { grammarChainForPresentation, worldForPresentation, type PresentationIntent } from "../presentation/intent";
 
 export interface PlanOptions {
   /** Entities added by the round that produced this world — the basis for "look here now". */
@@ -78,6 +80,8 @@ export interface PlanOptions {
    * planner is no longer the last word on what stays on the board.
    */
   cleanPlan?: CleanPlan;
+  /** Optional expression preference. It can select only grammars the world can support. */
+  presentationIntent?: PresentationIntent;
 }
 
 /**
@@ -750,9 +754,16 @@ export function planExpression(world: WorldState, intent: ExpressionIntent, opts
     nowMs: opts.nowMs,
   };
   const vis = assignVisibility(world, visOpts);
-  const visualFocus = opts.cleanPlan?.primaryId ?? vis.focusId ?? intent.focusEntityId;
+  const inferredVisualFocus = opts.cleanPlan?.primaryId ?? vis.focusId ?? intent.focusEntityId;
+  const planningWorld = worldForPresentation(world, opts.presentationIntent);
+  const requestedFocus =
+    opts.presentationIntent?.emphasis?.primaryEntityIds?.find((id) => planningWorld.entities.some((entity) => entity.id === id)) ??
+    opts.presentationIntent?.scope?.entityIds.find((id) => planningWorld.entities.some((entity) => entity.id === id));
+  const visualFocus = requestedFocus ?? inferredVisualFocus;
   const visualIntent: ExpressionIntent = { ...intent, focusEntityId: visualFocus };
-  const view = horizonWorld(world, vis, visOpts);
+  const view = opts.presentationIntent?.scope
+    ? worldForPresentation(world, opts.presentationIntent)
+    : horizonWorld(world, vis, visOpts);
 
   // Weak/ambiguous intent evidence gets the narrow-scope fallback instead
   // of the normal chain — see weakConfidenceFallback's own doc comment for
@@ -761,33 +772,65 @@ export function planExpression(world: WorldState, intent: ExpressionIntent, opts
   // letting the normal attachment step run afterward would undo the whole
   // point by refilling the budget from the same importance-ranked pools.
   const isWeakConfidence = intent.primary === "express_uncertainty";
-  const chain = opts.grammarOverride
+  const semanticChain = opts.grammarOverride
     ? [opts.grammarOverride, ...GRAMMAR_FOR_INTENT[intent.primary].filter((g) => g !== opts.grammarOverride)]
     : GRAMMAR_FOR_INTENT[intent.primary];
+  const chain = opts.grammarOverride
+    ? semanticChain
+    : grammarChainForPresentation(view, opts.presentationIntent, semanticChain);
 
   const chosen = isWeakConfidence ? null : firstUsable(view, visualFocus, chain);
   const grammarResult = isWeakConfidence
     ? undefined
     : chosen
-      ? reservePersistSlots(
-          dropIneligibleRegions(chosen.result, vis, world, visOpts, new Set(view.entities.map((e) => e.id))),
-          vis,
-          world,
-          visOpts,
-        )
+      ? opts.presentationIntent?.scope
+        ? chosen.result
+        : reservePersistSlots(
+            dropIneligibleRegions(chosen.result, vis, world, visOpts, new Set(view.entities.map((e) => e.id))),
+            vis,
+            world,
+            visOpts,
+          )
       : { regions: [], connections: [], reason: boundReason(`no grammar could express this world (tried ${chain.join(", ")})`) };
 
   const withFocus = isWeakConfidence
     ? weakConfidenceFallback(world, vis, visOpts, visualFocus, opts.newEntityIds ?? [])
-    : attachRelatedEntities(world, visualIntent, grammarResult!, vis, visOpts);
+    : attachRelatedEntities(planningWorld, visualIntent, grammarResult!, vis, visOpts);
   if (!withFocus.regions.length) {
     return { ...EMPTY_EXPRESSION_PLAN, intent: intent.primary, reason: boundReason(isWeakConfidence ? withFocus.reason : grammarResult!.reason) };
   }
 
-  const connections = dedupeFanLabels(withFocus.connections);
-  const annotations = buildAnnotations(world, withFocus.regions);
+  let connections = dedupeFanLabels(withFocus.connections);
+  if (opts.presentationIntent) {
+    const regionByEntity = new Map(
+      withFocus.regions
+        .filter((region): region is Region & { entityId: string } => Boolean(region.entityId))
+        .map((region) => [region.entityId, region]),
+    );
+    const represented = new Set(connections.map((connection) => connection.relationId));
+    for (const relation of planningWorld.relations) {
+      if (represented.has(relation.id) || !regionByEntity.has(relation.source) || !regionByEntity.has(relation.target)) continue;
+      const family = relationFamily(relation.type);
+      const kind =
+        family === "causal" || family === "temporal"
+          ? "flow"
+          : family === "structural"
+            ? "containment"
+            : family === "comparative"
+              ? "comparison"
+              : "link";
+      connections.push(connectionForRelation(relation, kind));
+      represented.add(relation.id);
+      if (connections.length >= 32) break;
+    }
+    connections = dedupeFanLabels(connections);
+  }
+  const annotations = buildAnnotations(planningWorld, withFocus.regions);
   const regions = [...withFocus.regions, ...annotations];
-  const emphasis = buildEmphasis(regions, visualFocus, world);
+  const requestedPrimary = opts.presentationIntent?.emphasis?.primaryEntityIds?.find((id) =>
+    regions.some((region) => region.entityId === id),
+  );
+  const emphasis = buildEmphasis(regions, requestedPrimary ?? visualFocus, planningWorld);
 
   const planGrammar = isWeakConfidence ? "relationship" : (chosen?.grammar ?? "relationship");
   const plan: ExpressionPlan = {

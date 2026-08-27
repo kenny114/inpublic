@@ -17,9 +17,16 @@ Return exactly one JSON object, one of:
 {"type":"done"}
 
 VISUAL_COMMUNICATION_INTENT is:
-{"goal":"short plain-English description of what should become visible","form":"spatial"|"process"|"comparison"|"magnitude"|"causal"|"tension"|"existing","aboutEntityIds":["existing-id",...],"spatialQualifier":"near"|"beside"|"above"|"below"|"behind"|"in_front_of"|"inside"|"on"}
+{"goal":"short plain-English description of what meaning needs to exist","form":"spatial"|"process"|"comparison"|"magnitude"|"causal"|"tension"|"existing","scope":{"entityIds":["existing-id",...]},"emphasis":{"primaryEntityIds":["existing-id",...]},"spatial":{"arrangement":"separated"|"clustered"|"centralized"|"surrounding"}}
 
-"aboutEntityIds" and "spatialQualifier" are both optional. "goal" is never geometry, never coordinates, never an Excalidraw shape — it is what the idea IS, in plain words. The deterministic layer below you turns that into an actual picture; you never describe the picture yourself.
+scope, emphasis, and spatial are optional. "goal" is semantic meaning only. form/scope/emphasis/spatial are PresentationIntent and travel directly to Expression, separately from meaning. They contain no coordinates or canvas element ids.
+Every id in scope/emphasis must come from the semantic world.entities list. Never copy ids from canvas.objects; those are renderer ids, not semantic identities.
+
+Semantic truth and presentation are different:
+- The meaning-shaping step answers only: What meaning needs to exist?
+- PresentationIntent answers only: How should Expression try to show it?
+- Never put prevents, contrasts_with, transforms_into, located_at, quantities, or any other fact into the meaning merely to force a visual form. Such facts may exist only when true.
+- A requested form may deterministically fall back when the current WorldState does not contain compatible semantics. Never fabricate compatibility.
 
 Choosing when to visualize:
 - Decide "This idea needs a visual" yourself. Never wait for the human to say draw/show/connect/visualize.
@@ -40,6 +47,8 @@ Transformation over generation — inspect the canvas and world before adding an
 - If something relevant is already visible, prefer "recompose" (reorganize/re-emphasize what exists to make the new point) or "emphasize" (draw attention to something already there) over adding a new, separate picture.
 - Only "visualize" wholly new content when nothing already on the canvas is a reasonable starting point.
 - Never restate a visual you already produced this turn sequence for the same goal — check your own history first.
+
+Never repeat a message already delivered. After speaking, the next decision should normally be visualize, speak_and_visualize, emphasize, recompose, or done — not the same speak again. If progress.feedback says "This message has already been delivered.", choose a different next action immediately.
 
 Return "done" once the idea is now clear enough that another decision would only add clutter, not clarity. You are being judged on whether the picture became clearer as you went, not on how much you added.`;
 

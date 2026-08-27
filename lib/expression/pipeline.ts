@@ -33,6 +33,7 @@ import { planComposition, shouldCompose } from "./composition/plan";
 import { compose, isContinuation, type ComposeOptions } from "./compose/compose";
 import { applyPresentationToClean, applyPresentationToPlan, constrainPresentationScene } from "./presentation/apply";
 import { planPresentation } from "./presentation/plan";
+import { worldForPresentation, type PresentationIntent } from "./presentation/intent";
 import { evaluateScene } from "./evaluate/evaluate";
 import { applyRepair, planRepair } from "./evaluate/repair";
 import { classifyIntent } from "./intent/classify";
@@ -63,6 +64,7 @@ import {
 } from "./world/resolveTarget";
 import {
   EMPTY_REPAIR_PLAN,
+  EMPTY_MEANING_DELTA,
   EMPTY_SCENE_PLAN,
   EMPTY_WORLD_STATE,
   type CleanPlan,
@@ -133,6 +135,8 @@ export interface ExpressionTrace {
   /** speakerId/timestamp/sourceSegmentIds attached to whatever this segment touched — see lib/expression/schemas.ts's ProvenanceSchema. Empty when the segment carried none. */
   provenance: Provenance | null;
   intent: ExpressionIntent;
+  /** Caller-supplied visual preference; never part of semantic truth. */
+  presentationIntent?: PresentationIntent;
   /** See VisibilitySnapshot — the visual horizon this round's plan was built against. */
   visibility: VisibilitySnapshot;
   /**
@@ -258,6 +262,16 @@ export interface SessionOptions {
   targetJudge?: TargetJudge;
 }
 
+interface FoldOptions {
+  extractMs?: number;
+  extractUsage?: ExpressionTrace["extractUsage"];
+  contextless?: boolean;
+  skipContext?: boolean;
+  presentationIntent?: PresentationIntent;
+  /** Re-render current truth without applying a MeaningDelta or advancing WorldState. */
+  presentationOnly?: boolean;
+}
+
 const DEFAULT_CONTEXT_WINDOW = 6;
 
 /**
@@ -363,7 +377,7 @@ export class ExpressionSession {
      * three broken copies of a sentence it is about to receive whole. The
      * fold still happens; only the memory of the words is skipped.
      */
-    upstreamTimings?: { extractMs?: number; extractUsage?: ExpressionTrace["extractUsage"]; contextless?: boolean; skipContext?: boolean },
+    upstreamTimings?: FoldOptions,
   ): Promise<ExpressionTrace> {
     const deterministicStartedAt = Date.now();
     this.folding = true;
@@ -384,7 +398,10 @@ export class ExpressionSession {
     action: SemanticVisualAction,
   ): Promise<SemanticActionExecution> {
     if (action.type === "express") {
-      const trace = await this.ingestDelta(segment, action.meaning, { skipContext: true });
+      const trace = await this.ingestDelta(segment, action.meaning, {
+        skipContext: true,
+        presentationIntent: action.presentation,
+      });
       return trace.changed
         ? { status: "applied", trace, reason: "expressed structured meaning" }
         : { status: "noop", trace, reason: "structured meaning produced no semantic change" };
@@ -418,6 +435,30 @@ export class ExpressionSession {
     }
   }
 
+  /** Pure expression operation: new ScenePlan, byte-identical WorldState. */
+  async recomposeExpression(
+    segment: InputSegment,
+    presentation: PresentationIntent,
+  ): Promise<SemanticActionExecution> {
+    this.folding = true;
+    try {
+      const trace = await this.foldDelta(segment, EMPTY_MEANING_DELTA, {
+        skipContext: true,
+        presentationIntent: presentation,
+        presentationOnly: true,
+      });
+      const visualChanged =
+        trace.patch.added.length + trace.patch.moved.length + trace.patch.updated.length + trace.patch.removed.length +
+          trace.patch.connectorsAdded.length + trace.patch.connectorsRemoved.length + trace.patch.connectorsRerouted.length >
+        0;
+      return visualChanged
+        ? { status: "applied", trace, reason: `recomposed expression as ${presentation.form ?? "existing"}` }
+        : { status: "noop", trace, reason: `presentation ${presentation.form ?? "existing"} produced the current scene` };
+    } finally {
+      this.folding = false;
+    }
+  }
+
   /**
    * True from the moment a fold reads the world to the moment it writes the
    * world back.
@@ -437,7 +478,7 @@ export class ExpressionSession {
   private async foldDelta(
     segment: InputSegment,
     delta: MeaningDelta,
-    upstreamTimings?: { extractMs?: number; extractUsage?: ExpressionTrace["extractUsage"]; contextless?: boolean; skipContext?: boolean },
+    upstreamTimings?: FoldOptions,
   ): Promise<ExpressionTrace> {
     const deterministicStartedAt = Date.now();
     if (!upstreamTimings?.contextless && !upstreamTimings?.skipContext) {
@@ -457,32 +498,45 @@ export class ExpressionSession {
 
     const worldBefore = this.world;
 
-    const { identityDecisions, identityResolutions } = this.enableIdentityLayer
+    const { identityDecisions, identityResolutions } = !upstreamTimings?.presentationOnly && this.enableIdentityLayer
       ? await this.resolveIdentities(delta, provenance)
       : { identityDecisions: undefined, identityResolutions: [] as IdentityResolution[] };
 
-    const precomputedRefs = await this.precomputeReferences(delta);
+    const precomputedRefs = upstreamTimings?.presentationOnly ? new Map() : await this.precomputeReferences(delta);
 
-    let { world, ops, idMap, referenceResolutions, stanceResolutions, discourseActResolutions, metricResolutions } = applyDelta(
-      this.world,
-      delta,
-      segment.seq,
-      provenance ?? undefined,
-      identityDecisions,
-      precomputedRefs,
-    );
+    let { world, ops, idMap, referenceResolutions, stanceResolutions, discourseActResolutions, metricResolutions } =
+      upstreamTimings?.presentationOnly
+        ? {
+            world: this.world,
+            ops: [],
+            idMap: new Map<string, string>(),
+            referenceResolutions: [],
+            stanceResolutions: [],
+            discourseActResolutions: [],
+            metricResolutions: [],
+          }
+        : applyDelta(
+            this.world,
+            delta,
+            segment.seq,
+            provenance ?? undefined,
+            identityDecisions,
+            precomputedRefs,
+          );
 
-    const judged = await this.judgePendingDiscourseActs(
-      world,
-      delta,
-      discourseActResolutions,
-      ops,
-      segment.seq,
-      provenance ?? undefined,
-    );
-    world = judged.world;
-    ops = judged.ops;
-    discourseActResolutions = judged.discourseActResolutions;
+    if (!upstreamTimings?.presentationOnly) {
+      const judged = await this.judgePendingDiscourseActs(
+        world,
+        delta,
+        discourseActResolutions,
+        ops,
+        segment.seq,
+        provenance ?? undefined,
+      );
+      world = judged.world;
+      ops = judged.ops;
+      discourseActResolutions = judged.discourseActResolutions;
+    }
 
     this.world = world;
     for (const resolution of identityResolutions) resolution.resultingEntityId = idMap.get(resolution.localId) ?? null;
@@ -503,7 +557,7 @@ export class ExpressionSession {
     };
 
     const board = snapshotBoard(this.lastScene, this.lastFocusId);
-    const composeStory = shouldCompose({
+    const composeStory = Boolean(upstreamTimings?.presentationIntent) || shouldCompose({
       contextless: upstreamTimings?.contextless,
       segmentId: segment.id,
       snapshot: board,
@@ -516,7 +570,8 @@ export class ExpressionSession {
         segmentId: segment.id,
         snapshot: board,
       });
-    const composition = composeStory
+    const hasExplicitScope = Boolean(upstreamTimings?.presentationIntent?.scope);
+    const composition = composeStory && !hasExplicitScope
       ? planComposition({
           snapshot: board,
           delta,
@@ -528,7 +583,7 @@ export class ExpressionSession {
           focusHint: intent.focusEntityId,
         })
       : null;
-    const cleanRaw = police
+    const cleanRaw = police && !hasExplicitScope
       ? planClean({
           snapshot: board,
           delta,
@@ -540,8 +595,16 @@ export class ExpressionSession {
           composition,
         })
       : null;
-    const presentation =
-      police && cleanRaw
+    const presentation = upstreamTimings?.presentationIntent
+      ? planPresentation({
+          snapshot: board,
+          world,
+          intent,
+          composition,
+          clean: cleanRaw,
+          request: upstreamTimings.presentationIntent,
+        })
+      : police && cleanRaw
         ? planPresentation({
             snapshot: board,
             world,
@@ -557,12 +620,16 @@ export class ExpressionSession {
       previousFocusId: clean?.primaryId ?? composition?.primaryId ?? this.lastFocusId,
       nowMs: segment.timestamp,
       ...(clean ? { cleanPlan: clean } : {}),
+      presentationIntent: upstreamTimings?.presentationIntent,
     };
 
+    const requestedPrimaryId =
+      upstreamTimings?.presentationIntent?.emphasis?.primaryEntityIds?.[0] ??
+      upstreamTimings?.presentationIntent?.scope?.entityIds[0];
     let plan = planExpression(world, intent, planOpts);
     if (clean) plan = applyCleanToPlan(plan, clean, world);
-    if (composition) plan = applyCompositionToPlan(plan, composition, world);
-    if (presentation) plan = applyPresentationToPlan(plan, presentation, clean?.primaryId ?? composition?.primaryId);
+    if (composition) plan = applyCompositionToPlan(plan, composition, world, { preserveGrammar: Boolean(upstreamTimings?.presentationIntent) });
+    if (presentation) plan = applyPresentationToPlan(plan, presentation, requestedPrimaryId ?? clean?.primaryId ?? composition?.primaryId);
     // The scene on the canvas is an input to composing the next one — for
     // continuity only (see anchorToPrevious). It never changes what is drawn.
     const continuity: ComposeOptions = {
@@ -570,7 +637,8 @@ export class ExpressionSession {
       previousGrammar: this.lastGrammar,
       previousLayout: this.lastPresentationLayout,
       presentation,
-      primaryId: clean?.primaryId ?? composition?.primaryId,
+      presentationIntent: upstreamTimings?.presentationIntent,
+      primaryId: requestedPrimaryId ?? clean?.primaryId ?? composition?.primaryId,
       spineIds: composition ? [...new Set(composition.spine.flatMap((e) => [e.from, e.to]))] : undefined,
       demote: clean?.demote,
     };
@@ -579,37 +647,38 @@ export class ExpressionSession {
     if (composition) scene = constrainCompositionScene(scene, composition);
     if (presentation) {
       scene = constrainPresentationScene(scene, presentation, {
-        primaryId: clean?.primaryId ?? composition?.primaryId,
+        primaryId: requestedPrimaryId ?? clean?.primaryId ?? composition?.primaryId,
         composition,
         demote: clean?.demote,
       });
     }
     let mode: ExpressionTrace["mode"] = isContinuation(plan, continuity) ? "patch" : "full";
-    let evaluation = evaluateScene(world, scene);
+    const evaluationWorld = worldForPresentation(world, upstreamTimings?.presentationIntent);
+    let evaluation = evaluateScene(evaluationWorld, scene);
     let repair: RepairPlan = EMPTY_REPAIR_PLAN;
     let repairOutcome: ExpressionTrace["repairOutcome"];
 
     if (evaluation.repairRequired) {
-      repair = planRepair(evaluation, plan, world);
+      repair = planRepair(evaluation, plan, evaluationWorld);
       if (repair.steps.length) {
-        const { plan: adjusted, grammarOverride } = applyRepair(plan, repair, world);
+        const { plan: adjusted, grammarOverride } = applyRepair(plan, repair, evaluationWorld);
         let repairedPlan = grammarOverride
           ? planExpression(world, intent, { ...planOpts, grammarOverride })
           : adjusted;
         if (clean) repairedPlan = applyCleanToPlan(repairedPlan, clean, world);
-        if (composition) repairedPlan = applyCompositionToPlan(repairedPlan, composition, world);
-        if (presentation) repairedPlan = applyPresentationToPlan(repairedPlan, presentation, clean?.primaryId ?? composition?.primaryId);
+        if (composition) repairedPlan = applyCompositionToPlan(repairedPlan, composition, world, { preserveGrammar: Boolean(upstreamTimings?.presentationIntent) });
+        if (presentation) repairedPlan = applyPresentationToPlan(repairedPlan, presentation, requestedPrimaryId ?? clean?.primaryId ?? composition?.primaryId);
         let repairedScene = compose(world, repairedPlan, continuity);
         if (clean) repairedScene = constrainScene(repairedScene, clean);
         if (composition) repairedScene = constrainCompositionScene(repairedScene, composition);
         if (presentation) {
           repairedScene = constrainPresentationScene(repairedScene, presentation, {
-            primaryId: clean?.primaryId ?? composition?.primaryId,
+            primaryId: requestedPrimaryId ?? clean?.primaryId ?? composition?.primaryId,
             composition,
             demote: clean?.demote,
           });
         }
-        const repairedEvaluation = evaluateScene(world, repairedScene);
+        const repairedEvaluation = evaluateScene(evaluationWorld, repairedScene);
 
         const improved = repairedEvaluation.semanticPreservation > evaluation.semanticPreservation ||
           (repairedEvaluation.semanticPreservation === evaluation.semanticPreservation &&
@@ -634,7 +703,7 @@ export class ExpressionSession {
     let patch = diffScenes(this.lastScene, scene);
     if (clean) patch = constrainPatch(patch, clean, this.lastScene);
     this.lastScene = scene;
-    this.lastFocusId = clean?.primaryId ?? composition?.primaryId ?? plan.focusEntityId;
+    this.lastFocusId = requestedPrimaryId ?? clean?.primaryId ?? composition?.primaryId ?? plan.focusEntityId;
     this.lastGrammar = plan.grammar;
     if (composition) this.lastComposition = composition;
     if (presentation) this.lastPresentationLayout = presentation.layout;
@@ -653,6 +722,7 @@ export class ExpressionSession {
       identityResolutions,
       provenance,
       intent,
+      presentationIntent: upstreamTimings?.presentationIntent,
       visibility,
       board,
       composition,

@@ -6,12 +6,8 @@
  * (`lib/expression/meaning/extract.ts`): that prompt turns spoken text into
  * meaning with no notion of visual form, and touching it would put this
  * experiment on the production live-speech path. This prompt turns a
- * communication goal PLUS a requested form into meaning already biased
- * toward the relation vocabulary that makes the deterministic grammar/
- * composer (`lib/expression/grammars`, `lib/expression/compose`) choose the
- * matching picture — because intent classification and grammar selection
- * are entirely driven by relation TYPES already in the delta
- * (`lib/expression/intent/classify.ts`), never by an explicit hint field.
+ * communication goal into meaning. Presentation form is intentionally not
+ * included in this model call: it reaches Expression separately.
  *
  * Still produces only a `MeaningDelta` — the same shape Expression already
  * accepts through the existing `express` VisualAction
@@ -27,20 +23,9 @@ import type { VisualCommunicationIntent } from "./types";
 
 export const SHAPING_MODEL = process.env.COMMUNICATOR_SHAPING_MODEL || SCRIBE_MODEL;
 
-const FORM_GUIDANCE: Record<VisualCommunicationIntent["form"], string> = {
-  spatial:
-    "Use \"located_at\" relations between the entities involved, each carrying a \"spatial\" qualifier from: near, beside, above, below, behind, in_front_of, inside, on. These are the ONLY spatial words the layout engine understands — there is no \"far apart\"/\"isolated\"/\"separated\" value, so express distance by NOT adding a located_at relation between things that should read as apart, never by inventing a word outside this list.",
-  process: "Use \"transforms_into\" relations forming one chain: the same subject shown at each state it passes through, oldest state first.",
-  comparison: "Use \"contrasts_with\" (or greater_than/less_than for a directional difference) between the two things being set against each other. Give each side its own has_property dimensions so the columns are actually comparable.",
-  magnitude: "Give the entities being compared a \"quantity\" (value/unit) and connect them with \"greater_than\"/\"less_than\" so the difference in size/rate/degree is explicit, not just implied.",
-  causal: "Use \"causes\", \"enables\", \"depends_on\", or \"prevents\" relations forming a chain from driver to outcome.",
-  tension: "Use a \"contrasts_with\" relation between the two things in tension, AND at least one \"prevents\" or \"refutes\" relation showing how pursuing one works against the other — a trade-off is a comparison with an argumentative edge, not a plain contrast.",
-  existing: "Extract the stated meaning plainly, in whatever relation types actually fit — do not force a particular form.",
-};
-
 const SHAPING_SYSTEM_PREFIX = `You turn one communication goal into the meaning behind it, for a system that draws pictures from meaning and never from instructions about drawing.
 
-You will be given a "goal" (what should become visible), a "form" (the kind of picture this idea deserves), optional "aboutEntityIds" (existing entities already in the world this goal refers to — reuse their id and label exactly, verbatim, as one of your entities so a downstream matcher recognises them as the same thing rather than duplicating them), and "existingEntities" (labels already on the canvas, for the same reason).
+You will be given a "goal" (what meaning needs to exist) and "existingEntities" (existing identities relevant to that goal — reuse their id and label exactly when the goal refers to them).
 
 Extract:
 "entities" — every distinct thing the goal needs, each with a short kebab-case "id" unique to this extraction, a "type" (person, group, place, object, concept, action, event, state, time, quantity), a "label" of 1-4 words, and "quantity":{"value":N,"unit":"..."} whenever the goal states or implies a number.
@@ -48,6 +33,7 @@ Extract:
 "interpretation" — one sentence, what this picture is showing.
 
 Never think about position, coordinates, boxes, arrows-as-pixels, or Excalidraw. You are producing meaning, not a layout.
+Use relation types only when they are semantically true. Never use prevents, contrasts_with, transforms_into, or located_at as layout-control tokens.
 `;
 
 export interface ShapeVisualIntentOptions {
@@ -64,18 +50,16 @@ export async function shapeVisualIntent(
   intent: VisualCommunicationIntent,
   options: ShapeVisualIntentOptions,
 ): Promise<MeaningDelta> {
-  const existing = existingEntityLabels(options.world, intent.aboutEntityIds);
+  const existing = existingEntityLabels(options.world, intent.scope?.entityIds);
   const user = JSON.stringify({
     goal: intent.goal,
-    form: intent.form,
-    aboutEntityIds: intent.aboutEntityIds ?? [],
     existingEntities: existing,
   });
   let raw = "";
   try {
     raw = await complete({
       model: SHAPING_MODEL,
-      system: `${SHAPING_SYSTEM_PREFIX}\nFor this "${intent.form}" form: ${FORM_GUIDANCE[intent.form]}`,
+      system: SHAPING_SYSTEM_PREFIX,
       user,
       maxTokens: 1200,
       temperature: 0,

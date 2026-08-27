@@ -78,6 +78,7 @@ export function applyCompositionToPlan(
   plan: ExpressionPlan,
   composition: CompositionPlan,
   world: WorldState,
+  options: { preserveGrammar?: boolean } = {},
 ): ExpressionPlan {
   const allowed = new Set(composition.allowed);
   if (!allowed.size && !composition.primaryId) {
@@ -190,7 +191,7 @@ export function applyCompositionToPlan(
     ? [{ regionId: primaryRegion.id, weight: 3 as const, reason: "the subject of the board" }]
     : [];
 
-  const grammar = asFlow ? flowGrammarFor(composition.spine, world) : plan.grammar;
+  const grammar = options.preserveGrammar ? plan.grammar : asFlow ? flowGrammarFor(composition.spine, world) : plan.grammar;
   const next: ExpressionPlan = {
     ...plan,
     grammar: FLOW_LAYOUTS.has(grammar) || !asFlow ? grammar : plan.grammar,

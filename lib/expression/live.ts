@@ -57,6 +57,7 @@ import { ExpressionSession, type ExpressionTrace, type SemanticActionExecution, 
 import type { InputSegment, MeaningDelta, ScenePlan, WorldState } from "./schemas";
 import type { PersistedExpressionState, WorldStateRestoreResult } from "./persistence";
 import type { SemanticVisualAction } from "./actions";
+import type { PresentationIntent } from "./presentation/intent";
 
 /**
  * One thing to express. A settled speech thought and an agent's submission
@@ -579,6 +580,37 @@ export class ExpressionLiveController {
       return {
         status: "rejected",
         code: "semantic_runtime_error",
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /** Re-render current meaning under a new presentation preference. */
+  async recomposeExpression(presentation: PresentationIntent): Promise<SemanticActionExecution> {
+    if (this.hasPending() || this.session.isFolding()) {
+      return { status: "rejected", code: "semantic_runtime_busy", reason: "semantic runtime has pending work" };
+    }
+    const segment: InputSegment = {
+      id: `recompose-expression-${this.seq}`,
+      source: "ai_agent",
+      text: `[recompose expression: ${presentation.form ?? "existing"}]`,
+      seq: this.seq++,
+      timestamp: Date.now(),
+    };
+    try {
+      const result = await this.session.recomposeExpression(segment, presentation);
+      if ("trace" in result && result.trace) this.opts.onTrace?.(result.trace);
+      if (result.status === "applied") {
+        await this.opts.onUpdate({ trace: result.trace, consumedIds: [] });
+      } else if (result.status === "noop" && result.trace) {
+        this.opts.onNoChange?.(result.trace, []);
+      }
+      return result;
+    } catch (error) {
+      this.opts.onError?.(error, []);
+      return {
+        status: "rejected",
+        code: "recompose_runtime_error",
         reason: error instanceof Error ? error.message : String(error),
       };
     }

@@ -65,6 +65,12 @@ export async function runCommunicator(
     steps: [],
   };
   const history: CommunicationHistoryEntry[] = [];
+  const messagesSpoken: string[] = [];
+  const repeatSpeechWarnings = new Set<string>();
+  let previousDecision: import("./types").CommunicationDecision | undefined;
+  let canvasChanged = false;
+  let semanticStateChanged = false;
+  let feedback: "This message has already been delivered." | undefined;
   let previousOutcomeKey = "";
   let repeatCount = 0;
 
@@ -80,6 +86,13 @@ export async function runCommunicator(
       world: agentWorldView(world),
       canvas: agentCanvasView(observation, scene),
       history: history.slice(-8),
+      progress: {
+        messagesSpoken: messagesSpoken.slice(-8),
+        previousDecision,
+        canvasChanged,
+        semanticStateChanged,
+        ...(feedback ? { feedback } : {}),
+      },
       step,
       remainingSteps: Math.max(0, maxSteps - step + 1),
     };
@@ -115,7 +128,39 @@ export async function runCommunicator(
       return { status: "completed", trace };
     }
 
+    const spokenMessage =
+      decision.type === "speak" || decision.type === "speak_and_visualize" ? decision.message : undefined;
+    if (spokenMessage && messagesSpoken.includes(spokenMessage)) {
+      const repeatedTwice = repeatSpeechWarnings.has(spokenMessage);
+      const reason = "This message has already been delivered.";
+      const stepTrace: CommunicationStepTrace = {
+        step,
+        decision,
+        outcome: { status: "noop", reason },
+        sceneRevisionBefore: observation.revisions.scene,
+        sceneRevisionAfter: observation.revisions.scene,
+        visualCommunicationIntent: decision.type === "speak_and_visualize" ? decision.intent : undefined,
+        worldBefore: structuredClone(world),
+        worldAfter: structuredClone(world),
+        scenePlan: structuredClone(scene),
+        canvasObservation: structuredClone(observation),
+      };
+      trace.steps.push(stepTrace);
+      options.onStep?.(stepTrace);
+      history.push({ decision, outcome: "noop", reason });
+      previousDecision = decision;
+      canvasChanged = false;
+      semanticStateChanged = false;
+      feedback = reason;
+      if (repeatedTwice) {
+        return { status: "stalled", reason: "repeated an already-delivered message after explicit feedback", trace };
+      }
+      repeatSpeechWarnings.add(spokenMessage);
+      continue;
+    }
+
     const sceneRevisionBefore = observation.revisions.scene;
+    const worldBefore = structuredClone(world);
     const execution = await executeCommunicationDecision(decision, {
       world,
       dispatcher: options.dispatcher,
@@ -126,6 +171,11 @@ export async function runCommunicator(
     });
     const afterObservation = options.source.observe();
     const sceneRevisionAfter = afterObservation?.revisions.scene;
+    const worldAfter = options.source.getWorld();
+    canvasChanged = sceneRevisionBefore !== sceneRevisionAfter;
+    semanticStateChanged = JSON.stringify(worldBefore) !== JSON.stringify(worldAfter);
+    if (spokenMessage) messagesSpoken.push(spokenMessage);
+    feedback = undefined;
 
     // ScenePlan itself carries no grammar id — that fact lives on the
     // ExpressionTrace produced by the render callback the harness/caller
@@ -138,11 +188,22 @@ export async function runCommunicator(
       outcome: { status: execution.status, reason: execution.reason },
       sceneRevisionBefore,
       sceneRevisionAfter,
+      chosenGrammar: execution.action?.expressionTrace?.plan.grammar,
+      visualCommunicationIntent: "intent" in decision ? decision.intent : undefined,
+      presentationIntent: execution.presentationIntent,
+      meaningDelta: execution.meaningDelta,
+      worldBefore,
+      worldAfter: structuredClone(worldAfter),
+      scenePlan: structuredClone(options.source.getScene()),
+      canvasObservation: afterObservation ? structuredClone(afterObservation) : undefined,
+      semanticPreservation: execution.action?.expressionTrace?.evaluation.semanticPreservation,
+      inventedRelationIds: execution.action?.expressionTrace?.evaluation.inventedRelations,
     };
     trace.steps.push(stepTrace);
     options.onStep?.(stepTrace);
 
     history.push({ decision, outcome: execution.status, reason: execution.reason.slice(0, 240) });
+    previousDecision = decision;
 
     // Same discipline as VisualAgent's stall guard: an unchanged, repeated
     // outcome against an unchanged scene means continuing would only spend

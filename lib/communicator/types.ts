@@ -1,6 +1,6 @@
 /**
  * Experimental communication-decision vocabulary. See
- * planning/specs/SELF-EXPRESSIVE-AGENT-V0.md for the contract this
+ * planning/specs/VISUAL-EXPRESSION-INTENT-V1.md for the contract this
  * implements.
  *
  * This layer sits ABOVE VisualAgent, not beside it: `lib/communicator/` may
@@ -13,7 +13,12 @@
  */
 
 import { z } from "zod";
-import { IdSchema, SpatialRelationSchema } from "../expression/schemas";
+import { IdSchema, MeaningDeltaSchema, WorldStateSchema, ScenePlanSchema } from "../expression/schemas";
+import {
+  PresentationFormSchema,
+  PresentationIntentSchema,
+} from "../expression/presentation/intent";
+import type { CanvasObservation } from "../canvas";
 import { AgentCanvasViewSchema, AgentWorldViewSchema } from "../agent";
 
 /**
@@ -23,15 +28,7 @@ import { AgentCanvasViewSchema, AgentWorldViewSchema } from "../agent";
  * `visualize` decision should choose when the content itself, not a
  * deliberate metaphor, should decide the picture.
  */
-export const VisualFormSchema = z.enum([
-  "spatial",
-  "process",
-  "comparison",
-  "magnitude",
-  "causal",
-  "tension",
-  "existing",
-]);
+export const VisualFormSchema = PresentationFormSchema;
 export type VisualForm = z.infer<typeof VisualFormSchema>;
 
 /**
@@ -41,26 +38,11 @@ export type VisualForm = z.infer<typeof VisualFormSchema>;
  * which is the only thing that ever turns it into WorldState content. This
  * type carries no x/y, no element ids, no Excalidraw vocabulary at all.
  */
-export const VisualCommunicationIntentSchema = z
-  .object({
-    /** What should become clear — "model costs are growing faster than revenue," not "draw two bars." */
-    goal: z.string().min(1).max(240),
-    form: VisualFormSchema,
-    /** Existing entities this idea is about, when it's about something already on the canvas. Never invented ids. */
-    aboutEntityIds: z.array(IdSchema).max(6).optional(),
-    /**
-     * Only meaningful when form is "spatial." One of the arrangement words
-     * the deterministic composer already understands (see
-     * `lib/expression/schemas.ts`'s SpatialRelationSchema and
-     * `lib/expression/compose/compose.ts`'s SPATIAL_OFFSET) — proximity and
-     * containment only. The composer has no notion of "far apart" or
-     * "isolated" yet; a goal that needs true separation can only be
-     * approximated today by NOT drawing closeness, not by enforcing
-     * distance. See the spec's Known Limitations section.
-     */
-    spatialQualifier: SpatialRelationSchema.optional(),
-  })
-  .strict();
+export const VisualCommunicationIntentSchema = PresentationIntentSchema.extend({
+  /** Meaning needed — "model costs are growing faster than revenue," not "draw two bars." */
+  goal: z.string().min(1).max(240),
+  form: PresentationFormSchema,
+}).strict();
 export type VisualCommunicationIntent = z.infer<typeof VisualCommunicationIntentSchema>;
 
 const SemanticIdentitySchema = IdSchema;
@@ -99,6 +81,15 @@ export const CommunicationContextSchema = z
     world: AgentWorldViewSchema,
     canvas: AgentCanvasViewSchema,
     history: z.array(CommunicationHistoryEntrySchema).max(8),
+    progress: z
+      .object({
+        messagesSpoken: z.array(z.string().max(600)).max(8),
+        previousDecision: CommunicationDecisionSchema.optional(),
+        canvasChanged: z.boolean(),
+        semanticStateChanged: z.boolean(),
+        feedback: z.literal("This message has already been delivered.").optional(),
+      })
+      .strict(),
     step: z.number().int().positive(),
     remainingSteps: z.number().int().min(0).max(8),
   })
@@ -114,6 +105,15 @@ export interface CommunicationStepTrace {
   sceneRevisionBefore?: string;
   sceneRevisionAfter?: string;
   chosenGrammar?: string;
+  visualCommunicationIntent?: VisualCommunicationIntent;
+  presentationIntent?: import("../expression/presentation/intent").PresentationIntent;
+  meaningDelta?: z.infer<typeof MeaningDeltaSchema>;
+  worldBefore?: z.infer<typeof WorldStateSchema>;
+  worldAfter?: z.infer<typeof WorldStateSchema>;
+  scenePlan?: z.infer<typeof ScenePlanSchema>;
+  canvasObservation?: CanvasObservation;
+  semanticPreservation?: number;
+  inventedRelationIds?: string[];
 }
 
 export interface CommunicationRunTrace {
