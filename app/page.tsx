@@ -1,31 +1,8 @@
-import { SiteHeader } from "@/components/SiteHeader";
-import {
-  DemoShowcase,
-  FAQ,
-  FinalCta,
-  Hero,
-  HeroDemo,
-  HowItWorks,
-  LandingFooter,
-  Pricing,
-  Transformation,
-  UseCases,
-} from "@/components/landing/LandingSections";
+import { Waitlist } from "@/components/Waitlist";
 
+// The full marketing page (components/landing/LandingSections.tsx) is still
+// here for when the product is ready to show — while the build is in
+// progress, the waitlist is the only thing worth asking a visitor for.
 export default function Page() {
-  return (
-    <main className="landing-page">
-      <SiteHeader />
-      <Hero />
-      <HeroDemo />
-      <Transformation />
-      <DemoShowcase />
-      <HowItWorks />
-      <UseCases />
-      <Pricing />
-      <FAQ />
-      <FinalCta />
-      <LandingFooter />
-    </main>
-  );
+  return <Waitlist />;
 }
