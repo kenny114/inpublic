@@ -16,6 +16,7 @@ import type { SceneElement } from "./scene";
 import type { LogEvent } from "./types";
 import type { InPublicMode, StoryState } from "./story";
 import type { CompositionState } from "./composition";
+import type { PersistedExpressionState } from "./expression/persistence";
 
 const DB_NAME = "inpublic";
 const STORE = "sessions";
@@ -30,6 +31,8 @@ export interface PersistedSession {
   page: number;
   elements: SceneElement[];
   semantic: SemanticSnapshot;
+  /** Versioned semantic memory owned and validated by Expression. */
+  expressionState?: PersistedExpressionState;
   log: LogEvent[];
   mode?: InPublicMode;
   story?: StoryState;
@@ -120,7 +123,7 @@ async function saveCloudSession(session: PersistedSession): Promise<{ state: Clo
       const payload = await response.json() as { cloud?: PersistedSession };
       if (payload.cloud?.id) {
         const recoveryId = crypto.randomUUID();
-        await writeLibrary(recoveryId, { ...payload.cloud, id: recoveryId, title: `${payload.cloud.title ?? "Untitled visual session"} (cloud copy)`, cloudUpdatedAt: undefined });
+        await writeLibrary(recoveryId, createConflictRecoverySession(payload.cloud, recoveryId));
       }
       return { state: "failed", session };
     }
@@ -131,6 +134,19 @@ async function saveCloudSession(session: PersistedSession): Promise<{ state: Clo
   } catch {
     return { state: navigator.onLine ? "failed" : "offline", session };
   }
+}
+
+/** Keep one cloud version's canvas and semantic memory paired in its recovery copy. */
+export function createConflictRecoverySession(
+  cloud: PersistedSession,
+  recoveryId: string,
+): PersistedSession {
+  return {
+    ...cloud,
+    id: recoveryId,
+    title: `${cloud.title ?? "Untitled visual session"} (cloud copy)`,
+    cloudUpdatedAt: undefined,
+  };
 }
 
 export async function saveSession(

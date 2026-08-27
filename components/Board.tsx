@@ -130,6 +130,14 @@ import {
 } from "@/lib/pageArrivalCoalescing";
 import { features, isLivePresentationV2Enabled, isExpressionEngineV1Enabled, isExpressionDebugOnlyEnabled, isLiveCaptureModeEnabled, isAgentBridgeEnabled } from "@/lib/features";
 import { createExcalidrawCanvasRuntime, boundsOf, decideExpressionOverflow, type CanvasRuntime, type OverflowInfo } from "@/lib/canvas";
+import {
+  createScriptedDecisionProvider,
+  createVisualAgent,
+  type AgentRunResult,
+  type VisualAgent,
+} from "@/lib/agent";
+import { requestVisualAgentDecision } from "@/lib/agent/client";
+import { createVisualActionDispatcher } from "@/lib/visual-actions";
 import { ExpressionLiveController, type ExpressionLiveUpdate } from "@/lib/expression/live";
 import { createExpressionEntry, type ExpressionEntry, type ExpressRequest } from "@/lib/expression/entry";
 import { createExpressTool, type ExpressTool } from "@/lib/expression/tool";
@@ -715,6 +723,8 @@ export default function Board({
   /** Set once applyExpressionUpdate is defined below; the controller is created once and must call whatever the latest version of that callback is. */
   const applyExpressionUpdateRef = useRef<((update: ExpressionLiveUpdate) => void) | null>(null);
   const expressionControllerRef = useRef<ExpressionLiveController | undefined>(undefined);
+  const visualAgentRef = useRef<VisualAgent | undefined>(undefined);
+  const lastVisualAgentRunRef = useRef<AgentRunResult | null>(null);
   /**
    * The agent entry point (lib/expression/entry.ts), over the SAME controller
    * the microphone drives — so an agent's sentence and a spoken one land in
@@ -839,6 +849,16 @@ export default function Board({
         }),
     });
     expressionToolRef.current = createExpressTool(expressionEntryRef.current);
+    const visualActionDispatcher = createVisualActionDispatcher(expressionControllerRef.current, canvasRuntime);
+    visualAgentRef.current = createVisualAgent({
+      source: {
+        getWorld: () => expressionControllerRef.current!.getWorld(),
+        getScene: () => expressionControllerRef.current!.getScene(),
+        observe: () => canvasRuntime.observe(),
+      },
+      dispatcher: visualActionDispatcher,
+      decisionProvider: requestVisualAgentDecision,
+    });
   }
 
   /**
@@ -3618,6 +3638,7 @@ export default function Board({
       page: pageRef.current,
       elements: elementsRef.current,
       semantic: boardRef.current.snapshot(),
+      expressionState: expressionControllerRef.current?.snapshotState(),
       story: storyRef.current,
       composition: compositionRef.current,
       mode: modeRef.current,
@@ -3644,6 +3665,10 @@ export default function Board({
       setSessionTitle(restoredTitle);
       elementsRef.current = session.elements ?? [];
       boardRef.current = SemanticBoard.restore(session.semantic);
+      const expressionRestore = expressionControllerRef.current?.restoreState(session.expressionState);
+      if (expressionRestore && expressionRestore.status !== "restored" && expressionRestore.status !== "missing") {
+        console.warn(`[expression] persisted state ${expressionRestore.status}; continuing with an empty semantic world`);
+      }
       // Story Mode was removed in Strip-Down Phase 2 — an old session saved
       // with mode: "story" now simply resumes as standard. storyRef stays
       // populated only so exportJson/persistence keep their existing shape.
@@ -3691,7 +3716,7 @@ export default function Board({
       const session = initialSessionId
         ? await loadSessionById(initialSessionId)
         : await loadSession();
-      if (!session || !session.elements?.length) return;
+      if (!session) return;
       // Only offer a restore if the canvas is still untouched this session.
       if (elementsRef.current.length > 0) return;
       restoreSession(session);
@@ -3956,6 +3981,30 @@ export default function Board({
       },
       log: () => logRef.current,
       elements: () => elementsRef.current,
+      /** Deterministic VisualAction harness. It chooses nothing and calls no model. */
+      act: (action: unknown) => createVisualActionDispatcher(expressionControllerRef.current!, canvasRuntime).dispatch(action),
+      /**
+       * Explicit bounded visual-agent harness. Passing `decisions` injects a
+       * deterministic fake provider for tests; omitting it uses the guarded
+       * centralized model endpoint. Continuous speech never calls this.
+       */
+      runVisualAgent: async (
+        instruction: string,
+        options: { maxSteps?: number; decisions?: unknown[] } = {},
+      ) => {
+        const result = await visualAgentRef.current!.run(instruction, {
+          maxSteps: options.maxSteps,
+          decisionProvider: options.decisions
+            ? createScriptedDecisionProvider(options.decisions)
+            : undefined,
+        });
+        lastVisualAgentRunRef.current = result;
+        return result;
+      },
+      /** Most recent structured agent trace; no hidden model reasoning. */
+      agentLastRun: () => lastVisualAgentRunRef.current,
+      /** Versioned, validated semantic memory used by persistence and smoke tests. */
+      expressionState: () => expressionControllerRef.current?.snapshotState() ?? null,
       /** Development-only structural snapshot of live canvas reality. */
       observe: () => canvasRuntime.observe(),
       sketchCount: () => sketchRef.current.count,

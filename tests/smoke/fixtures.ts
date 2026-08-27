@@ -42,6 +42,7 @@ declare global {
       y: number;
       width: number;
       height: number;
+      text?: string;
     }>;
     selection: { elementIds: string[]; groupIds: string[] };
     viewport: { scrollX: number; scrollY: number; zoom: number; width: number; height: number };
@@ -59,7 +60,48 @@ declare global {
       undo(): void;
       clear(): void;
       elements(): Array<{ id: string; isDeleted?: boolean }>;
+      act(action: unknown): Promise<{
+        status: "applied" | "noop" | "rejected";
+        category: string;
+        reason: string;
+        before: { scene: { objects: Array<{ id: string; entityId?: string }> } };
+        after: {
+          world: { entities: Array<{ id: string; label: string }>; relations: Array<{ id: string }> };
+          observation: SmokeCanvasObservation | null;
+        };
+      }>;
+      runVisualAgent(instruction: string, options?: { maxSteps?: number; decisions?: unknown[] }): Promise<{
+        status: "completed" | "blocked" | "step_limit" | "stalled";
+        steps: number;
+        reason?: string;
+        trace: {
+          steps: Array<{
+            observed: { world: string; expressionScene: string; scene: string; selection: string; viewport: string };
+            decision: { type: string };
+            actionResult?: {
+              status: "applied" | "noop" | "rejected";
+              changed: { world: boolean; expressionScene: boolean; canvasScene: boolean; selection: boolean; viewport: boolean };
+            };
+            resulting?: { world: string; expressionScene: string; scene: string; selection: string; viewport: string };
+          }>;
+        };
+        final: {
+          world: { entities: Array<{ id: string; label: string }> };
+          canvas: SmokeCanvasObservation;
+        };
+      }>;
+      agentLastRun(): { status: string; steps: number } | null;
       observe(): SmokeCanvasObservation | null;
+      expressionState(): {
+        version: number;
+        world: {
+          entities: Array<{ id: string; label: string }>;
+          relations: Array<{ id: string; source: string; target: string; type: string }>;
+          claims: Array<{ id: string; text: string }>;
+          salience: string[];
+          seq: number;
+        };
+      } | null;
     };
   }
 }

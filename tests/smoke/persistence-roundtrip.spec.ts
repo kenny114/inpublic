@@ -2,22 +2,9 @@ import { test, expect } from "@playwright/test";
 import { SMOKE_DELTA_A } from "./fixtures";
 
 /**
- * Persistence round-trip — the closest thing to "session restoration" this
- * suite can exercise without real Supabase credentials (see
- * STRIP_DOWN_REPORT.md, "Browser tests not written"). `/create`'s restore
- * path is gated by middleware.ts behind a real authenticated session; `/try`
- * always mounts with startFresh (Board.tsx:6986 `if (startFresh) return;`),
- * so there is no unauthenticated route that both persists AND restores
- * through the real product UI. Faking a Supabase session was judged out of
- * scope for a smoke test — it risks writing real rows if pointed at a live
- * project, and isn't something this pass should improvise.
- *
- * What this test verifies instead, for real, against real IndexedDB in a
- * real browser: a settled Expression Engine turn survives the debounced
- * autosave (lib/persist.ts:makeAutosave, 3s trailing debounce) as a
- * well-formed PersistedSession — the exact mechanism `/create`'s restore
- * reads from. If this breaks, restoration breaks; this just can't drive the
- * authenticated read-back half end-to-end.
+ * Save-half contract against real IndexedDB. The read-back half is exercised
+ * separately by worldstate-restore.spec.ts through the development replay
+ * route, avoiding real Supabase credentials and cloud writes.
  */
 test("a settled turn survives the debounced autosave into IndexedDB", async ({ page }) => {
   await page.goto("/try?replay=1");
@@ -46,8 +33,10 @@ test("a settled turn survives the debounced autosave into IndexedDB", async ({ p
   );
 
   expect(saved, "expected a PersistedSession under the 'current' IndexedDB key").not.toBeNull();
-  const session = saved as { elements?: unknown[]; savedAt?: number };
+  const session = saved as { elements?: unknown[]; savedAt?: number; expressionState?: { version?: number; world?: { entities?: unknown[] } } };
   expect(Array.isArray(session.elements)).toBe(true);
   expect((session.elements as unknown[]).length).toBeGreaterThan(0);
   expect(typeof session.savedAt).toBe("number");
+  expect(session.expressionState?.version).toBe(1);
+  expect(session.expressionState?.world?.entities?.length).toBe(2);
 });

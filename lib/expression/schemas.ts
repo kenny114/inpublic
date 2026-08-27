@@ -32,7 +32,7 @@ import { z } from "zod";
 
 /** kebab-case slug. Ids are human-readable so a debug panel and a log line are the same thing. */
 const ID = /^[a-z][a-z0-9_-]{0,47}$/;
-const IdSchema = z.string().regex(ID, "id must be a short kebab-case slug");
+export const IdSchema = z.string().regex(ID, "id must be a short kebab-case slug");
 
 // ───────────────────────────────────────────────────────────── input
 
@@ -692,6 +692,7 @@ export const EMPTY_WORLD_STATE: WorldState = {
 export type WorldOp =
   | { kind: "ADD_ENTITY"; entity: WorldEntity }
   | { kind: "UPDATE_ENTITY"; entity: WorldEntity; prev: WorldEntity }
+  | { kind: "REMOVE_ENTITY"; entityId: string }
   | { kind: "SUPERSEDE_ENTITY"; entityId: string }
   | { kind: "ADD_RELATION"; relation: WorldRelation }
   | { kind: "UPDATE_RELATION"; relation: WorldRelation; prev: WorldRelation }

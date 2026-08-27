@@ -68,4 +68,8 @@ export const routeLimits: Record<string, { limit: number; windowSeconds: number 
   // every repeat for free, so this only bounds a burst of genuinely novel
   // concepts, which is rarer than a burst of sentences.
   "sketch-agent": { limit: positiveInteger("RATE_LIMIT_SKETCH_AGENT_PER_MINUTE", 20), windowSeconds: 60 },
+  // Explicit bounded agent runs may make up to four sequential decisions by
+  // default. The loop itself enforces the hard action budget; this ceiling
+  // separately bounds a misbehaving client at the provider boundary.
+  "visual-agent": { limit: positiveInteger("RATE_LIMIT_VISUAL_AGENT_PER_MINUTE", 12), windowSeconds: 60 },
 };

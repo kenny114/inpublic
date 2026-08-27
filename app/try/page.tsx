@@ -185,9 +185,11 @@ function TryPageBody() {
   const sessionId = params.get("session");
   // The development replay lab has no microphone source by design, so it
   // enters the board directly. Production ignores the query flag.
-  const [started, setStarted] = useState(() => isReplayLabEnabled(`?${params.toString()}`));
+  const replayLab = isReplayLabEnabled(`?${params.toString()}`);
+  const restoreReplay = replayLab && params.get("restore") === "1";
+  const [started, setStarted] = useState(() => replayLab);
 
-  if (started) return <Board guest startFresh />;
+  if (started) return <Board guest startFresh={!restoreReplay} />;
   if (claim) return <TryClaimComplete sessionId={sessionId} />;
   if (done) return <TryClaim sessionId={sessionId} />;
   return <TryLanding onStart={() => setStarted(true)} />;

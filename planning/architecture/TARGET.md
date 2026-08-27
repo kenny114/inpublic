@@ -3,35 +3,44 @@
 The target is a live visual expressive agent with a closed observation/action loop. This is a conceptual ownership map only.
 
 ```text
-               Input
-                 │
-                 ▼
-         CanvasObservation
-                 │
-            WorldState
-                 │
-                 ▼
-             Meaning
-                 │
-                 ▼
-           Visual Intent
-                 │
-                 ▼
-        Expression Engine
-                 │
-                 ▼
-           CanvasAction
-                 │
-                 ▼
-         Excalidraw Adapter
-                 │
-                 ▼
-            Excalidraw
-                 │
-                 └──── read back ────► observation
+                Instruction
+                     │
+                     ▼
+                VisualAgent ◄──────────────┐
+                 │      │                  │
+                 ▼      ▼                  │
+            WorldState  CanvasObservation │
+                 └───┬──┘                  │
+                     ▼                     │
+               AgentDecision               │
+                     │                     │
+                     ▼                     │
+               VisualAction                │
+                     │                     │
+              Action Dispatcher            │
+                ┌────┴────┐                │
+                ▼         ▼                │
+            Semantic   Presentation        │
+                │         │                │
+                ▼         │                │
+            WorldState    │                │
+                │         │                │
+                ▼         │                │
+         Expression Engine│                │
+                └────┬────┘                │
+                     ▼                     │
+                   Canvas                  │
+                     │                     │
+                     ▼                     │
+                 Excalidraw                │
+                     │                     │
+                     ▼                     │
+            CanvasObservation ─────────────┘
 ```
 
-The diagram establishes a loop, not final sequencing or type definitions. The existing `MeaningDelta` → `WorldState` → visual intent → deterministic planning → `ScenePlan` → `RenderPatch` foundation remains authoritative while boundaries are extracted deliberately. The current Canvas boundary now provides explicit structural snapshots, but nothing in Agent, Meaning, or Expression consumes them yet.
+The first bounded Agent loop now exists for explicit instructions. It reads compact semantic and structural canvas views, chooses one strict geometry-free action, delegates execution, re-observes, and stops under deterministic budgets/stall rules. The existing `MeaningDelta` → `WorldState` → visual intent → deterministic planning → `ScenePlan` → `RenderPatch` path and Canvas focus execution remain the only mutation routes beneath it.
+
+Session now durably owns both the versioned Expression `WorldState` snapshot and canvas/project snapshot. They restore independently from one project version. A future observation/action loop may compare those truths, but current restoration performs no reconciliation.
 
 ## Conceptual ownership
 
@@ -53,14 +62,14 @@ Owns Excalidraw integration, scene application, observation, viewport, canvas id
 
 ### Agent
 
-Eventually owns observe, decide, action selection, continuation, and repair orchestration. It reuses Meaning and Expression rather than duplicating either.
+Owns observe, compact context, decision validation, action selection, bounded continuation, ActionResult feedback, trace, and stop orchestration. It reuses Meaning, Expression, VisualAction, and Canvas rather than duplicating them. Future work may add product invocation policy, richer supported actions, evaluation, and deliberate drift handling without moving those lower-layer responsibilities into Agent.
 
 ### Session
 
-Owns durable project and session state, including the state needed to continue coherently after reload.
+Owns durable project and session state, including versioned Expression semantic memory and canvas state needed to continue coherently after reload. It stores Expression's representation without interpreting it.
 
 ### App
 
 Owns UI and wiring only. `Board.tsx` remains wiring during gradual extraction, not a destination for new domain logic.
 
-No agent runtime, observation-driven semantic mutation, drift repair, or `CanvasAction` implementation exists yet. Structured `CanvasObservation` snapshots are the current read-only foundation for that later work.
+Generic drift repair, semantic recovery from canvas, continuous-speech agent routing, multi-agent roles, background autonomy, and model-generated action batches remain outside the target until separately specified. The implemented loop is explicit, bounded, and instruction-scoped.

@@ -3,33 +3,61 @@
 This is the primary visual runtime that exists now. It is a factual map, not a target design.
 
 ```text
-Deepgram
-  → Board
-  → ExpressionLiveController
-  → ExpressionSession
-  → meaning
-  → WorldState
-  → intent
-  → expression planners
-  → compose
-  → evaluate/repair
-  → ScenePlan / RenderPatch
-  → CanvasRuntime
-  → Excalidraw adapter
-  → Excalidraw
-       │ live structural reads
-       ▼
-  CanvasRuntime.observe()
-       │
-       ▼
-  CanvasObservation (currently unconsumed)
+                     Explicit instruction
+                              │
+                              ▼
+                       ┌─────────────┐
+                       │ VisualAgent │
+                       └──────┬──────┘
+                              │
+             ┌────────────────┴────────────────┐
+             ▼                                 ▼
+         WorldState                    CanvasObservation
+             │                                 ▲
+             └──────────────┬──────────────────┘
+                            ▼
+                      AgentDecision
+                            │
+                            ▼
+                       VisualAction
+                            │
+                            ▼
+                        Dispatcher
+                            │
+                       ┌────┴────┐
+                       ▼         ▼
+                   Semantic    Canvas
+                       │         │
+                       ▼         │
+                   WorldState    │
+                       │         │
+                       ▼         │
+                Expression Engine│
+                       └────┬────┘
+                            ▼
+                          Canvas
+                            │
+                            ▼
+                       Excalidraw
+                            │
+                            ▼
+                   CanvasObservation
+                            │
+                            └──── next iteration
+
+Deepgram interim/settled speech → Board → ExpressionLiveController
+                                      → WorldState → Expression → Canvas
 ```
 
 `Board.tsx` is the application orchestrator: it connects speech, settled thoughts, the live controller, Canvas, camera/page policy, undo, persistence, and UI. `ExpressionLiveController` owns live batching and cadence. `ExpressionSession` owns the in-memory semantic world, deterministic planning, composition, evaluation/repair, the last `ScenePlan`, and patch generation. `CanvasRuntime` owns expression reconciliation and canvas identity plus imperative element and viewport application. The Excalidraw implementation under `lib/canvas/excalidraw/` converts scene output and reconciles it with the live editor.
 
-The semantic source of truth is `WorldState`; the engine itself does not consume the current Excalidraw scene. Canvas can now explicitly read and normalize the live non-deleted elements, selection, and viewport into a `CanvasObservation`. This is developer/test-visible structural perception only: no model, Meaning stage, WorldState fold, intent stage, or agent reacts to it. The last `ScenePlan` still supports incremental diffing but is not used as canvas perception. `WorldState` is reset with the controller and is not part of `PersistedSession`, so it does not survive reloads.
+The semantic source of truth is `WorldState`; the Expression engine itself does not consume the current Excalidraw scene. `WorldState` snapshots to a validated version-1 `PersistedExpressionState` carried by the same `PersistedSession` as canvas elements. Reload/project reopen restores that state directly into the active Expression runtime, while old or corrupt semantic payloads fall back empty without blocking canvas restoration. Canvas normalizes live elements, selection, and viewport into `CanvasObservation`. Phase 8's Agent is the only reasoning owner that consumes that observation; Meaning, WorldState folding, intent, and Expression still do not. The last `ScenePlan` supports incremental diffing and identity mapping but is not canvas perception or persisted semantic memory.
 
 Canvas application now has one explicit owner. `Board.tsx` mounts Excalidraw and attaches the instance to `CanvasRuntime`; it does not call `updateScene` or `getAppState` directly. Board still owns application policy: page-turn decisions, camera targets and animation, undo, persistence triggers, and UI. Compatibility exports remain in `lib/expression/render/excalidraw*.ts`, but their implementation lives under Canvas.
+
+Phase 7 adds a geometry-free `VisualAction` language and deterministic dispatcher under `lib/visual-actions/`. Semantic `express`, exact-id update/removal, and relationship actions mutate WorldState through Expression and then reuse the ordinary ScenePlan/RenderPatch/Canvas path. Presentation-only `focus` resolves a semantic id through the current ScenePlan's derived canvas identity and applies a Canvas viewport.
+
+Phase 8 adds one bounded `VisualAgent` under `lib/agent/`. It compacts current WorldState and CanvasObservation into an InPublic-owned model context, validates one strict `AgentDecision`, executes at most one VisualAction, re-observes, feeds compact ActionResult facts into the next decision, and returns a structured terminal status. Default budget is four actions and the boundary caps it at eight. Repeated identical noop/rejection or repeated applied-without-progress stalls deterministically. Development exposes `window.inpublic.runVisualAgent(...)` and an inspectable last run. Scripted decisions exercise the complete loop without provider cost; live decisions use the existing guarded centralized model abstraction. Continuous speech does not invoke this loop.
 
 ## DORMANT / NON-DEFAULT EXCEPTION
 
@@ -54,6 +82,33 @@ Gemini Live is enabled only when `NEXT_PUBLIC_ENGINE=gemini`; Deepgram is the de
 - Observation is explicit and side-effect-free; no Excalidraw event subscription is registered.
 - `window.inpublic.observe()` exposes snapshots in development only for tests and developer inspection.
 - Phase 5 verification: typecheck and build clean; Canvas boundary, observation, and dependency checks passed; Expression checks 1,254/0; `npm test` remains 48 passed / the same 3 known failures; browser smoke is 5/5 including live observation.
+
+## Phase 6 durable semantic memory
+
+- `PersistedSession.expressionState` carries a strict `{ version: 1, world }` envelope through IndexedDB and existing `projects.canvas_json` storage.
+- Expression owns validation and semantic meaning; Session stores the envelope without interpreting it.
+- The active controller snapshots/restores through a supported lifecycle seam and resumes its sequence clock after the saved `WorldState.seq`.
+- Missing, unsupported, malformed, and partially corrupt semantic payloads fall back to an empty runtime without blocking the canvas.
+- Canvas and semantic memory are one project version, including 409 recovery copies.
+- Restore itself does not consume `CanvasObservation` and cannot change restored WorldState; only an explicit Phase 8 Agent run may read both independent truths.
+
+## Phase 7 visual action language
+
+- Public name: `VisualAction`, not `CanvasAction`.
+- Supported semantic actions: `express`, `update_entity`, `remove_entity`, `relate_entities`, `remove_relation`.
+- Supported presentation action: `focus` by semantic entity id.
+- Strict schemas reject raw coordinates, raw shapes, canvas element ids, and unknown operations.
+- Dispatch results are structured `applied`, `noop`, or `rejected`; ordinary invalid control flow does not throw.
+- Repositioning, highlighting/pointer presence, agent judgment, and observe-decide-act remain absent.
+
+## Phase 8 bounded visual agent
+
+- One agent, one strict decision, and at most one VisualAction per iteration.
+- Compact semantic ids/relationships/claims plus normalized canvas bounds, selection, viewport, text, and revisions are supplied to reasoning.
+- Raw Excalidraw types, editor APIs, renderer internals, and action geometry remain withheld.
+- Canvas is re-observed after every action and ActionResult is explicit feedback.
+- Terminal statuses are completed, blocked, step_limit, or stalled.
+- No generic canvas/world reconciliation, action batches, multi-agent swarm, or continuous-speech rerouting exists.
 
 ## Phase 4 verification
 

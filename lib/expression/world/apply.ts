@@ -658,7 +658,7 @@ function uniqueId(base: string, taken: Set<string>): string {
  * order it happened to be mentioned in; recency breaks ties so a talk that
  * moves on doesn't stay anchored on its first sentence forever.
  */
-function recomputeImportance(entities: WorldEntity[], relations: WorldRelation[], seq: number): WorldEntity[] {
+export function recomputeImportance(entities: WorldEntity[], relations: WorldRelation[], seq: number): WorldEntity[] {
   const degree = new Map<string, number>(entities.map((e) => [e.id, 0]));
   for (const rel of relations) {
     degree.set(rel.source, (degree.get(rel.source) ?? 0) + 1);
@@ -1252,6 +1252,8 @@ export function describeWorldOp(op: WorldOp): string {
       if (op.prev.status !== op.entity.status) changes.push(`status ${op.entity.status}`);
       return `~ ${op.entity.id}: ${changes.join(", ") || "touched"}`;
     }
+    case "REMOVE_ENTITY":
+      return `- entity ${op.entityId}`;
     case "SUPERSEDE_ENTITY":
       return `x ${op.entityId} superseded`;
     case "ADD_RELATION":

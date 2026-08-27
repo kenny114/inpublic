@@ -743,6 +743,7 @@ section("guest persistence — local first, remote only when authenticated");
     page: 0,
     elements: [],
     semantic: { concepts: [], relationships: [], sections: [], operations: [] },
+    expressionState: { version: 1, world: { entities: [], relations: [], claims: [], salience: [], seq: 0 } },
     log: [],
   };
 
@@ -755,8 +756,8 @@ section("guest persistence — local first, remote only when authenticated");
 
   await saveSession(session);
   check(
-    "authenticated save keeps the existing /api/projects POST",
-    remoteCalls.length === 1 && remoteCalls[0].url === "/api/projects" && remoteCalls[0].init.method === "POST",
+    "authenticated save keeps the existing /api/projects POST with Expression state",
+    remoteCalls.length === 1 && remoteCalls[0].url === "/api/projects" && remoteCalls[0].init.method === "POST" && JSON.parse(remoteCalls[0].init.body).expressionState?.version === 1,
     JSON.stringify(remoteCalls),
   );
 

@@ -85,6 +85,17 @@ import {
   type WorldState,
 } from "./schemas";
 import type { MetricResolution, StanceResolution } from "./world/apply";
+import {
+  actionExpressionDelta,
+  applyExactSemanticVisualAction,
+  type SemanticVisualAction,
+} from "./actions";
+import {
+  restoreWorldState,
+  serializeWorldState,
+  type PersistedExpressionState,
+  type WorldStateRestoreResult,
+} from "./persistence";
 
 /**
  * A JSON-serializable snapshot of lib/expression/planner/visibility.ts's
@@ -203,6 +214,11 @@ export interface ExpressionTrace {
   extractUsage?: { inputTokens: number; cacheCreationInputTokens: number; cacheReadInputTokens: number };
 }
 
+export type SemanticActionExecution =
+  | { status: "applied"; trace: ExpressionTrace; reason: string }
+  | { status: "noop"; reason: string; trace?: ExpressionTrace }
+  | { status: "rejected"; code: string; reason: string };
+
 export interface SessionOptions {
   /**
    * How text becomes meaning. Defaults to the client wrapper (a fetch to
@@ -286,6 +302,22 @@ export class ExpressionSession {
     return this.lastScene ?? EMPTY_SCENE_PLAN;
   }
 
+  /** A validated, cloned persistence snapshot — never the mutable runtime object. */
+  snapshotState(): PersistedExpressionState {
+    return serializeWorldState(this.world);
+  }
+
+  /**
+   * Restore durable semantic memory and deliberately discard transient render,
+   * extraction-context, and in-flight caches. Safe fallback is an empty world.
+   */
+  restoreState(input: unknown): WorldStateRestoreResult {
+    const restored = restoreWorldState(input);
+    this.reset();
+    this.world = restored.world;
+    return restored;
+  }
+
   reset(): void {
     this.world = EMPTY_WORLD_STATE;
     this.lastScene = null;
@@ -331,12 +363,56 @@ export class ExpressionSession {
      * three broken copies of a sentence it is about to receive whole. The
      * fold still happens; only the memory of the words is skipped.
      */
-    upstreamTimings?: { extractMs?: number; extractUsage?: ExpressionTrace["extractUsage"]; contextless?: boolean },
+    upstreamTimings?: { extractMs?: number; extractUsage?: ExpressionTrace["extractUsage"]; contextless?: boolean; skipContext?: boolean },
   ): Promise<ExpressionTrace> {
     const deterministicStartedAt = Date.now();
     this.folding = true;
     try {
       return await this.foldDelta(segment, delta, upstreamTimings);
+    } finally {
+      this.folding = false;
+    }
+  }
+
+  /**
+   * Apply one already-validated semantic VisualAction. Creation/general
+   * expression reuses MeaningDelta; exact-id mutations update WorldState and
+   * then run the ordinary deterministic expression stages against that world.
+   */
+  async executeSemanticAction(
+    segment: InputSegment,
+    action: SemanticVisualAction,
+  ): Promise<SemanticActionExecution> {
+    if (action.type === "express") {
+      const trace = await this.ingestDelta(segment, action.meaning, { skipContext: true });
+      return trace.changed
+        ? { status: "applied", trace, reason: "expressed structured meaning" }
+        : { status: "noop", trace, reason: "structured meaning produced no semantic change" };
+    }
+
+    const worldBefore = this.world;
+    const mutation = applyExactSemanticVisualAction(worldBefore, action, segment.seq);
+    if (mutation.status !== "applied") return mutation;
+
+    this.folding = true;
+    this.world = mutation.world;
+    try {
+      const rendered = await this.foldDelta(
+        segment,
+        actionExpressionDelta(mutation.world),
+        { skipContext: true },
+      );
+      const trace: ExpressionTrace = {
+        ...rendered,
+        worldBefore,
+        ops: mutation.ops,
+        opsDescribed: mutation.ops.map(describeWorldOp),
+        changed: true,
+      };
+      return { status: "applied", trace, reason: mutation.reason };
+    } catch (error) {
+      this.world = worldBefore;
+      throw error;
     } finally {
       this.folding = false;
     }
@@ -361,10 +437,12 @@ export class ExpressionSession {
   private async foldDelta(
     segment: InputSegment,
     delta: MeaningDelta,
-    upstreamTimings?: { extractMs?: number; extractUsage?: ExpressionTrace["extractUsage"]; contextless?: boolean },
+    upstreamTimings?: { extractMs?: number; extractUsage?: ExpressionTrace["extractUsage"]; contextless?: boolean; skipContext?: boolean },
   ): Promise<ExpressionTrace> {
     const deterministicStartedAt = Date.now();
-    if (!upstreamTimings?.contextless) this.context = [...this.context, segment.text].slice(-this.contextWindow);
+    if (!upstreamTimings?.contextless && !upstreamTimings?.skipContext) {
+      this.context = [...this.context, segment.text].slice(-this.contextWindow);
+    }
 
     // Provenance rides alongside the text as segment metadata, never
     // something the extractor infers — a speech/agent adapter already knows

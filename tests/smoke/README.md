@@ -36,20 +36,24 @@ Excalidraw. Nothing here is a mock of the engine.
 - `canvas-observation.spec.ts` — the read-only Canvas boundary observes a
   real mounted scene, then detects a user-style pointer drag while preserving
   the moved element's canvas identity.
+- `worldstate-restore.spec.ts` — a real autosave/reload restores both the
+  Excalidraw scene and the identical versioned Expression `WorldState` from
+  IndexedDB. `?restore=1` affects only the development replay route's
+  `startFresh` flag and never enables cloud writes.
+- `visual-action.spec.ts` — an exact semantic entity removal issued through
+  the development `VisualAction` harness first leaves WorldState, then the
+  existing Expression/Canvas reconciliation removes its derived live marks.
+- `visual-agent.spec.ts` — the bounded agent consumes the live world/canvas,
+  executes one scripted geometry-free action, re-observes the resulting real
+  canvas, and stops without a paid model call.
 
 ## What's NOT covered, and why
 
-Full session **restoration** through the real product UI (`/create`) is not
-tested here. `/create` requires a real Supabase-authenticated session
-(enforced server-side in `middleware.ts`); `/try` always mounts with
-`startFresh: true` (`Board.tsx:6986`), so there is no unauthenticated route
-that both persists and restores through the actual UI. Faking a Supabase
-session was judged out of scope for a smoke test: it would either need real
-test credentials (risk of writing rows into whatever Supabase project
-`.env.local` points at) or a new test-only bypass in the product code, which
-this phase's own rules forbid adding. `persistence-roundtrip.spec.ts`
-verifies the save half of that mechanism for real instead — see its header
-comment.
+Authenticated `/create` cloud restoration is not exercised because it needs
+a real Supabase session and could write to the configured project. Phase 6
+instead uses the existing development replay authorization plus a narrow
+`restore=1` flag to drive Board's real `loadSession`/`restoreSession` path
+against real IndexedDB with guest cloud sync disabled.
 
 Live Deepgram speech and any live LLM call are out of scope by design (per
 the strip-down prompt) — `express({ delta })` is the correct substitute, not

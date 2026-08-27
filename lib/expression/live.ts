@@ -53,8 +53,10 @@
 import { reflexDelta } from "./fast/reflex";
 import { requestMeaningDelta } from "./meaning/client";
 import type { MeaningExtractor } from "./meaning/extract";
-import { ExpressionSession, type ExpressionTrace, type SessionOptions } from "./pipeline";
+import { ExpressionSession, type ExpressionTrace, type SemanticActionExecution, type SessionOptions } from "./pipeline";
 import type { InputSegment, MeaningDelta, ScenePlan, WorldState } from "./schemas";
+import type { PersistedExpressionState, WorldStateRestoreResult } from "./persistence";
+import type { SemanticVisualAction } from "./actions";
 
 /**
  * One thing to express. A settled speech thought and an agent's submission
@@ -115,7 +117,7 @@ export interface ExpressionLiveOptions extends SessionOptions {
   anticipateMinWords?: number;
   /** A ceiling per utterance, so one long unbroken sentence cannot run up an unbounded bill. */
   anticipateMaxPerUtterance?: number;
-  onUpdate: (update: ExpressionLiveUpdate) => void;
+  onUpdate: (update: ExpressionLiveUpdate) => void | Promise<void>;
   /**
    * Fires once per run, changed or not. A no-op run matters just as much as a
    * change: "the engine correctly found nothing new" and "the engine is
@@ -546,6 +548,52 @@ export class ExpressionLiveController {
 
   getScene(): ScenePlan {
     return this.session.getScene();
+  }
+
+  /**
+   * Deterministic semantic VisualAction entry. It refuses to race pending
+   * speech and awaits the existing render callback before reporting applied.
+   */
+  async executeSemanticAction(action: SemanticVisualAction): Promise<SemanticActionExecution> {
+    if (this.hasPending() || this.session.isFolding()) {
+      return { status: "rejected", code: "semantic_runtime_busy", reason: "semantic runtime has pending work" };
+    }
+    const segment: InputSegment = {
+      id: `visual-action-${this.seq}`,
+      source: "ai_agent",
+      text: `[visual action: ${action.type}]`,
+      seq: this.seq++,
+      timestamp: Date.now(),
+    };
+    try {
+      const result = await this.session.executeSemanticAction(segment, action);
+      if ("trace" in result && result.trace) this.opts.onTrace?.(result.trace);
+      if (result.status === "applied") {
+        await this.opts.onUpdate({ trace: result.trace, consumedIds: [] });
+      } else if (result.status === "noop" && result.trace) {
+        this.opts.onNoChange?.(result.trace, []);
+      }
+      return result;
+    } catch (error) {
+      this.opts.onError?.(error, []);
+      return {
+        status: "rejected",
+        code: "semantic_runtime_error",
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  snapshotState(): PersistedExpressionState {
+    return this.session.snapshotState();
+  }
+
+  /** Restore before accepting new input; the next segment continues the saved sequence clock. */
+  restoreState(input: unknown): WorldStateRestoreResult {
+    this.reset();
+    const restored = this.session.restoreState(input);
+    if (restored.status === "restored") this.seq = restored.world.seq + 1;
+    return restored;
   }
 
   /** New session or page: forget everything and cancel any pending run. */

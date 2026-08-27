@@ -6,7 +6,7 @@ InPublic turns meaning into live visual expression. The product goal is a live v
 
 Today the primary runtime is speech through Deepgram, wired by `Board`, into the Expression Engine and then Excalidraw. The engine's durable foundation is semantic model output, `WorldState`, deterministic geometry, incremental `RenderPatch` rendering, an evaluate/repair layer, and a centralized text-model provider.
 
-Known gaps are: no live canvas perception; `WorldState` is not durable across reloads; `Board.tsx` still owns too much wiring and domain behavior; Canvas ownership is fragmented; the agent runtime is not yet a full observe-act-observe loop; and browser coverage is intentionally minimal.
+Current structural canvas perception is consumed by one bounded visual-agent loop for explicit instructions. `WorldState` is durable across reload/project reopen. The Agent sees compact WorldState plus actual CanvasObservation, returns one strict geometry-free `VisualAction` or a terminal decision, executes through the deterministic dispatcher, re-observes, and stops under budget/stall rules. Known gaps are: no generic Canvas/WorldState reconciliation; no semantic placement constraints; no continuous-speech agent policy; no external agent bridge; `Board.tsx` still owns too much wiring; visual diff caches do not survive reload; and browser coverage remains intentionally focused.
 
 The target conceptual ownership boundaries are Speech, Meaning, Expression, Canvas, Agent, Session, and App. Define ownership and dependency direction before extracting code. Do not move the repository wholesale into those names.
 
@@ -20,7 +20,7 @@ The target conceptual ownership boundaries are Speech, Meaning, Expression, Canv
 ## Recovery point
 
 - Branch: `expression-engine-default`
-- Commit at documentation start: `072e5c56233da4f0aae126c4383f1843f235f672`
-- Working tree: intentionally dirty; it contains the completed Phase 1/2 strip-down and active Expression Engine work.
-- Tag: none. `inpublic-barebones-v0` was not created because a Git tag can point only to the committed `HEAD`, which does not contain this working-tree baseline and would therefore be a misleading recovery point.
-- Recovery evidence: `STRIP_DOWN_REPORT.md`, the working-tree diff, and the verification record in `architecture/CURRENT.md`.
+- Phase 6 checkpoint commit: `e191601111ae5e3cefd567aef52e3cd38d524638`
+- Branch: `expression-engine-default`
+- Tag: `inpublic-barebones-v0`
+- The checkpoint truthfully contains the completed strip-down, architecture/control-plane, Canvas boundary, and Canvas perception phases. Phase 6 durable-memory work begins after it.
