@@ -1,4 +1,4 @@
-import type { CanvasObservation } from "../canvas";
+import type { AgentPresencePort, AgentPresenceState, CanvasObservation } from "../canvas";
 import type { ScenePlan, WorldState } from "../expression/schemas";
 import type { VisualAction, VisualActionDispatcher } from "../visual-actions";
 import {
@@ -36,6 +36,22 @@ export interface CreateVisualAgentOptions {
   source: VisualAgentSource;
   dispatcher: VisualActionDispatcher;
   decisionProvider?: AgentDecisionProvider;
+  /** Optional Canvas-owned, model-free visible lifecycle sink. */
+  presence?: AgentPresencePort;
+}
+
+function actionPresence(action: VisualAction, world: WorldState): AgentPresenceState {
+  if (action.type === "update_entity" || action.type === "remove_entity" || action.type === "focus") {
+    return { status: "acting", target: { entityId: action.entityId }, gesture: "pointer" };
+  }
+  if (action.type === "relate_entities") {
+    return { status: "acting", target: { entityId: action.targetEntityId }, gesture: "pointer" };
+  }
+  if (action.type === "remove_relation") {
+    const relation = world.relations.find((candidate) => candidate.id === action.relationId);
+    if (relation) return { status: "acting", target: { entityId: relation.target }, gesture: "pointer" };
+  }
+  return { status: "acting", gesture: "none" };
 }
 
 function budget(value: number | undefined): number {
@@ -109,7 +125,7 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
     async run(instruction: string, runOptions: VisualAgentRunOptions = {}): Promise<AgentRunResult> {
       const text = instruction.trim();
       const maxSteps = budget(runOptions.maxSteps);
-      const trace: AgentRunTrace = { instruction: text.slice(0, 2000), budget: maxSteps, steps: [] };
+      const trace: AgentRunTrace = { instruction: text.slice(0, 2000), budget: maxSteps, steps: [], presence: [] };
       if (running) return result("blocked", 0, trace, "visual agent is already running");
       if (!text || text.length > 2000) return result("blocked", 0, trace, "instruction must contain 1 to 2000 characters");
       const provider = runOptions.decisionProvider ?? options.decisionProvider;
@@ -117,17 +133,32 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
 
       running = true;
       let actions = 0;
+      let outcome: AgentRunResult["status"] = "blocked";
       let previousTurn: PreviousAgentTurn | undefined;
       let previousOutcome: { actionKey: string; observedKey: string; feedback: AgentActionFeedback } | undefined;
       let consecutiveAppliedWithoutProgress = 0;
+      const signal = (
+        phase: AgentRunTrace["presence"][number]["phase"],
+        state: AgentPresenceState,
+        step = actions + 1,
+      ) => {
+        options.presence?.setState(state);
+        trace.presence.push({ step, phase, state });
+      };
+      const finish = (status: AgentRunResult["status"], reason?: string): AgentRunResult => {
+        outcome = status;
+        return result(status, actions, trace, reason);
+      };
       try {
+        signal("run_started", { status: "observing", gesture: "none" }, 0);
         // One final decision is allowed after the action budget so the model
         // can confirm completion. A further act is not executed.
         for (let decisionIndex = 0; decisionIndex <= maxSteps; decisionIndex += 1) {
+          signal("observation_ready", { status: "observing", gesture: "none" });
           const world = options.source.getWorld();
           const scene = options.source.getScene();
           const observation = options.source.observe();
-          if (!observation) return result("blocked", actions, trace, "canvas observation is unavailable");
+          if (!observation) return finish("blocked", "canvas observation is unavailable");
           const observed = agentRevisions(world, scene, observation);
           const context = buildAgentContext({
             instruction: text,
@@ -138,6 +169,7 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
             step: actions + 1,
             remainingSteps: Math.max(0, maxSteps - actions),
           });
+          signal("decision_started", { status: "thinking", gesture: "none" });
           const attempt = await requestValidatedDecision(provider, context);
           if (attempt.status !== "valid") {
             const stepTrace: AgentStepTrace = {
@@ -149,19 +181,25 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
               },
             };
             trace.steps.push(stepTrace);
-            return result("blocked", actions, trace, attempt.reason);
+            return finish("blocked", attempt.reason);
           }
 
           const decision = attempt.decision;
           const stepTrace: AgentStepTrace = { step: actions + 1, observed, decision };
           trace.steps.push(stepTrace);
-          if (decision.type === "done") return result("completed", actions, trace);
-          if (decision.type === "cannot_complete") return result("blocked", actions, trace, decision.reason);
-          if (actions >= maxSteps) return result("step_limit", actions, trace);
+          if (decision.type === "done") return finish("completed");
+          if (decision.type === "cannot_complete") return finish("blocked", decision.reason);
+          if (actions >= maxSteps) return finish("step_limit");
 
+          const acting = actionPresence(decision.action, world);
+          signal("action_started", acting);
           const actionResult = await options.dispatcher.dispatch(decision.action);
           actions += 1;
           const feedback = actionFeedback(actionResult);
+          signal("action_completed", {
+            ...acting,
+            gesture: feedback.status === "applied" && acting.target ? "highlight" : acting.gesture,
+          }, actions);
           const resultingWorld = options.source.getWorld();
           const resultingScene = options.source.getScene();
           // Mandatory post-action observation. The next loop iteration will
@@ -169,7 +207,7 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
           const resultingObservation = options.source.observe();
           if (!resultingObservation) {
             stepTrace.actionResult = feedback;
-            return result("blocked", actions, trace, "canvas observation became unavailable after action execution");
+            return finish("blocked", "canvas observation became unavailable after action execution");
           }
           const resulting = agentRevisions(resultingWorld, resultingScene, resultingObservation);
           stepTrace.actionResult = feedback;
@@ -180,13 +218,13 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
             (feedback.status === "noop" || feedback.status === "rejected")
             && repeatedOutcome(previousOutcome, decision.action, observedKey, feedback)
           ) {
-            return result("stalled", actions, trace, `repeated ${feedback.status}: ${feedback.reason}`);
+            return finish("stalled", `repeated ${feedback.status}: ${feedback.reason}`);
           }
 
           if (feedback.status === "applied" && noProgress(feedback) && sameRevision(observed, resulting)) {
             consecutiveAppliedWithoutProgress += 1;
             if (consecutiveAppliedWithoutProgress >= 2) {
-              return result("stalled", actions, trace, "actions reported applied without changing semantic or canvas state");
+              return finish("stalled", "actions reported applied without changing semantic or canvas state");
             }
           } else {
             consecutiveAppliedWithoutProgress = 0;
@@ -195,8 +233,15 @@ export function createVisualAgent(options: CreateVisualAgentOptions): VisualAgen
           previousOutcome = { actionKey: stableActionKey(decision.action), observedKey, feedback };
           previousTurn = { action: decision.action, result: feedback };
         }
-        return result("step_limit", actions, trace);
+        return finish("step_limit");
       } finally {
+        options.presence?.clear();
+        trace.presence.push({
+          step: actions,
+          phase: "run_finished",
+          state: { status: "idle", gesture: "none" },
+          outcome,
+        });
         running = false;
       }
     },

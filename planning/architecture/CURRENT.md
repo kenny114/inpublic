@@ -6,19 +6,13 @@ This is the primary visual runtime that exists now. It is a factual map, not a t
                      Explicit instruction
                               │
                               ▼
-                       ┌─────────────┐
-                       │ VisualAgent │
-                       └──────┬──────┘
-                              │
-             ┌────────────────┴────────────────┐
-             ▼                                 ▼
-         WorldState                    CanvasObservation
-             │                                 ▲
-             └──────────────┬──────────────────┘
-                            ▼
-                      AgentDecision
-                            │
-                            ▼
+         WorldState ───────► VisualAgent ◄────── CanvasObservation
+                                │  │
+       lifecycle + semantic id  │  └───────────┐
+                                ▼              ▼
+                        Canvas Presence   AgentDecision
+                        (ephemeral UI)          │
+                                                 ▼
                        VisualAction
                             │
                             ▼
@@ -58,6 +52,8 @@ Canvas application now has one explicit owner. `Board.tsx` mounts Excalidraw and
 Phase 7 adds a geometry-free `VisualAction` language and deterministic dispatcher under `lib/visual-actions/`. Semantic `express`, exact-id update/removal, and relationship actions mutate WorldState through Expression and then reuse the ordinary ScenePlan/RenderPatch/Canvas path. Presentation-only `focus` resolves a semantic id through the current ScenePlan's derived canvas identity and applies a Canvas viewport.
 
 Phase 8 adds one bounded `VisualAgent` under `lib/agent/`. It compacts current WorldState and CanvasObservation into an InPublic-owned model context, validates one strict `AgentDecision`, executes at most one VisualAction, re-observes, feeds compact ActionResult facts into the next decision, and returns a structured terminal status. Default budget is four actions and the boundary caps it at eight. Repeated identical noop/rejection or repeated applied-without-progress stalls deterministically. Development exposes `window.inpublic.runVisualAgent(...)` and an inspectable last run. Scripted decisions exercise the complete loop without provider cost; live decisions use the existing guarded centralized model abstraction. Continuous speech does not invoke this loop.
+
+Phase 9 adds Canvas-owned ephemeral presence under `lib/canvas/presence/`. The Agent emits lifecycle state and semantic entity ids only. Canvas resolves current screen geometry from its ScenePlan identity plus current observation and viewport, then renders a `pointer-events: none` host overlay. The overlay status, point, and temporary outline never become Excalidraw elements, collaborators, tool/cursor state, CanvasObservation revisions, WorldState, undo, or persistence. Human pointer/wheel/key input suppresses gestures temporarily. Reduced motion snaps pointer travel. The loop never awaits display timing and provider-call count is unchanged.
 
 ## DORMANT / NON-DEFAULT EXCEPTION
 
@@ -109,6 +105,15 @@ Gemini Live is enabled only when `NEXT_PUBLIC_ENGINE=gemini`; Deepgram is the de
 - Canvas is re-observed after every action and ActionResult is explicit feedback.
 - Terminal statuses are completed, blocked, step_limit, or stalled.
 - No generic canvas/world reconciliation, action batches, multi-agent swarm, or continuous-speech rerouting exists.
+
+## Phase 9 visible agent presence
+
+- Visible lifecycle states: idle, observing, thinking, acting, and a reserved speaking capability with no fabricated audio.
+- Acting attention targets stable semantic entity ids; the model never receives overlay coordinates.
+- Canvas resolves current object bounds and viewport pixels and owns all display timing.
+- The overlay is non-interactive and writes no editor, semantic, persistence, selection, or undo state.
+- Presence lifecycle events extend the structured agent trace without hidden reasoning or additional model calls.
+- Native Excalidraw collaborator, laser, highlight-app-state, cursor, and active-tool APIs are intentionally unused.
 
 ## Phase 4 verification
 

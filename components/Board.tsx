@@ -130,6 +130,7 @@ import {
 } from "@/lib/pageArrivalCoalescing";
 import { features, isLivePresentationV2Enabled, isExpressionEngineV1Enabled, isExpressionDebugOnlyEnabled, isLiveCaptureModeEnabled, isAgentBridgeEnabled } from "@/lib/features";
 import { createExcalidrawCanvasRuntime, boundsOf, decideExpressionOverflow, type CanvasRuntime, type OverflowInfo } from "@/lib/canvas";
+import { AgentPresenceOverlay } from "@/lib/canvas/presence/overlay";
 import {
   createScriptedDecisionProvider,
   createVisualAgent,
@@ -858,6 +859,7 @@ export default function Board({
       },
       dispatcher: visualActionDispatcher,
       decisionProvider: requestVisualAgentDecision,
+      presence: canvasRuntime.presence,
     });
   }
 
@@ -897,11 +899,13 @@ export default function Board({
   const markPointerInput = useCallback(() => {
     lastPointerInputRef.current = Date.now();
     lastUserInputRef.current = Date.now();
-  }, []);
+    canvasRuntime.presence.noteHumanInteraction();
+  }, [canvasRuntime]);
 
   const markUserInput = useCallback(() => {
     lastUserInputRef.current = Date.now();
-  }, []);
+    canvasRuntime.presence.noteHumanInteraction();
+  }, [canvasRuntime]);
 
   const waitForIdleHands = useCallback(async () => {
     for (;;) {
@@ -3990,12 +3994,16 @@ export default function Board({
        */
       runVisualAgent: async (
         instruction: string,
-        options: { maxSteps?: number; decisions?: unknown[] } = {},
+        options: { maxSteps?: number; decisions?: unknown[]; decisionDelayMs?: number } = {},
       ) => {
+        const scripted = options.decisions ? createScriptedDecisionProvider(options.decisions) : undefined;
         const result = await visualAgentRef.current!.run(instruction, {
           maxSteps: options.maxSteps,
-          decisionProvider: options.decisions
-            ? createScriptedDecisionProvider(options.decisions)
+          decisionProvider: scripted
+            ? async (context) => {
+                if (options.decisionDelayMs) await sleep(Math.max(0, options.decisionDelayMs));
+                return scripted(context);
+              }
             : undefined,
         });
         lastVisualAgentRunRef.current = result;
@@ -4003,6 +4011,8 @@ export default function Board({
       },
       /** Most recent structured agent trace; no hidden model reasoning. */
       agentLastRun: () => lastVisualAgentRunRef.current,
+      /** Canvas-owned ephemeral presence. Coordinates here are debug output, never model input. */
+      agentPresence: () => canvasRuntime.presence.getSnapshot(),
       /** Versioned, validated semantic memory used by persistence and smoke tests. */
       expressionState: () => expressionControllerRef.current?.snapshotState() ?? null,
       /** Development-only structural snapshot of live canvas reality. */
@@ -4177,6 +4187,8 @@ export default function Board({
         {/* Any child suppresses the default main menu and welcome screen. */}
         <></>
       </Excalidraw>
+
+      <AgentPresenceOverlay controller={canvasRuntime.presence} />
 
       {process.env.NEXT_PUBLIC_COMPOSITION_DEBUG === "true" && (
         <div className="pointer-events-none fixed inset-0 z-[80]" aria-hidden="true">

@@ -1,4 +1,5 @@
 export { createExcalidrawCanvasRuntime } from "./excalidraw/adapter";
+export { createCanvasPresenceController } from "./presence/controller";
 export {
   boundsOf,
   createExpressionIdentity,
@@ -22,3 +23,13 @@ export type {
   CanvasSelection,
   CanvasViewport,
 } from "./types";
+export type {
+  AgentPresenceGesture,
+  AgentPresencePort,
+  AgentPresenceState,
+  AgentPresenceStatus,
+  AgentPresenceTarget,
+  CanvasPresenceController,
+  CanvasPresenceGeometry,
+  CanvasPresenceSnapshot,
+} from "./presence/types";

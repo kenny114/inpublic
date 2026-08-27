@@ -3,6 +3,7 @@ import type { Sketch } from "../expression/draw/schemas";
 import type { Pen } from "../ops";
 import type { SceneElement } from "../scene";
 import type { OverflowInfo, OverflowPolicy, SyncExpressionCanvasResult } from "./excalidraw/sync";
+import type { CanvasPresenceController } from "./presence/types";
 
 export interface CanvasViewport {
   scrollX: number;
@@ -66,6 +67,8 @@ export interface ApplyExpressionInput {
 
 /** The current application-facing canvas contract. Observation is snapshot-only and read-only. */
 export interface CanvasRuntime {
+  /** Ephemeral host-layer presence; never part of the semantic canvas snapshot. */
+  readonly presence: CanvasPresenceController;
   attach(api: unknown): void;
   preload(): Promise<void>;
   applyElements(elements: SceneElement[]): void;

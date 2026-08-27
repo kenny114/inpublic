@@ -6,18 +6,16 @@ The target is a live visual expressive agent with a closed observation/action lo
                 Instruction
                      │
                      ▼
-                VisualAgent ◄──────────────┐
-                 │      │                  │
-                 ▼      ▼                  │
-            WorldState  CanvasObservation │
-                 └───┬──┘                  │
-                     ▼                     │
-               AgentDecision               │
-                     │                     │
-                     ▼                     │
-               VisualAction                │
-                     │                     │
-              Action Dispatcher            │
+  WorldState ────► VisualAgent ◄──── CanvasObservation ─────┐
+                   │       │                                │
+ lifecycle +       │       ▼                                │
+ semantic id       │  AgentDecision                         │
+                   ▼       │                                │
+          Canvas Presence  ▼                                │
+          (ephemeral UI) VisualAction                        │
+                          │                                 │
+                          ▼                                 │
+                 Action Dispatcher                          │
                 ┌────┴────┐                │
                 ▼         ▼                │
             Semantic   Presentation        │
@@ -58,11 +56,11 @@ Owns visual intent, visual form, composition, `ScenePlan`, and evaluation/repair
 
 ### Canvas
 
-Owns Excalidraw integration, scene application, observation, viewport, canvas identity, and the user/canvas interaction boundary. Excalidraw-specific types stop here.
+Owns Excalidraw integration, scene application, observation, viewport, canvas identity, ephemeral presence rendering, semantic-target geometry resolution, and the user/canvas interaction boundary. Excalidraw-specific types and display coordinates stop here. Presence is not scene content.
 
 ### Agent
 
-Owns observe, compact context, decision validation, action selection, bounded continuation, ActionResult feedback, trace, and stop orchestration. It reuses Meaning, Expression, VisualAction, and Canvas rather than duplicating them. Future work may add product invocation policy, richer supported actions, evaluation, and deliberate drift handling without moving those lower-layer responsibilities into Agent.
+Owns observe, compact context, decision validation, action selection, bounded continuation, ActionResult feedback, lifecycle signals, trace, and stop orchestration. It may identify a presence target semantically but does not own target geometry or display timing. It reuses Meaning, Expression, VisualAction, and Canvas rather than duplicating them. Future work may add product invocation policy, richer supported actions, evaluation, and deliberate drift handling without moving those lower-layer responsibilities into Agent.
 
 ### Session
 

@@ -70,11 +70,17 @@ declare global {
           observation: SmokeCanvasObservation | null;
         };
       }>;
-      runVisualAgent(instruction: string, options?: { maxSteps?: number; decisions?: unknown[] }): Promise<{
+      runVisualAgent(instruction: string, options?: { maxSteps?: number; decisions?: unknown[]; decisionDelayMs?: number }): Promise<{
         status: "completed" | "blocked" | "step_limit" | "stalled";
         steps: number;
         reason?: string;
         trace: {
+          presence: Array<{
+            step: number;
+            phase: string;
+            state: { status: string; target?: { entityId: string }; gesture?: string };
+            outcome?: string;
+          }>;
           steps: Array<{
             observed: { world: string; expressionScene: string; scene: string; selection: string; viewport: string };
             decision: { type: string };
@@ -91,11 +97,23 @@ declare global {
         };
       }>;
       agentLastRun(): { status: string; steps: number } | null;
+      agentPresence(): {
+        status: string;
+        gesture: string;
+        visible: boolean;
+        suppressed: boolean;
+        target: null | {
+          entityId: string;
+          elementIds: string[];
+          point: { x: number; y: number };
+          bounds: { x: number; y: number; width: number; height: number };
+        };
+      };
       observe(): SmokeCanvasObservation | null;
       expressionState(): {
         version: number;
         world: {
-          entities: Array<{ id: string; label: string }>;
+          entities: Array<{ id: string; label: string; description?: string }>;
           relations: Array<{ id: string; source: string; target: string; type: string }>;
           claims: Array<{ id: string; text: string }>;
           salience: string[];
@@ -103,5 +121,6 @@ declare global {
         };
       } | null;
     };
+    __agentPresenceRun?: ReturnType<Window["inpublic"]["runVisualAgent"]>;
   }
 }

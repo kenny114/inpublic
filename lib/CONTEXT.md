@@ -8,6 +8,7 @@
 - Meaning, identity, references, and semantic relationships: `lib/expression/meaning/` and `lib/expression/world/` today.
 - Visual intent, planning, composition, evaluation, and repair: the corresponding `lib/expression/` stages.
 - Canvas contracts and current Excalidraw conversion, reconciliation, identity, viewport application, and read-only structural observation: `lib/canvas/`; consult `/references/excalidraw/SOURCE.md` before changing them. Files in `lib/expression/render/excalidraw*.ts` are compatibility exports only.
+- Ephemeral agent lifecycle display, semantic-target geometry resolution, motion, emphasis expiry, reduced-motion handling, and human-interaction suppression: `lib/canvas/presence/`. It is host UI, not an Excalidraw scene or collaborator.
 - Durable session/project state: `lib/persist.ts`, `lib/sessions.ts`, and project APIs.
 - Expression's versioned persistence schema and validation: `lib/expression/persistence.ts`; Session carries its output as `PersistedSession.expressionState` but must not interpret entity-resolution semantics.
 - Exact-id semantic action primitives: `lib/expression/actions.ts`. Geometry-free public action validation and semantic/presentation routing: `lib/visual-actions/`.
@@ -21,5 +22,7 @@ LLMs produce semantic intent, never raw canvas geometry. Meaning and state remai
 `VisualAction` is the public control vocabulary. Semantic actions target stable semantic ids, update WorldState first, and re-enter Expression; presentation actions may use Canvas directly without mutating meaning. The dispatcher may depend on Expression and Canvas, but Expression/Meaning must not depend on the dispatcher or CanvasObservation. Action schemas must never expose raw geometry or editor operations. No model belongs in validation or dispatch.
 
 Agent may depend on WorldState types, ScenePlan identity, CanvasObservation, and the VisualAction dispatcher. Meaning, Expression, Canvas, and VisualAction must not depend on Agent. Agent decisions contain one existing VisualAction or a terminal state; the deterministic loop must re-observe after every action, enforce a hard budget, and return a structured terminal result. Provider prompting stays separate from loop execution. Continuous speech retains the direct Expression path.
+
+Agent may emit lifecycle state and semantic presence targets through the Canvas-owned presence port. It must not resolve geometry. Presence must remain absent from WorldState, ScenePlan, CanvasObservation revisions, VisualAction, persistence, editor tools, cursor state, collaborators, and undo. Presence signals are deterministic loop facts and cannot add a provider call or delay action execution.
 
 Before adding a substantial capability, read `/planning/CONTEXT.md`, define its owner, and write a spec or ADR when the change establishes behavior or architecture.

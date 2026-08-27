@@ -22,6 +22,7 @@ export type {
   AgentDecisionFailure,
   AgentDecisionProvider,
   AgentFinalState,
+  AgentPresenceTraceEvent,
   AgentRevisionSet,
   AgentRunResult,
   AgentRunTrace,

@@ -10,6 +10,7 @@ import {
   SpatialRelationSchema,
 } from "../expression/schemas";
 import { VisualActionSchema, type VisualAction } from "../visual-actions";
+import type { AgentPresenceState } from "../canvas";
 
 const CompactText = z.string().max(240);
 
@@ -179,6 +180,14 @@ export interface AgentRunTrace {
   instruction: string;
   budget: number;
   steps: AgentStepTrace[];
+  presence: AgentPresenceTraceEvent[];
+}
+
+export interface AgentPresenceTraceEvent {
+  step: number;
+  phase: "run_started" | "observation_ready" | "decision_started" | "action_started" | "action_completed" | "run_finished";
+  state: AgentPresenceState;
+  outcome?: AgentRunResult["status"];
 }
 
 export interface AgentFinalState {
