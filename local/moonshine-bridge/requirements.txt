@@ -1,0 +1,4 @@
+useful-moonshine
+websockets
+sounddevice
+numpy

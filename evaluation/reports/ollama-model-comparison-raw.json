@@ -1,0 +1,369 @@
+{
+  "generatedAt": "2026-08-27T16:43:38.906Z",
+  "ollamaBaseUrl": "http://127.0.0.1:11434",
+  "candidates": [
+    "qwen3:4b",
+    "qwen3:1.7b"
+  ],
+  "models": {
+    "qwen3:4b": [
+      {
+        "kind": "expression_extract",
+        "model": "qwen3:4b",
+        "wallMs": 77383,
+        "error": null,
+        "schemaValid": true,
+        "semanticResult": {
+          "entities": [
+            {
+              "id": "traffic",
+              "type": "event",
+              "label": "traffic",
+              "description": "the number of visitors or users",
+              "metric": {
+                "unit": "count",
+                "points": [
+                  {
+                    "value": 200,
+                    "label": "before"
+                  },
+                  {
+                    "value": 500,
+                    "label": "after"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "conversion",
+              "type": "event",
+              "label": "conversion",
+              "description": "the rate at which users complete a desired action",
+              "metric": {
+                "unit": "percent",
+                "points": [
+                  {
+                    "value": 100,
+                    "label": "flat"
+                  }
+                ]
+              }
+            }
+          ],
+          "relations": [
+            {
+              "id": "r0",
+              "source": "traffic",
+              "type": "contrasts_with",
+              "target": "conversion"
+            }
+          ],
+          "claims": [],
+          "interpretation": "Traffic increased from 200 to 500 while conversion stayed flat."
+        },
+        "promptTokens": 3656,
+        "outputTokens": 282,
+        "loadDurationMs": 6,
+        "promptEvalDurationMs": 2362,
+        "evalDurationMs": 61369,
+        "totalDurationMs": 77364
+      },
+      {
+        "kind": "communicator_decision",
+        "model": "qwen3:4b",
+        "wallMs": 9242,
+        "error": null,
+        "schemaValid": true,
+        "semanticResult": {
+          "type": "speak",
+          "message": "AI startups often grow by spending heavily on user acquisition, which burns cash but attracts more users. This creates a trade-off: more users (growth) vs. less cash (financial weakness)."
+        },
+        "promptTokens": 852,
+        "outputTokens": 55,
+        "loadDurationMs": 14,
+        "promptEvalDurationMs": 216,
+        "evalDurationMs": 6216,
+        "totalDurationMs": 9235
+      },
+      {
+        "kind": "communicator_shaping",
+        "model": "qwen3:4b",
+        "wallMs": 34541,
+        "error": null,
+        "schemaValid": true,
+        "semanticResult": {
+          "entities": [
+            {
+              "id": "model-costs-growth",
+              "type": "quantity",
+              "label": "model costs growth",
+              "quantity": {
+                "value": 1,
+                "unit": "percentage"
+              }
+            },
+            {
+              "id": "revenue-growth",
+              "type": "quantity",
+              "label": "revenue growth",
+              "quantity": {
+                "value": 1,
+                "unit": "percentage"
+              }
+            }
+          ],
+          "relations": [
+            {
+              "id": "r0",
+              "source": "model-costs-growth",
+              "type": "contrasts_with",
+              "target": "revenue-growth"
+            },
+            {
+              "id": "r1",
+              "source": "model-costs-growth",
+              "type": "prevents",
+              "target": "revenue-growth"
+            }
+          ],
+          "claims": [
+            {
+              "id": "c0",
+              "text": "Model costs are growing faster than revenue."
+            }
+          ],
+          "interpretation": "Model costs are growing faster than revenue, creating a financial tension where increasing costs outpace revenue growth."
+        },
+        "promptTokens": 391,
+        "outputTokens": 264,
+        "loadDurationMs": 5,
+        "promptEvalDurationMs": 909,
+        "evalDurationMs": 32912,
+        "totalDurationMs": 34536
+      },
+      {
+        "kind": "agent_decision",
+        "model": "qwen3:4b",
+        "wallMs": 34845,
+        "error": null,
+        "schemaValid": true,
+        "semanticResult": {
+          "type": "act",
+          "action": {
+            "type": "express",
+            "meaning": {
+              "entities": [
+                {
+                  "id": "entity-0",
+                  "type": "object",
+                  "label": "revenue"
+                }
+              ],
+              "relations": [
+                {
+                  "id": "relation-0",
+                  "source": "entity-0",
+                  "type": "located_at",
+                  "target": "canvas"
+                }
+              ],
+              "claims": [
+                {
+                  "id": "claim-0",
+                  "text": "revenue is a box"
+                }
+              ],
+              "interpretation": "revenue"
+            }
+          }
+        },
+        "promptTokens": 623,
+        "outputTokens": 153,
+        "loadDurationMs": 5,
+        "promptEvalDurationMs": 15168,
+        "evalDurationMs": 19539,
+        "totalDurationMs": 34840
+      }
+    ],
+    "qwen3:1.7b": [
+      {
+        "kind": "expression_extract",
+        "model": "qwen3:1.7b",
+        "wallMs": 55360,
+        "error": null,
+        "schemaValid": true,
+        "semanticResult": {
+          "entities": [
+            {
+              "id": "traffic",
+              "type": "event",
+              "label": "traffic",
+              "description": "the number of visitors or users",
+              "metric": {
+                "unit": "count",
+                "points": [
+                  {
+                    "value": 200,
+                    "label": "before"
+                  },
+                  {
+                    "value": 500,
+                    "label": "after"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "conversion",
+              "type": "event",
+              "label": "conversion",
+              "description": "the rate at which users complete a desired action",
+              "metric": {
+                "unit": "percent",
+                "points": [
+                  {
+                    "value": 100,
+                    "label": "flat"
+                  }
+                ]
+              }
+            }
+          ],
+          "relations": [
+            {
+              "id": "r0",
+              "source": "traffic",
+              "type": "contrasts_with",
+              "target": "conversion"
+            }
+          ],
+          "claims": [],
+          "interpretation": "Traffic increased from 200 to 500 while conversion stayed flat."
+        },
+        "promptTokens": 3656,
+        "outputTokens": 282,
+        "loadDurationMs": 5,
+        "promptEvalDurationMs": 268,
+        "evalDurationMs": 54609,
+        "totalDurationMs": 55354
+      },
+      {
+        "kind": "communicator_decision",
+        "model": "qwen3:1.7b",
+        "wallMs": 6720,
+        "error": null,
+        "schemaValid": true,
+        "semanticResult": {
+          "type": "speak",
+          "message": "AI startups often grow by spending heavily on user acquisition, which burns cash but attracts more users. This creates a trade-off: more users (growth) vs. less cash (financial weakness)."
+        },
+        "promptTokens": 852,
+        "outputTokens": 55,
+        "loadDurationMs": 4,
+        "promptEvalDurationMs": 184,
+        "evalDurationMs": 6268,
+        "totalDurationMs": 6716
+      },
+      {
+        "kind": "communicator_shaping",
+        "model": "qwen3:1.7b",
+        "wallMs": 28248,
+        "error": null,
+        "schemaValid": true,
+        "semanticResult": {
+          "entities": [
+            {
+              "id": "model-costs-growth",
+              "type": "quantity",
+              "label": "model costs growth",
+              "quantity": {
+                "value": 1,
+                "unit": "percentage"
+              }
+            },
+            {
+              "id": "revenue-growth",
+              "type": "quantity",
+              "label": "revenue growth",
+              "quantity": {
+                "value": 1,
+                "unit": "percentage"
+              }
+            }
+          ],
+          "relations": [
+            {
+              "id": "r0",
+              "source": "model-costs-growth",
+              "type": "contrasts_with",
+              "target": "revenue-growth"
+            },
+            {
+              "id": "r1",
+              "source": "model-costs-growth",
+              "type": "prevents",
+              "target": "revenue-growth"
+            }
+          ],
+          "claims": [
+            {
+              "id": "c0",
+              "text": "Model costs are growing faster than revenue."
+            }
+          ],
+          "interpretation": "Model costs are growing faster than revenue, creating a financial tension where increasing costs outpace revenue growth."
+        },
+        "promptTokens": 391,
+        "outputTokens": 263,
+        "loadDurationMs": 3,
+        "promptEvalDurationMs": 146,
+        "evalDurationMs": 28018,
+        "totalDurationMs": 28243
+      },
+      {
+        "kind": "agent_decision",
+        "model": "qwen3:1.7b",
+        "wallMs": 19100,
+        "error": null,
+        "schemaValid": true,
+        "semanticResult": {
+          "type": "act",
+          "action": {
+            "type": "express",
+            "meaning": {
+              "entities": [
+                {
+                  "id": "entity-0",
+                  "type": "object",
+                  "label": "revenue"
+                }
+              ],
+              "relations": [
+                {
+                  "id": "relation-0",
+                  "source": "entity-0",
+                  "type": "has_property",
+                  "target": "entity-1"
+                }
+              ],
+              "claims": [
+                {
+                  "id": "claim-0",
+                  "text": "revenue is a financial metric",
+                  "confidence": "high"
+                }
+              ],
+              "interpretation": "revenue is a financial metric"
+            }
+          }
+        },
+        "promptTokens": 623,
+        "outputTokens": 167,
+        "loadDurationMs": 4,
+        "promptEvalDurationMs": 174,
+        "evalDurationMs": 18808,
+        "totalDurationMs": 19094
+      }
+    ]
+  }
+}

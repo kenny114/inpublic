@@ -6,7 +6,7 @@ import {
   VISUAL_AGENT_MODEL,
 } from "@/lib/agent/model";
 import { providerFor } from "@/lib/llm";
-import { guardProviderRequest, reconcileProviderCost, type ProviderUsage } from "@/lib/server/provider-guard";
+import { guardProviderRequest, reconcileProviderCost, type GuardContext, type ProviderUsage } from "@/lib/server/provider-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -31,25 +31,34 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: { code: "invalid_context", message: "Invalid visual agent context." } }, { status: 400 });
   }
 
-  const guard = await guardProviderRequest(request, {
-    feature: "visual-agent",
-    provider: providerFor(VISUAL_AGENT_MODEL),
-    model: VISUAL_AGENT_MODEL,
-    requestBytes: Buffer.byteLength(raw),
-    maxOutputTokens: VISUAL_AGENT_MAX_OUTPUT_TOKENS,
-    allowDevelopmentReplay: true,
-  });
-  if (guard instanceof Response) return guard;
+  const modelProvider = providerFor(VISUAL_AGENT_MODEL);
+  // Ollama is a free local process with no cost/rate-limit exposure to
+  // protect — the billing guard exists for the cloud providers it was built
+  // for (see lib/server/provider-guard.ts's provider_rate_cards lookup),
+  // which have no row for a local model and would 503 with rate_card_missing.
+  let guard: GuardContext | null = null;
+  if (modelProvider !== "ollama") {
+    const guarded = await guardProviderRequest(request, {
+      feature: "visual-agent",
+      provider: modelProvider,
+      model: VISUAL_AGENT_MODEL,
+      requestBytes: Buffer.byteLength(raw),
+      maxOutputTokens: VISUAL_AGENT_MAX_OUTPUT_TOKENS,
+      allowDevelopmentReplay: true,
+    });
+    if (guarded instanceof Response) return guarded;
+    guard = guarded;
+  }
 
   let usage: ProviderUsage = {};
   try {
     const decision = await decideWithVisualAgentModel(context.data, (value) => {
       usage = value;
     });
-    await reconcileProviderCost(guard, "succeeded", usage);
+    if (guard) await reconcileProviderCost(guard, "succeeded", usage);
     return NextResponse.json({ decision });
   } catch (error) {
-    await reconcileProviderCost(guard, "failed", usage);
+    if (guard) await reconcileProviderCost(guard, "failed", usage);
     console.error("[visual-agent]", error);
     return NextResponse.json(
       { error: { code: "decision_failed", message: "Visual agent decision failed." } },

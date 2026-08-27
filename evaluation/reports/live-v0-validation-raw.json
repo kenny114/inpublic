@@ -1,0 +1,4969 @@
+{
+  "generatedAt": "2026-08-27T14:10:57.405Z",
+  "scenarios": [
+    {
+      "id": "eval1-pure-expression",
+      "description": "60-90s natural speech, mostly new meaning",
+      "routeDecisions": [
+        "express",
+        "express",
+        "express",
+        "express",
+        "express",
+        "express",
+        "express"
+      ],
+      "zeroDrawEvents": 7,
+      "concepts": 24,
+      "relationships": 26,
+      "clipping": false,
+      "overlaps": 0,
+      "duplicateConcepts": [],
+      "unexpectedAgentInvocation": [],
+      "cameraMovement": 0,
+      "firstVisualLatencyMs": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "totalWallMs": 22836,
+      "finalWorld": {
+        "entities": [
+          {
+            "id": "speaker-group",
+            "type": "group",
+            "label": "We"
+          },
+          {
+            "id": "onboarding-flow",
+            "type": "object",
+            "label": "onboarding flow"
+          },
+          {
+            "id": "new-customers",
+            "type": "group",
+            "label": "new customers"
+          },
+          {
+            "id": "redesigning",
+            "type": "action",
+            "label": "redesigning"
+          },
+          {
+            "id": "account-creation",
+            "type": "action",
+            "label": "account creation"
+          },
+          {
+            "id": "pick-workspace-name",
+            "type": "action",
+            "label": "pick workspace name"
+          },
+          {
+            "id": "invite-teammates",
+            "type": "action",
+            "label": "invite teammates"
+          },
+          {
+            "id": "product-tour",
+            "type": "action",
+            "label": "product tour"
+          },
+          {
+            "id": "dashboard",
+            "type": "object",
+            "label": "dashboard"
+          },
+          {
+            "id": "reporting-view",
+            "type": "object",
+            "label": "reporting view"
+          },
+          {
+            "id": "settings-panel",
+            "type": "object",
+            "label": "settings panel"
+          },
+          {
+            "id": "connect-a-data-source",
+            "type": "action",
+            "label": "connect a data source"
+          },
+          {
+            "id": "spreadsheet-import",
+            "type": "concept",
+            "label": "spreadsheet import"
+          },
+          {
+            "id": "direct-database-connection",
+            "type": "concept",
+            "label": "direct database connection"
+          },
+          {
+            "id": "validation-check",
+            "type": "action",
+            "label": "validation check"
+          },
+          {
+            "id": "data-source",
+            "type": "object",
+            "label": "data source"
+          },
+          {
+            "id": "missing-columns",
+            "type": "concept",
+            "label": "missing columns"
+          },
+          {
+            "id": "formatting-problems",
+            "type": "concept",
+            "label": "formatting problems"
+          },
+          {
+            "id": "starter-dashboard",
+            "type": "object",
+            "label": "starter dashboard"
+          },
+          {
+            "id": "user",
+            "type": "person",
+            "label": "user"
+          },
+          {
+            "id": "product-feels-empty",
+            "type": "state",
+            "label": "product feels empty"
+          },
+          {
+            "id": "technical-users",
+            "type": "group",
+            "label": "technical users"
+          },
+          {
+            "id": "onboarding-time-for-technical-users",
+            "type": "quantity",
+            "label": "onboarding time for technical users"
+          },
+          {
+            "id": "onboarding-time-for-non-technical-users",
+            "type": "quantity",
+            "label": "onboarding time for non-technical users"
+          }
+        ],
+        "relations": [
+          {
+            "source": "speaker-group",
+            "type": "wants",
+            "target": "redesigning"
+          },
+          {
+            "source": "onboarding-flow",
+            "type": "member_of",
+            "target": "new-customers"
+          },
+          {
+            "source": "account-creation",
+            "type": "part_of",
+            "target": "onboarding-flow"
+          },
+          {
+            "source": "pick-workspace-name",
+            "type": "part_of",
+            "target": "account-creation"
+          },
+          {
+            "source": "invite-teammates",
+            "type": "part_of",
+            "target": "account-creation"
+          },
+          {
+            "source": "pick-workspace-name",
+            "type": "precedes",
+            "target": "invite-teammates"
+          },
+          {
+            "source": "account-creation",
+            "type": "precedes",
+            "target": "product-tour"
+          },
+          {
+            "source": "product-tour",
+            "type": "part_of",
+            "target": "onboarding-flow"
+          },
+          {
+            "source": "dashboard",
+            "type": "part_of",
+            "target": "product-tour"
+          },
+          {
+            "source": "reporting-view",
+            "type": "part_of",
+            "target": "product-tour"
+          },
+          {
+            "source": "settings-panel",
+            "type": "part_of",
+            "target": "product-tour"
+          },
+          {
+            "source": "product-tour",
+            "type": "precedes",
+            "target": "connect-a-data-source"
+          },
+          {
+            "source": "connect-a-data-source",
+            "type": "part_of",
+            "target": "onboarding-flow"
+          },
+          {
+            "source": "spreadsheet-import",
+            "type": "instance_of",
+            "target": "connect-a-data-source"
+          },
+          {
+            "source": "direct-database-connection",
+            "type": "instance_of",
+            "target": "connect-a-data-source"
+          },
+          {
+            "source": "data-source",
+            "type": "precedes",
+            "target": "validation-check"
+          },
+          {
+            "source": "validation-check",
+            "type": "depends_on",
+            "target": "data-source"
+          },
+          {
+            "source": "validation-check",
+            "type": "contains",
+            "target": "missing-columns"
+          },
+          {
+            "source": "validation-check",
+            "type": "contains",
+            "target": "formatting-problems"
+          },
+          {
+            "source": "validation-check",
+            "type": "precedes",
+            "target": "starter-dashboard"
+          },
+          {
+            "source": "user",
+            "type": "depends_on",
+            "target": "validation-check"
+          },
+          {
+            "source": "starter-dashboard",
+            "type": "prevents",
+            "target": "product-feels-empty"
+          },
+          {
+            "source": "onboarding-flow",
+            "type": "has_property",
+            "target": "onboarding-time-for-technical-users"
+          },
+          {
+            "source": "onboarding-flow",
+            "type": "has_property",
+            "target": "onboarding-time-for-non-technical-users"
+          },
+          {
+            "source": "technical-users",
+            "type": "instance_of",
+            "target": "onboarding-flow"
+          },
+          {
+            "source": "user",
+            "type": "instance_of",
+            "target": "onboarding-flow"
+          }
+        ]
+      },
+      "events": [
+        {
+          "atMs": 0,
+          "event": "speech_settled",
+          "id": "e1-0",
+          "text": "We're redesigning the onboarding flow for new customers."
+        },
+        {
+          "atMs": 1,
+          "event": "route_trace",
+          "id": "e1-0",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 1,
+          "event": "route_trace",
+          "id": "e1-0",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2862,
+          "event": "model_call_expression",
+          "text": "We're redesigning the onboarding flow for new customers.",
+          "ms": 2857,
+          "usage": {
+            "providerRequestId": "msg_011CeTPTmYgmdRk3k745xnX4",
+            "inputTokens": 3932,
+            "outputTokens": 333,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 2901,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 1
+        },
+        {
+          "atMs": 2901,
+          "event": "route_trace",
+          "id": "e1-0",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2901,
+          "event": "turn_result",
+          "id": "e1-0",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2901,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 2901,
+          "event": "speech_settled",
+          "id": "e1-1",
+          "text": "The first step is account creation, where someone picks a workspace name and invites a couple of teammates."
+        },
+        {
+          "atMs": 2902,
+          "event": "route_trace",
+          "id": "e1-1",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2902,
+          "event": "route_trace",
+          "id": "e1-1",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 5520,
+          "event": "model_call_expression",
+          "text": "The first step is account creation, where someone picks a workspace name and invites a couple of teammates.",
+          "ms": 2617,
+          "usage": {
+            "providerRequestId": "msg_011CeTPTwsYTVcFE2CFnmCqU",
+            "inputTokens": 3954,
+            "outputTokens": 471,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 5533,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 2
+        },
+        {
+          "atMs": 5533,
+          "event": "route_trace",
+          "id": "e1-1",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 5533,
+          "event": "turn_result",
+          "id": "e1-1",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2632,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 5533,
+          "event": "speech_settled",
+          "id": "e1-2",
+          "text": "After that comes a short product tour that highlights the three main modules: the dashboard, the reporting view, and the settings panel."
+        },
+        {
+          "atMs": 5533,
+          "event": "route_trace",
+          "id": "e1-2",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 5533,
+          "event": "route_trace",
+          "id": "e1-2",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 9674,
+          "event": "model_call_expression",
+          "text": "After that comes a short product tour that highlights the three main modules: the dashboard, the reporting view, and the",
+          "ms": 4129,
+          "usage": {
+            "providerRequestId": "msg_011CeTPU9GQBvdS7qARsHPjE",
+            "inputTokens": 3981,
+            "outputTokens": 553,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 9686,
+          "event": "scene_update",
+          "objects": 5,
+          "revision": 3
+        },
+        {
+          "atMs": 9686,
+          "event": "route_trace",
+          "id": "e1-2",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 9686,
+          "event": "turn_result",
+          "id": "e1-2",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 4153,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 9686,
+          "event": "speech_settled",
+          "id": "e1-3",
+          "text": "Then we ask them to connect a data source, usually a spreadsheet import or a direct database connection."
+        },
+        {
+          "atMs": 9687,
+          "event": "route_trace",
+          "id": "e1-3",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 9687,
+          "event": "route_trace",
+          "id": "e1-3",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 13514,
+          "event": "model_call_expression",
+          "text": "Then we ask them to connect a data source, usually a spreadsheet import or a direct database connection.",
+          "ms": 3823,
+          "usage": {
+            "providerRequestId": "msg_011CeTPUSsZQ8KNv1mTAh47d",
+            "inputTokens": 4003,
+            "outputTokens": 713,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 13526,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 4
+        },
+        {
+          "atMs": 13526,
+          "event": "route_trace",
+          "id": "e1-3",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 13526,
+          "event": "turn_result",
+          "id": "e1-3",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 3840,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 13526,
+          "event": "speech_settled",
+          "id": "e1-4",
+          "text": "Once a data source is connected, we run a validation check that looks for missing columns and obvious formatting problems."
+        },
+        {
+          "atMs": 13526,
+          "event": "route_trace",
+          "id": "e1-4",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 13526,
+          "event": "route_trace",
+          "id": "e1-4",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 16022,
+          "event": "model_call_expression",
+          "text": "Once a data source is connected, we run a validation check that looks for missing columns and obvious formatting problem",
+          "ms": 2493,
+          "usage": {
+            "providerRequestId": "msg_011CeTPUjXv2KgNJG92J8dv4",
+            "inputTokens": 4026,
+            "outputTokens": 408,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 16049,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 5
+        },
+        {
+          "atMs": 16049,
+          "event": "route_trace",
+          "id": "e1-4",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 16049,
+          "event": "turn_result",
+          "id": "e1-4",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2523,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 16049,
+          "event": "speech_settled",
+          "id": "e1-5",
+          "text": "If validation passes, the user lands on a starter dashboard that's pre-populated with a few sample charts so the product doesn't feel empty."
+        },
+        {
+          "atMs": 16049,
+          "event": "route_trace",
+          "id": "e1-5",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 16049,
+          "event": "route_trace",
+          "id": "e1-5",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 19287,
+          "event": "model_call_expression",
+          "text": "If validation passes, the user lands on a starter dashboard that's pre-populated with a few sample charts so the product",
+          "ms": 3224,
+          "usage": {
+            "providerRequestId": "msg_011CeTPUv7QVQEygc97sq38A",
+            "inputTokens": 4056,
+            "outputTokens": 489,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 19298,
+          "event": "scene_update",
+          "objects": 7,
+          "revision": 6
+        },
+        {
+          "atMs": 19298,
+          "event": "route_trace",
+          "id": "e1-5",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 19298,
+          "event": "turn_result",
+          "id": "e1-5",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 3249,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 19298,
+          "event": "speech_settled",
+          "id": "e1-6",
+          "text": "The whole thing is meant to take under five minutes for a technical user and under ten for someone non-technical."
+        },
+        {
+          "atMs": 19298,
+          "event": "route_trace",
+          "id": "e1-6",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 19298,
+          "event": "route_trace",
+          "id": "e1-6",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 22826,
+          "event": "model_call_expression",
+          "text": "The whole thing is meant to take under five minutes for a technical user and under ten for someone non-technical.",
+          "ms": 3523,
+          "usage": {
+            "providerRequestId": "msg_011CeTPVA9Fth2kKqZyjszgu",
+            "inputTokens": 4080,
+            "outputTokens": 608,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 22836,
+          "event": "scene_update",
+          "objects": 8,
+          "revision": 7
+        },
+        {
+          "atMs": 22836,
+          "event": "route_trace",
+          "id": "e1-6",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 22836,
+          "event": "turn_result",
+          "id": "e1-6",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 3538,
+          "modelCalls": 1,
+          "agentSteps": 0
+        }
+      ]
+    },
+    {
+      "id": "eval2-existing-world-manipulation",
+      "description": "connect/update/correct/remove/focus against existing content",
+      "seedWorld": {
+        "entities": [
+          {
+            "id": "release",
+            "label": "release"
+          },
+          {
+            "id": "latency",
+            "label": "latency"
+          },
+          {
+            "id": "cost-overruns",
+            "label": "cost overruns"
+          },
+          {
+            "id": "security-review",
+            "label": "security review"
+          }
+        ]
+      },
+      "turns": [
+        {
+          "kind": "connect",
+          "text": "Connect the security review to the cost overruns.",
+          "route": "manipulate",
+          "status": "completed",
+          "agentStatus": "completed",
+          "agentSteps": 1,
+          "visualActions": [
+            {
+              "type": "relate_entities",
+              "sourceEntityId": "security-review",
+              "targetEntityId": "cost-overruns",
+              "relation": {
+                "type": "relates_to"
+              }
+            }
+          ],
+          "actionResults": [
+            {
+              "status": "applied",
+              "actionType": "relate_entities",
+              "category": "semantic",
+              "reason": "related security-review to cost-overruns",
+              "changed": {
+                "world": true,
+                "expressionScene": true,
+                "canvasScene": true,
+                "selection": false,
+                "viewport": false
+              }
+            }
+          ],
+          "entitiesBefore": 4,
+          "entitiesAfter": 4,
+          "relationsBefore": 3,
+          "relationsAfter": 4
+        },
+        {
+          "kind": "update",
+          "text": "Change latency to Latency Regression.",
+          "route": "manipulate",
+          "status": "completed",
+          "agentStatus": "completed",
+          "agentSteps": 1,
+          "visualActions": [
+            {
+              "type": "update_entity",
+              "entityId": "latency",
+              "changes": {
+                "label": "Latency Regression"
+              }
+            }
+          ],
+          "actionResults": [
+            {
+              "status": "applied",
+              "actionType": "update_entity",
+              "category": "semantic",
+              "reason": "updated entity latency",
+              "changed": {
+                "world": true,
+                "expressionScene": true,
+                "canvasScene": true,
+                "selection": false,
+                "viewport": false
+              }
+            }
+          ],
+          "entitiesBefore": 4,
+          "entitiesAfter": 4,
+          "relationsBefore": 4,
+          "relationsAfter": 4
+        },
+        {
+          "kind": "correct",
+          "text": "Actually, that should be the security review, not latency.",
+          "route": "manipulate",
+          "status": "failed",
+          "agentStatus": "blocked",
+          "agentSteps": 0,
+          "visualActions": [],
+          "actionResults": [],
+          "entitiesBefore": 4,
+          "entitiesAfter": 4,
+          "relationsBefore": 4,
+          "relationsAfter": 4
+        },
+        {
+          "kind": "remove",
+          "text": "Remove the cost overruns risk.",
+          "route": "manipulate",
+          "status": "completed",
+          "agentStatus": "completed",
+          "agentSteps": 1,
+          "visualActions": [
+            {
+              "type": "remove_entity",
+              "entityId": "cost-overruns"
+            }
+          ],
+          "actionResults": [
+            {
+              "status": "applied",
+              "actionType": "remove_entity",
+              "category": "semantic",
+              "reason": "removed entity cost-overruns",
+              "changed": {
+                "world": true,
+                "expressionScene": true,
+                "canvasScene": true,
+                "selection": false,
+                "viewport": false
+              }
+            }
+          ],
+          "entitiesBefore": 4,
+          "entitiesAfter": 3,
+          "relationsBefore": 4,
+          "relationsAfter": 2
+        },
+        {
+          "kind": "focus",
+          "text": "Focus on the security review.",
+          "route": "present",
+          "status": "completed",
+          "agentStatus": "completed",
+          "agentSteps": 1,
+          "visualActions": [
+            {
+              "type": "focus",
+              "entityId": "security-review"
+            }
+          ],
+          "actionResults": [
+            {
+              "status": "applied",
+              "actionType": "focus",
+              "category": "presentation",
+              "reason": "focused entity security-review",
+              "changed": {
+                "world": false,
+                "expressionScene": false,
+                "canvasScene": false,
+                "selection": false,
+                "viewport": true
+              }
+            }
+          ],
+          "entitiesBefore": 3,
+          "entitiesAfter": 3,
+          "relationsBefore": 2,
+          "relationsAfter": 2
+        }
+      ],
+      "finalWorld": {
+        "entities": [
+          {
+            "id": "release",
+            "type": "event",
+            "label": "release"
+          },
+          {
+            "id": "latency",
+            "type": "concept",
+            "label": "Latency Regression"
+          },
+          {
+            "id": "security-review",
+            "type": "action",
+            "label": "security review"
+          }
+        ],
+        "relations": [
+          {
+            "source": "latency",
+            "type": "part_of",
+            "target": "release"
+          },
+          {
+            "source": "security-review",
+            "type": "part_of",
+            "target": "release"
+          }
+        ]
+      },
+      "events": [
+        {
+          "atMs": 0,
+          "event": "speech_settled",
+          "id": "seed",
+          "text": "The release has three risks: latency, cost overruns, and a security review that's still pending."
+        },
+        {
+          "atMs": 0,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 0,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2538,
+          "event": "model_call_expression",
+          "text": "The release has three risks: latency, cost overruns, and a security review that's still pending.",
+          "ms": 2532,
+          "usage": {
+            "providerRequestId": "msg_011CeTPVRBe2DneufMY19Dxj",
+            "inputTokens": 3942,
+            "outputTokens": 409,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 2541,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 1
+        },
+        {
+          "atMs": 2541,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2541,
+          "event": "turn_result",
+          "id": "seed",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2541,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 2541,
+          "event": "speech_settled",
+          "id": "e2-0-connect",
+          "text": "Connect the security review to the cost overruns."
+        },
+        {
+          "atMs": 2541,
+          "event": "route_trace",
+          "id": "e2-0-connect",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 2542,
+          "event": "route_trace",
+          "id": "e2-0-connect",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 5287,
+          "event": "model_call_agent",
+          "ms": 2743,
+          "usage": {
+            "providerRequestId": "msg_011CeTPVcYFvuLu5NyySs9cB",
+            "inputTokens": 1622,
+            "outputTokens": 45,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "relate_entities",
+              "sourceEntityId": "security-review",
+              "targetEntityId": "cost-overruns",
+              "relation": {
+                "type": "relates_to"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 5292,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 2
+        },
+        {
+          "atMs": 7706,
+          "event": "model_call_agent",
+          "ms": 2413,
+          "usage": {
+            "providerRequestId": "msg_011CeTPVp3ZLN3aoa2hXhitL",
+            "inputTokens": 1771,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 7707,
+          "event": "route_trace",
+          "id": "e2-0-connect",
+          "intent": "manipulate",
+          "status": "completed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 7707,
+          "event": "turn_result",
+          "id": "e2-0-connect",
+          "intent": "manipulate",
+          "status": "completed",
+          "elapsedMs": 5166,
+          "firstVisualLatencyMs": 2751,
+          "modelCalls": 2,
+          "agentSteps": 1
+        },
+        {
+          "atMs": 7707,
+          "event": "speech_settled",
+          "id": "e2-1-update",
+          "text": "Change latency to Latency Regression."
+        },
+        {
+          "atMs": 7708,
+          "event": "route_trace",
+          "id": "e2-1-update",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 7708,
+          "event": "route_trace",
+          "id": "e2-1-update",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 9777,
+          "event": "model_call_agent",
+          "ms": 2069,
+          "usage": {
+            "providerRequestId": "msg_011CeTPVzb4nXS98DXFgMYR6",
+            "inputTokens": 1671,
+            "outputTokens": 35,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "update_entity",
+              "entityId": "latency",
+              "changes": {
+                "label": "Latency Regression"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 9782,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 3
+        },
+        {
+          "atMs": 11118,
+          "event": "model_call_agent",
+          "ms": 1334,
+          "usage": {
+            "providerRequestId": "msg_011CeTPW9CyzcWhQREGHFoYq",
+            "inputTokens": 1760,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 11118,
+          "event": "route_trace",
+          "id": "e2-1-update",
+          "intent": "manipulate",
+          "status": "completed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 11118,
+          "event": "turn_result",
+          "id": "e2-1-update",
+          "intent": "manipulate",
+          "status": "completed",
+          "elapsedMs": 3411,
+          "firstVisualLatencyMs": 2076,
+          "modelCalls": 2,
+          "agentSteps": 1
+        },
+        {
+          "atMs": 11118,
+          "event": "speech_settled",
+          "id": "e2-2-correct",
+          "text": "Actually, that should be the security review, not latency."
+        },
+        {
+          "atMs": 11119,
+          "event": "route_trace",
+          "id": "e2-2-correct",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit correction of existing content"
+        },
+        {
+          "atMs": 11119,
+          "event": "route_trace",
+          "id": "e2-2-correct",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit correction of existing content"
+        },
+        {
+          "atMs": 21062,
+          "event": "model_call_agent",
+          "ms": 9943,
+          "usage": {
+            "providerRequestId": "msg_011CeTPWFJM3K51STNC1JBAK",
+            "inputTokens": 1680,
+            "outputTokens": 369,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "update_entity",
+              "entityId": "security-review",
+              "changes": {
+                "importance": "primary"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 21063,
+          "event": "route_trace",
+          "id": "e2-2-correct",
+          "intent": "manipulate",
+          "status": "failed",
+          "reason": "explicit correction of existing content"
+        },
+        {
+          "atMs": 21064,
+          "event": "turn_result",
+          "id": "e2-2-correct",
+          "intent": "manipulate",
+          "status": "failed",
+          "elapsedMs": 9946,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 21064,
+          "event": "speech_settled",
+          "id": "e2-3-remove",
+          "text": "Remove the cost overruns risk."
+        },
+        {
+          "atMs": 21064,
+          "event": "route_trace",
+          "id": "e2-3-remove",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 21064,
+          "event": "route_trace",
+          "id": "e2-3-remove",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 22814,
+          "event": "model_call_agent",
+          "ms": 1749,
+          "usage": {
+            "providerRequestId": "msg_011CeTPWybonTfZZRAHcgbY8",
+            "inputTokens": 1675,
+            "outputTokens": 27,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "remove_entity",
+              "entityId": "cost-overruns"
+            }
+          }
+        },
+        {
+          "atMs": 22816,
+          "event": "scene_update",
+          "objects": 3,
+          "revision": 4
+        },
+        {
+          "atMs": 26647,
+          "event": "model_call_agent",
+          "ms": 3830,
+          "usage": {
+            "providerRequestId": "msg_011CeTPX78k8ySmTWZK2pXwY",
+            "inputTokens": 1447,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 26647,
+          "event": "route_trace",
+          "id": "e2-3-remove",
+          "intent": "manipulate",
+          "status": "completed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 26647,
+          "event": "turn_result",
+          "id": "e2-3-remove",
+          "intent": "manipulate",
+          "status": "completed",
+          "elapsedMs": 5583,
+          "firstVisualLatencyMs": 1752,
+          "modelCalls": 2,
+          "agentSteps": 1
+        },
+        {
+          "atMs": 26647,
+          "event": "speech_settled",
+          "id": "e2-4-focus",
+          "text": "Focus on the security review."
+        },
+        {
+          "atMs": 26647,
+          "event": "route_trace",
+          "id": "e2-4-focus",
+          "intent": "present",
+          "status": "routed",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 26647,
+          "event": "route_trace",
+          "id": "e2-4-focus",
+          "intent": "present",
+          "status": "running",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 28483,
+          "event": "model_call_agent",
+          "ms": 1835,
+          "usage": {
+            "providerRequestId": "msg_011CeTPXPP3apnHjuD6My6st",
+            "inputTokens": 1368,
+            "outputTokens": 23,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "focus",
+              "entityId": "security-review"
+            }
+          }
+        },
+        {
+          "atMs": 28484,
+          "event": "camera_move",
+          "viewport": {
+            "scrollX": 263.5,
+            "scrollY": 223,
+            "zoom": 1,
+            "width": 1280,
+            "height": 720
+          }
+        },
+        {
+          "atMs": 29850,
+          "event": "model_call_agent",
+          "ms": 1365,
+          "usage": {
+            "providerRequestId": "msg_011CeTPXXA7T4ftZvYQ7vy5D",
+            "inputTokens": 1439,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 29850,
+          "event": "route_trace",
+          "id": "e2-4-focus",
+          "intent": "present",
+          "status": "completed",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 29850,
+          "event": "turn_result",
+          "id": "e2-4-focus",
+          "intent": "present",
+          "status": "completed",
+          "elapsedMs": 3203,
+          "firstVisualLatencyMs": 1837,
+          "modelCalls": 2,
+          "agentSteps": 1
+        }
+      ]
+    },
+    {
+      "id": "eval3-references",
+      "description": "resolution of this/that/first/second/last one/those two against existing content",
+      "seedWorld": {
+        "entities": [
+          {
+            "id": "flaky-test-suite",
+            "label": "flaky test suite"
+          },
+          {
+            "id": "unreviewed-pull-request",
+            "label": "Code Review Backlog"
+          },
+          {
+            "id": "missing-staging-environment",
+            "label": "missing staging environment"
+          },
+          {
+            "id": "blockers",
+            "label": "blockers"
+          }
+        ]
+      },
+      "results": [
+        {
+          "ref": "this",
+          "text": "Focus on this.",
+          "route": "present",
+          "status": "completed",
+          "agentStatus": "completed",
+          "resolvedTargets": [
+            {
+              "actionType": "focus",
+              "id": "blockers",
+              "label": "blockers"
+            },
+            {
+              "actionType": "focus",
+              "id": "blockers",
+              "label": "blockers"
+            }
+          ],
+          "rejectedActions": 0
+        },
+        {
+          "ref": "that",
+          "text": "Remove that.",
+          "route": "manipulate",
+          "status": "failed",
+          "agentStatus": "blocked",
+          "resolvedTargets": [],
+          "rejectedActions": 0
+        },
+        {
+          "ref": "first",
+          "text": "Connect the first blocker to the staging environment.",
+          "route": "manipulate",
+          "status": "completed",
+          "agentStatus": "completed",
+          "resolvedTargets": [
+            {
+              "actionType": "relate_entities",
+              "id": "flaky-test-suite",
+              "label": "flaky test suite"
+            }
+          ],
+          "rejectedActions": 0
+        },
+        {
+          "ref": "second",
+          "text": "Rename the second one to Code Review Backlog.",
+          "route": "manipulate",
+          "status": "completed",
+          "agentStatus": "completed",
+          "resolvedTargets": [
+            {
+              "actionType": "update_entity",
+              "id": "unreviewed-pull-request",
+              "label": "unreviewed pull request"
+            }
+          ],
+          "rejectedActions": 0
+        },
+        {
+          "ref": "last one",
+          "text": "Focus on the last one.",
+          "route": "present",
+          "status": "failed",
+          "agentStatus": "stalled",
+          "resolvedTargets": [
+            {
+              "actionType": "focus",
+              "id": "missing-staging-environment",
+              "label": "missing staging environment"
+            },
+            {
+              "actionType": "focus",
+              "id": "missing-staging-environment",
+              "label": "missing staging environment"
+            },
+            {
+              "actionType": "focus",
+              "id": "missing-staging-environment",
+              "label": "missing staging environment"
+            }
+          ],
+          "rejectedActions": 0
+        },
+        {
+          "ref": "those two",
+          "text": "Connect those two blockers together.",
+          "route": "manipulate",
+          "status": "completed",
+          "agentStatus": "completed",
+          "resolvedTargets": [
+            {
+              "actionType": "relate_entities",
+              "id": "unreviewed-pull-request",
+              "label": "Code Review Backlog"
+            },
+            {
+              "actionType": "relate_entities",
+              "id": "flaky-test-suite",
+              "label": "flaky test suite"
+            }
+          ],
+          "rejectedActions": 0
+        }
+      ],
+      "events": [
+        {
+          "atMs": 0,
+          "event": "speech_settled",
+          "id": "seed",
+          "text": "There are three blockers: a flaky test suite, an unreviewed pull request, and a missing staging environment."
+        },
+        {
+          "atMs": 0,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 0,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2915,
+          "event": "model_call_expression",
+          "text": "There are three blockers: a flaky test suite, an unreviewed pull request, and a missing staging environment.",
+          "ms": 2902,
+          "usage": {
+            "providerRequestId": "msg_011CeTPXcrfS3B8eBtrkoQVR",
+            "inputTokens": 3944,
+            "outputTokens": 478,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 2918,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 1
+        },
+        {
+          "atMs": 2918,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2918,
+          "event": "turn_result",
+          "id": "seed",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2918,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 2918,
+          "event": "speech_settled",
+          "id": "e3-0",
+          "text": "Focus on this."
+        },
+        {
+          "atMs": 2918,
+          "event": "route_trace",
+          "id": "e3-0",
+          "intent": "present",
+          "status": "routed",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 2918,
+          "event": "route_trace",
+          "id": "e3-0",
+          "intent": "present",
+          "status": "running",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 7015,
+          "event": "model_call_agent",
+          "ms": 4096,
+          "usage": {
+            "providerRequestId": "msg_011CeTPXqatNPjvMc2bJQg5W",
+            "inputTokens": 1728,
+            "outputTokens": 22,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "focus",
+              "entityId": "blockers"
+            }
+          }
+        },
+        {
+          "atMs": 7015,
+          "event": "camera_move",
+          "viewport": {
+            "scrollX": 264,
+            "scrollY": 177,
+            "zoom": 1,
+            "width": 1280,
+            "height": 720
+          }
+        },
+        {
+          "atMs": 8654,
+          "event": "model_call_agent",
+          "ms": 1638,
+          "usage": {
+            "providerRequestId": "msg_011CeTPY96qWCRrrFh2nxZLU",
+            "inputTokens": 1795,
+            "outputTokens": 22,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "focus",
+              "entityId": "blockers"
+            }
+          }
+        },
+        {
+          "atMs": 12048,
+          "event": "model_call_agent",
+          "ms": 3393,
+          "usage": {
+            "providerRequestId": "msg_011CeTPYG724zgXyiC8hi9iY",
+            "inputTokens": 1798,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 12049,
+          "event": "route_trace",
+          "id": "e3-0",
+          "intent": "present",
+          "status": "completed",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 12049,
+          "event": "turn_result",
+          "id": "e3-0",
+          "intent": "present",
+          "status": "completed",
+          "elapsedMs": 9131,
+          "firstVisualLatencyMs": 4097,
+          "modelCalls": 3,
+          "agentSteps": 2
+        },
+        {
+          "atMs": 12049,
+          "event": "speech_settled",
+          "id": "e3-1",
+          "text": "Remove that."
+        },
+        {
+          "atMs": 12049,
+          "event": "route_trace",
+          "id": "e3-1",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 12049,
+          "event": "route_trace",
+          "id": "e3-1",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 23284,
+          "event": "model_call_agent",
+          "ms": 11235,
+          "usage": {
+            "providerRequestId": "msg_011CeTPYWZg3sQhcwdcUyWg7",
+            "inputTokens": 1727,
+            "outputTokens": 115,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "cannot_complete",
+            "reason": "'That' is ambiguous — no entity is selected or focused, and there are multiple candidates (blockers, missing-staging-environment, unreviewed-pull-request, flaky-test-suite). Please specify which one to remove."
+          }
+        },
+        {
+          "atMs": 23285,
+          "event": "route_trace",
+          "id": "e3-1",
+          "intent": "manipulate",
+          "status": "failed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 23285,
+          "event": "turn_result",
+          "id": "e3-1",
+          "intent": "manipulate",
+          "status": "failed",
+          "elapsedMs": 11236,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 23285,
+          "event": "speech_settled",
+          "id": "e3-2",
+          "text": "Connect the first blocker to the staging environment."
+        },
+        {
+          "atMs": 23285,
+          "event": "route_trace",
+          "id": "e3-2",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 23285,
+          "event": "route_trace",
+          "id": "e3-2",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 27300,
+          "event": "model_call_agent",
+          "ms": 4015,
+          "usage": {
+            "providerRequestId": "msg_011CeTPZLcurkHdBXyDP8qNZ",
+            "inputTokens": 1734,
+            "outputTokens": 48,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "relate_entities",
+              "sourceEntityId": "flaky-test-suite",
+              "targetEntityId": "missing-staging-environment",
+              "relation": {
+                "type": "relates_to"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 27304,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 2
+        },
+        {
+          "atMs": 29912,
+          "event": "model_call_agent",
+          "ms": 2607,
+          "usage": {
+            "providerRequestId": "msg_011CeTPZem4xfVWxkGpZPUQn",
+            "inputTokens": 1894,
+            "outputTokens": 65,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 29912,
+          "event": "route_trace",
+          "id": "e3-2",
+          "intent": "manipulate",
+          "status": "completed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 29912,
+          "event": "turn_result",
+          "id": "e3-2",
+          "intent": "manipulate",
+          "status": "completed",
+          "elapsedMs": 6627,
+          "firstVisualLatencyMs": 4019,
+          "modelCalls": 2,
+          "agentSteps": 1
+        },
+        {
+          "atMs": 29912,
+          "event": "speech_settled",
+          "id": "e3-3",
+          "text": "Rename the second one to Code Review Backlog."
+        },
+        {
+          "atMs": 29912,
+          "event": "route_trace",
+          "id": "e3-3",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 29912,
+          "event": "route_trace",
+          "id": "e3-3",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 32694,
+          "event": "model_call_agent",
+          "ms": 2782,
+          "usage": {
+            "providerRequestId": "msg_011CeTPZpsHFPcZLawwaQy57",
+            "inputTokens": 1791,
+            "outputTokens": 82,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "update_entity",
+              "entityId": "unreviewed-pull-request",
+              "changes": {
+                "label": "Code Review Backlog"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 32697,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 3
+        },
+        {
+          "atMs": 35746,
+          "event": "model_call_agent",
+          "ms": 3048,
+          "usage": {
+            "providerRequestId": "msg_011CeTPa2xYwb6Q1Te3TbUkn",
+            "inputTokens": 1884,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 35747,
+          "event": "route_trace",
+          "id": "e3-3",
+          "intent": "manipulate",
+          "status": "completed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 35747,
+          "event": "turn_result",
+          "id": "e3-3",
+          "intent": "manipulate",
+          "status": "completed",
+          "elapsedMs": 5835,
+          "firstVisualLatencyMs": 2785,
+          "modelCalls": 2,
+          "agentSteps": 1
+        },
+        {
+          "atMs": 35747,
+          "event": "speech_settled",
+          "id": "e3-4",
+          "text": "Focus on the last one."
+        },
+        {
+          "atMs": 35747,
+          "event": "route_trace",
+          "id": "e3-4",
+          "intent": "present",
+          "status": "routed",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 35747,
+          "event": "route_trace",
+          "id": "e3-4",
+          "intent": "present",
+          "status": "running",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 38176,
+          "event": "model_call_agent",
+          "ms": 2429,
+          "usage": {
+            "providerRequestId": "msg_011CeTPaFsgZCUHj5fheQyXX",
+            "inputTokens": 1785,
+            "outputTokens": 25,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "focus",
+              "entityId": "missing-staging-environment"
+            }
+          }
+        },
+        {
+          "atMs": 38176,
+          "event": "camera_move",
+          "viewport": {
+            "scrollX": 56,
+            "scrollY": 227,
+            "zoom": 1,
+            "width": 1280,
+            "height": 720
+          }
+        },
+        {
+          "atMs": 39617,
+          "event": "model_call_agent",
+          "ms": 1440,
+          "usage": {
+            "providerRequestId": "msg_011CeTPaSMiZwyPVi8QHy8YR",
+            "inputTokens": 1858,
+            "outputTokens": 25,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "focus",
+              "entityId": "missing-staging-environment"
+            }
+          }
+        },
+        {
+          "atMs": 42627,
+          "event": "model_call_agent",
+          "ms": 3009,
+          "usage": {
+            "providerRequestId": "msg_011CeTPaZU6h67QiPU6NVccC",
+            "inputTokens": 1861,
+            "outputTokens": 25,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "focus",
+              "entityId": "missing-staging-environment"
+            }
+          }
+        },
+        {
+          "atMs": 42628,
+          "event": "route_trace",
+          "id": "e3-4",
+          "intent": "present",
+          "status": "failed",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 42628,
+          "event": "turn_result",
+          "id": "e3-4",
+          "intent": "present",
+          "status": "failed",
+          "elapsedMs": 6881,
+          "firstVisualLatencyMs": 2430,
+          "modelCalls": 3,
+          "agentSteps": 3
+        },
+        {
+          "atMs": 42628,
+          "event": "speech_settled",
+          "id": "e3-5",
+          "text": "Connect those two blockers together."
+        },
+        {
+          "atMs": 42628,
+          "event": "route_trace",
+          "id": "e3-5",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 42628,
+          "event": "route_trace",
+          "id": "e3-5",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 62348,
+          "event": "model_call_agent",
+          "ms": 19720,
+          "usage": {
+            "providerRequestId": "msg_011CeTPamFGssupW3VamuzwX",
+            "inputTokens": 1786,
+            "outputTokens": 242,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "relate_entities",
+              "sourceEntityId": "unreviewed-pull-request",
+              "targetEntityId": "missing-staging-environment",
+              "relation": {
+                "type": "relates_to"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 62351,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 4
+        },
+        {
+          "atMs": 68262,
+          "event": "model_call_agent",
+          "ms": 5911,
+          "usage": {
+            "providerRequestId": "msg_011CeTPcDfXxHhgxsZb2vRFz",
+            "inputTokens": 1949,
+            "outputTokens": 143,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "relate_entities",
+              "sourceEntityId": "flaky-test-suite",
+              "targetEntityId": "unreviewed-pull-request",
+              "relation": {
+                "type": "relates_to"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 68265,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 5
+        },
+        {
+          "atMs": 74459,
+          "event": "model_call_agent",
+          "ms": 6193,
+          "usage": {
+            "providerRequestId": "msg_011CeTPcf8UQZERLAEa6j437",
+            "inputTokens": 2010,
+            "outputTokens": 199,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 74459,
+          "event": "route_trace",
+          "id": "e3-5",
+          "intent": "manipulate",
+          "status": "completed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 74459,
+          "event": "turn_result",
+          "id": "e3-5",
+          "intent": "manipulate",
+          "status": "completed",
+          "elapsedMs": 31831,
+          "firstVisualLatencyMs": 19723,
+          "modelCalls": 3,
+          "agentSteps": 2
+        }
+      ]
+    },
+    {
+      "id": "eval4-human-canvas-edits",
+      "description": "manual move/select/pan then a world-aware command; agent must observe current canvas, not original layout",
+      "manualEdits": [
+        {
+          "entityLabel": "schema changes",
+          "dx": 220,
+          "dy": -80,
+          "atMs": 2238
+        }
+      ],
+      "manualEditPosition": {
+        "x": 296,
+        "y": 20
+      },
+      "agentFinalObservedPosition": {
+        "x": 296,
+        "y": 20
+      },
+      "positionsMatch": true,
+      "route": "manipulate",
+      "status": "completed",
+      "agentStatus": "completed",
+      "events": [
+        {
+          "atMs": 0,
+          "event": "speech_settled",
+          "id": "seed",
+          "text": "The migration has two phases: schema changes and data backfill."
+        },
+        {
+          "atMs": 0,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 0,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2234,
+          "event": "model_call_expression",
+          "text": "The migration has two phases: schema changes and data backfill.",
+          "ms": 2224,
+          "usage": {
+            "providerRequestId": "msg_011CeTPd7D7xpYVGEDjEC8xA",
+            "inputTokens": 3933,
+            "outputTokens": 368,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 2237,
+          "event": "scene_update",
+          "objects": 4,
+          "revision": 1
+        },
+        {
+          "atMs": 2237,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2237,
+          "event": "turn_result",
+          "id": "seed",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2237,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 2238,
+          "event": "manual_move",
+          "entityLabel": "schema changes",
+          "dx": 220,
+          "dy": -80,
+          "newX": 296,
+          "newY": 20
+        },
+        {
+          "atMs": 2238,
+          "event": "manual_select",
+          "entityLabel": "schema changes"
+        },
+        {
+          "atMs": 2238,
+          "event": "manual_pan_zoom",
+          "dx": 50,
+          "dy": 30,
+          "zoomDelta": 0.1,
+          "viewport": {
+            "scrollX": 50,
+            "scrollY": 30,
+            "zoom": 1.1,
+            "width": 1280,
+            "height": 720
+          }
+        },
+        {
+          "atMs": 2238,
+          "event": "speech_settled",
+          "id": "e4-0",
+          "text": "Connect the schema changes to the data backfill."
+        },
+        {
+          "atMs": 2238,
+          "event": "route_trace",
+          "id": "e4-0",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 2238,
+          "event": "route_trace",
+          "id": "e4-0",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 3582,
+          "event": "model_call_agent",
+          "ms": 1343,
+          "usage": {
+            "providerRequestId": "msg_011CeTPdGzF5L5npvcm2GTtW",
+            "inputTokens": 1603,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 3583,
+          "event": "route_trace",
+          "id": "e4-0",
+          "intent": "manipulate",
+          "status": "completed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 3583,
+          "event": "turn_result",
+          "id": "e4-0",
+          "intent": "manipulate",
+          "status": "completed",
+          "elapsedMs": 1345,
+          "modelCalls": 1,
+          "agentSteps": 0
+        }
+      ]
+    },
+    {
+      "id": "eval5-corrections",
+      "description": "in-place corrections must edit existing meaning, not duplicate or stray-delete",
+      "seedWorld": {
+        "entities": [
+          {
+            "id": "alice",
+            "label": "Alice"
+          },
+          {
+            "id": "bob",
+            "label": "Bob"
+          },
+          {
+            "id": "platform-team",
+            "label": "platform team"
+          },
+          {
+            "id": "carol",
+            "label": "Carol"
+          }
+        ]
+      },
+      "results": [
+        {
+          "text": "Actually that's wrong.",
+          "route": "manipulate",
+          "status": "failed",
+          "agentStatus": "step_limit",
+          "entitiesBefore": 3,
+          "entitiesAfter": 3,
+          "relationsBefore": 2,
+          "relationsAfter": 0,
+          "duplicateConceptsAfter": [],
+          "visualActions": [
+            {
+              "type": "remove_relation",
+              "relationId": "alice-role_of-bob"
+            },
+            {
+              "type": "remove_relation",
+              "relationId": "bob-member_of-platform-team"
+            },
+            {
+              "type": "relate_entities",
+              "sourceEntityId": "bob",
+              "targetEntityId": "platform-team",
+              "relation": {
+                "type": "member_of"
+              }
+            },
+            {
+              "type": "remove_relation",
+              "relationId": "bob-member_of-platform-team"
+            },
+            {
+              "type": "relate_entities",
+              "sourceEntityId": "bob",
+              "targetEntityId": "platform-team",
+              "relation": {
+                "type": "member_of"
+              }
+            }
+          ]
+        },
+        {
+          "text": "Remove that.",
+          "route": "manipulate",
+          "status": "failed",
+          "agentStatus": "blocked",
+          "entitiesBefore": 3,
+          "entitiesAfter": 3,
+          "relationsBefore": 0,
+          "relationsAfter": 0,
+          "duplicateConceptsAfter": [],
+          "visualActions": []
+        },
+        {
+          "text": "Bob now reports to Carol instead. No, connect it to Carol instead.",
+          "route": "express",
+          "status": "completed",
+          "entitiesBefore": 3,
+          "entitiesAfter": 4,
+          "relationsBefore": 0,
+          "relationsAfter": 1,
+          "duplicateConceptsAfter": [],
+          "visualActions": []
+        },
+        {
+          "text": "Alice doesn't manage Bob anymore.",
+          "route": "express",
+          "status": "completed",
+          "entitiesBefore": 4,
+          "entitiesAfter": 4,
+          "relationsBefore": 1,
+          "relationsAfter": 1,
+          "duplicateConceptsAfter": [],
+          "visualActions": []
+        }
+      ],
+      "events": [
+        {
+          "atMs": 0,
+          "event": "speech_settled",
+          "id": "seed",
+          "text": "Alice manages Bob on the platform team."
+        },
+        {
+          "atMs": 1,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 1,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 1765,
+          "event": "model_call_expression",
+          "text": "Alice manages Bob on the platform team.",
+          "ms": 1764,
+          "usage": {
+            "providerRequestId": "msg_011CeTPdNPSJd3iWgbUcYder",
+            "inputTokens": 3927,
+            "outputTokens": 277,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 1767,
+          "event": "scene_update",
+          "objects": 3,
+          "revision": 1
+        },
+        {
+          "atMs": 1767,
+          "event": "route_trace",
+          "id": "seed",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 1767,
+          "event": "turn_result",
+          "id": "seed",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 1767,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 1767,
+          "event": "speech_settled",
+          "id": "e5-0",
+          "text": "Actually that's wrong."
+        },
+        {
+          "atMs": 1767,
+          "event": "route_trace",
+          "id": "e5-0",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit correction of existing content"
+        },
+        {
+          "atMs": 1767,
+          "event": "route_trace",
+          "id": "e5-0",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit correction of existing content"
+        },
+        {
+          "atMs": 11984,
+          "event": "model_call_agent",
+          "ms": 10217,
+          "usage": {
+            "providerRequestId": "msg_011CeTPdWRswMkRfMiT52QjM",
+            "inputTokens": 1329,
+            "outputTokens": 362,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "remove_relation",
+              "relationId": "alice-role_of-bob"
+            }
+          }
+        },
+        {
+          "atMs": 11985,
+          "event": "scene_update",
+          "objects": 2,
+          "revision": 2
+        },
+        {
+          "atMs": 23217,
+          "event": "model_call_agent",
+          "ms": 11231,
+          "usage": {
+            "providerRequestId": "msg_011CeTPeFunQXryoR5fjTE4H",
+            "inputTokens": 1219,
+            "outputTokens": 443,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "remove_relation",
+              "relationId": "bob-member_of-platform-team"
+            }
+          }
+        },
+        {
+          "atMs": 23218,
+          "event": "scene_update",
+          "objects": 2,
+          "revision": 3
+        },
+        {
+          "atMs": 27309,
+          "event": "model_call_agent",
+          "ms": 4090,
+          "usage": {
+            "providerRequestId": "msg_011CeTPf67Sxk6fxCHKT5QX4",
+            "inputTokens": 1189,
+            "outputTokens": 121,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "relate_entities",
+              "sourceEntityId": "bob",
+              "targetEntityId": "platform-team",
+              "relation": {
+                "type": "member_of"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 27313,
+          "event": "scene_update",
+          "objects": 2,
+          "revision": 4
+        },
+        {
+          "atMs": 31602,
+          "event": "model_call_agent",
+          "ms": 4288,
+          "usage": {
+            "providerRequestId": "msg_011CeTPfPQG3J7gm4SG7yzox",
+            "inputTokens": 1238,
+            "outputTokens": 99,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "remove_relation",
+              "relationId": "bob-member_of-platform-team"
+            }
+          }
+        },
+        {
+          "atMs": 31603,
+          "event": "scene_update",
+          "objects": 2,
+          "revision": 5
+        },
+        {
+          "atMs": 42933,
+          "event": "model_call_agent",
+          "ms": 11329,
+          "usage": {
+            "providerRequestId": "msg_011CeTPfhtkNpNFoBMXErxLm",
+            "inputTokens": 1189,
+            "outputTokens": 104,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "relate_entities",
+              "sourceEntityId": "bob",
+              "targetEntityId": "platform-team",
+              "relation": {
+                "type": "member_of"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 42933,
+          "event": "route_trace",
+          "id": "e5-0",
+          "intent": "manipulate",
+          "status": "failed",
+          "reason": "explicit correction of existing content"
+        },
+        {
+          "atMs": 42933,
+          "event": "turn_result",
+          "id": "e5-0",
+          "intent": "manipulate",
+          "status": "failed",
+          "elapsedMs": 41166,
+          "firstVisualLatencyMs": 10218,
+          "modelCalls": 5,
+          "agentSteps": 4
+        },
+        {
+          "atMs": 42933,
+          "event": "speech_settled",
+          "id": "e5-1",
+          "text": "Remove that."
+        },
+        {
+          "atMs": 42933,
+          "event": "route_trace",
+          "id": "e5-1",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 42933,
+          "event": "route_trace",
+          "id": "e5-1",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 56022,
+          "event": "model_call_agent",
+          "ms": 13088,
+          "usage": {
+            "providerRequestId": "msg_011CeTPgYHaPTaW2HPzPuEJ7",
+            "inputTokens": 1102,
+            "outputTokens": 89,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "cannot_complete",
+            "reason": "Ambiguous reference: 'that' has no clear referent — nothing is selected and multiple entities exist. Please specify which entity to remove."
+          }
+        },
+        {
+          "atMs": 56023,
+          "event": "route_trace",
+          "id": "e5-1",
+          "intent": "manipulate",
+          "status": "failed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 56023,
+          "event": "turn_result",
+          "id": "e5-1",
+          "intent": "manipulate",
+          "status": "failed",
+          "elapsedMs": 13090,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 56023,
+          "event": "speech_settled",
+          "id": "e5-2",
+          "text": "Bob now reports to Carol instead. No, connect it to Carol instead."
+        },
+        {
+          "atMs": 56023,
+          "event": "route_trace",
+          "id": "e5-2",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 56023,
+          "event": "route_trace",
+          "id": "e5-2",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 57867,
+          "event": "model_call_expression",
+          "text": "Bob now reports to Carol instead. No, connect it to Carol instead.",
+          "ms": 1841,
+          "usage": {
+            "providerRequestId": "msg_011CeTPhW4APYJBwZJ1MNNjq",
+            "inputTokens": 3943,
+            "outputTokens": 278,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 57869,
+          "event": "scene_update",
+          "objects": 3,
+          "revision": 6
+        },
+        {
+          "atMs": 57869,
+          "event": "route_trace",
+          "id": "e5-2",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 57869,
+          "event": "turn_result",
+          "id": "e5-2",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 1846,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 57869,
+          "event": "speech_settled",
+          "id": "e5-3",
+          "text": "Alice doesn't manage Bob anymore."
+        },
+        {
+          "atMs": 57869,
+          "event": "route_trace",
+          "id": "e5-3",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 57869,
+          "event": "route_trace",
+          "id": "e5-3",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 59746,
+          "event": "model_call_expression",
+          "text": "Alice doesn't manage Bob anymore.",
+          "ms": 1868,
+          "usage": {
+            "providerRequestId": "msg_011CeTPhdtCwAvf9yDrripbf",
+            "inputTokens": 3951,
+            "outputTokens": 244,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 59748,
+          "event": "scene_update",
+          "objects": 3,
+          "revision": 7
+        },
+        {
+          "atMs": 59748,
+          "event": "route_trace",
+          "id": "e5-3",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 59748,
+          "event": "turn_result",
+          "id": "e5-3",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 1879,
+          "modelCalls": 1,
+          "agentSteps": 0
+        }
+      ]
+    },
+    {
+      "id": "eval6-five-minute-run",
+      "description": "continuous natural run: new meaning, relationships, examples, callbacks, corrections, references, deletion, presentation, one manual edit",
+      "timeline": [
+        {
+          "type": "speech",
+          "text": "I want to walk through our support ticket pipeline end to end.",
+          "atMs": 2132,
+          "route": "express",
+          "status": "completed",
+          "modelCalls": 1,
+          "agentSteps": 0,
+          "firstVisualLatencyMs": null
+        },
+        {
+          "type": "speech",
+          "text": "Tickets come in from three channels: email, chat, and the API.",
+          "atMs": 5040,
+          "route": "express",
+          "status": "completed",
+          "modelCalls": 1,
+          "agentSteps": 0,
+          "firstVisualLatencyMs": null
+        },
+        {
+          "type": "speech",
+          "text": "Every ticket gets triaged by a classifier that assigns a priority and routes it to a queue.",
+          "atMs": 7286,
+          "route": "express",
+          "status": "completed",
+          "modelCalls": 1,
+          "agentSteps": 0,
+          "firstVisualLatencyMs": null
+        },
+        {
+          "type": "speech",
+          "text": "There are two queues today, a standard queue and an urgent queue for anything flagged high severity.",
+          "atMs": 11134,
+          "route": "express",
+          "status": "completed",
+          "modelCalls": 1,
+          "agentSteps": 0,
+          "firstVisualLatencyMs": null
+        },
+        {
+          "type": "speech",
+          "text": "The urgent queue connects directly to on-call, which pages an engineer within five minutes.",
+          "atMs": 13691,
+          "route": "express",
+          "status": "completed",
+          "modelCalls": 1,
+          "agentSteps": 0,
+          "firstVisualLatencyMs": null
+        },
+        {
+          "type": "speech",
+          "text": "For example, a customer reporting total data loss would land straight in the urgent queue.",
+          "atMs": 16342,
+          "route": "express",
+          "status": "completed",
+          "modelCalls": 1,
+          "agentSteps": 0,
+          "firstVisualLatencyMs": null
+        },
+        {
+          "type": "speech",
+          "text": "Actually, the classifier isn't quite right, let me fix that. It's a rules engine right now, not a real classifier.",
+          "atMs": 20755,
+          "route": "manipulate",
+          "status": "completed",
+          "agentStatus": "completed",
+          "modelCalls": 2,
+          "agentSteps": 1,
+          "firstVisualLatencyMs": 2932
+        },
+        {
+          "type": "speech",
+          "text": "Connect the rules engine to both queues, since it feeds both of them.",
+          "atMs": 30202,
+          "route": "manipulate",
+          "status": "failed",
+          "agentStatus": "blocked",
+          "modelCalls": 1,
+          "agentSteps": 0,
+          "firstVisualLatencyMs": null
+        },
+        {
+          "type": "manual_move",
+          "label": "Rules Engine",
+          "atMs": 30202,
+          "applied": false
+        },
+        {
+          "type": "speech",
+          "text": "Focus on the urgent queue for a second.",
+          "atMs": 35538,
+          "route": "present",
+          "status": "completed",
+          "agentStatus": "completed",
+          "modelCalls": 2,
+          "agentSteps": 1,
+          "firstVisualLatencyMs": 3131
+        },
+        {
+          "type": "speech",
+          "text": "Going back to the earlier idea about on-call, we should also log every page to an incident channel.",
+          "atMs": 39251,
+          "route": "express",
+          "status": "completed",
+          "modelCalls": 1,
+          "agentSteps": 0,
+          "firstVisualLatencyMs": null
+        },
+        {
+          "type": "speech",
+          "text": "Remove the incident channel idea actually, we're not ready to commit to that yet.",
+          "atMs": 54376,
+          "route": "manipulate",
+          "status": "failed",
+          "agentStatus": "blocked",
+          "modelCalls": 4,
+          "agentSteps": 3,
+          "firstVisualLatencyMs": 4309
+        },
+        {
+          "type": "speech",
+          "text": "The standard queue is worked by a rotating team of five support engineers during business hours.",
+          "atMs": 56734,
+          "route": "express",
+          "status": "completed",
+          "modelCalls": 1,
+          "agentSteps": 0,
+          "firstVisualLatencyMs": null
+        },
+        {
+          "type": "speech",
+          "text": "Rename the standard queue to Business Hours Queue.",
+          "atMs": 60981,
+          "route": "manipulate",
+          "status": "completed",
+          "agentStatus": "completed",
+          "modelCalls": 2,
+          "agentSteps": 1,
+          "firstVisualLatencyMs": 2717
+        },
+        {
+          "type": "speech",
+          "text": "This whole pipeline should handle roughly two hundred tickets a day at current volume.",
+          "atMs": 63872,
+          "route": "express",
+          "status": "completed",
+          "modelCalls": 1,
+          "agentSteps": 0,
+          "firstVisualLatencyMs": null
+        },
+        {
+          "type": "speech",
+          "text": "Connect this volume figure to the business hours queue, since that's what it's sized against.",
+          "atMs": 69947,
+          "route": "manipulate",
+          "status": "completed",
+          "agentStatus": "completed",
+          "modelCalls": 2,
+          "agentSteps": 1,
+          "firstVisualLatencyMs": 4184
+        }
+      ],
+      "totalWallMs": 69947,
+      "finalWorld": {
+        "entities": [
+          {
+            "id": "speaker",
+            "type": "person",
+            "label": "I"
+          },
+          {
+            "id": "support-ticket-pipeline",
+            "type": "object",
+            "label": "support ticket pipeline"
+          },
+          {
+            "id": "walk-through",
+            "type": "action",
+            "label": "walk through"
+          },
+          {
+            "id": "tickets",
+            "type": "object",
+            "label": "tickets"
+          },
+          {
+            "id": "email",
+            "type": "concept",
+            "label": "email"
+          },
+          {
+            "id": "chat",
+            "type": "concept",
+            "label": "chat"
+          },
+          {
+            "id": "api",
+            "type": "concept",
+            "label": "API"
+          },
+          {
+            "id": "classifier",
+            "type": "object",
+            "label": "rules engine"
+          },
+          {
+            "id": "priority",
+            "type": "concept",
+            "label": "priority"
+          },
+          {
+            "id": "queue",
+            "type": "object",
+            "label": "queue"
+          },
+          {
+            "id": "standard-queue",
+            "type": "concept",
+            "label": "Business Hours Queue"
+          },
+          {
+            "id": "urgent-queue",
+            "type": "object",
+            "label": "urgent queue"
+          },
+          {
+            "id": "high-severity",
+            "type": "state",
+            "label": "high severity"
+          },
+          {
+            "id": "on-call",
+            "type": "group",
+            "label": "on-call"
+          },
+          {
+            "id": "page-an-engineer",
+            "type": "action",
+            "label": "page an engineer"
+          },
+          {
+            "id": "five-minutes",
+            "type": "time",
+            "label": "five minutes"
+          },
+          {
+            "id": "customer-reporting-total-data-loss",
+            "type": "event",
+            "label": "customer reporting total data loss"
+          },
+          {
+            "id": "page",
+            "type": "action",
+            "label": "page"
+          },
+          {
+            "id": "support-engineers",
+            "type": "group",
+            "label": "support engineers"
+          },
+          {
+            "id": "daily-ticket-volume",
+            "type": "quantity",
+            "label": "daily ticket volume"
+          }
+        ],
+        "relations": [
+          {
+            "source": "speaker",
+            "type": "wants",
+            "target": "walk-through"
+          },
+          {
+            "source": "walk-through",
+            "type": "depends_on",
+            "target": "support-ticket-pipeline"
+          },
+          {
+            "source": "tickets",
+            "type": "originates_from",
+            "target": "email"
+          },
+          {
+            "source": "tickets",
+            "type": "originates_from",
+            "target": "chat"
+          },
+          {
+            "source": "tickets",
+            "type": "originates_from",
+            "target": "api"
+          },
+          {
+            "source": "tickets",
+            "type": "part_of",
+            "target": "support-ticket-pipeline"
+          },
+          {
+            "source": "support-ticket-pipeline",
+            "type": "depends_on",
+            "target": "classifier"
+          },
+          {
+            "source": "classifier",
+            "type": "causes",
+            "target": "priority"
+          },
+          {
+            "source": "classifier",
+            "type": "causes",
+            "target": "queue"
+          },
+          {
+            "source": "email",
+            "type": "part_of",
+            "target": "support-ticket-pipeline"
+          },
+          {
+            "source": "chat",
+            "type": "part_of",
+            "target": "support-ticket-pipeline"
+          },
+          {
+            "source": "api",
+            "type": "part_of",
+            "target": "support-ticket-pipeline"
+          },
+          {
+            "source": "classifier",
+            "type": "part_of",
+            "target": "support-ticket-pipeline"
+          },
+          {
+            "source": "standard-queue",
+            "type": "part_of",
+            "target": "support-ticket-pipeline"
+          },
+          {
+            "source": "urgent-queue",
+            "type": "part_of",
+            "target": "support-ticket-pipeline"
+          },
+          {
+            "source": "classifier",
+            "type": "enables",
+            "target": "standard-queue"
+          },
+          {
+            "source": "classifier",
+            "type": "enables",
+            "target": "urgent-queue"
+          },
+          {
+            "source": "high-severity",
+            "type": "enables",
+            "target": "urgent-queue"
+          },
+          {
+            "source": "urgent-queue",
+            "type": "enables",
+            "target": "page-an-engineer"
+          },
+          {
+            "source": "page-an-engineer",
+            "type": "has_property",
+            "target": "five-minutes"
+          },
+          {
+            "source": "customer-reporting-total-data-loss",
+            "type": "instance_of",
+            "target": "urgent-queue"
+          },
+          {
+            "source": "page",
+            "type": "originates_from",
+            "target": "on-call"
+          },
+          {
+            "source": "support-engineers",
+            "type": "member_of",
+            "target": "standard-queue"
+          },
+          {
+            "source": "support-ticket-pipeline",
+            "type": "has_property",
+            "target": "daily-ticket-volume"
+          },
+          {
+            "source": "daily-ticket-volume",
+            "type": "relates_to",
+            "target": "standard-queue"
+          }
+        ]
+      },
+      "duplicateConcepts": [],
+      "clipping": false,
+      "overlaps": 1,
+      "cameraMovement": 1,
+      "events": [
+        {
+          "atMs": 0,
+          "event": "speech_settled",
+          "id": "e6-0",
+          "text": "I want to walk through our support ticket pipeline end to end."
+        },
+        {
+          "atMs": 0,
+          "event": "route_trace",
+          "id": "e6-0",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 0,
+          "event": "route_trace",
+          "id": "e6-0",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2129,
+          "event": "model_call_expression",
+          "text": "I want to walk through our support ticket pipeline end to end.",
+          "ms": 2125,
+          "usage": {
+            "providerRequestId": "msg_011CeTPhmz831fpt26gSfVRs",
+            "inputTokens": 3932,
+            "outputTokens": 307,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 2132,
+          "event": "scene_update",
+          "objects": 3,
+          "revision": 1
+        },
+        {
+          "atMs": 2132,
+          "event": "route_trace",
+          "id": "e6-0",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2132,
+          "event": "turn_result",
+          "id": "e6-0",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2132,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 2132,
+          "event": "speech_settled",
+          "id": "e6-1",
+          "text": "Tickets come in from three channels: email, chat, and the API."
+        },
+        {
+          "atMs": 2132,
+          "event": "route_trace",
+          "id": "e6-1",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 2132,
+          "event": "route_trace",
+          "id": "e6-1",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 5035,
+          "event": "model_call_expression",
+          "text": "Tickets come in from three channels: email, chat, and the API.",
+          "ms": 2886,
+          "usage": {
+            "providerRequestId": "msg_011CeTPhw64Cfi18xxCh9tJ2",
+            "inputTokens": 3949,
+            "outputTokens": 517,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 5039,
+          "event": "scene_update",
+          "objects": 5,
+          "revision": 2
+        },
+        {
+          "atMs": 5039,
+          "event": "route_trace",
+          "id": "e6-1",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 5039,
+          "event": "turn_result",
+          "id": "e6-1",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2907,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 5040,
+          "event": "speech_settled",
+          "id": "e6-2",
+          "text": "Every ticket gets triaged by a classifier that assigns a priority and routes it to a queue."
+        },
+        {
+          "atMs": 5040,
+          "event": "route_trace",
+          "id": "e6-2",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 5040,
+          "event": "route_trace",
+          "id": "e6-2",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 7282,
+          "event": "model_call_expression",
+          "text": "Every ticket gets triaged by a classifier that assigns a priority and routes it to a queue.",
+          "ms": 2241,
+          "usage": {
+            "providerRequestId": "msg_011CeTPi9RxahEpiX71wspEN",
+            "inputTokens": 3969,
+            "outputTokens": 333,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 7286,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 3
+        },
+        {
+          "atMs": 7286,
+          "event": "route_trace",
+          "id": "e6-2",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 7286,
+          "event": "turn_result",
+          "id": "e6-2",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2246,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 7286,
+          "event": "speech_settled",
+          "id": "e6-3",
+          "text": "There are two queues today, a standard queue and an urgent queue for anything flagged high severity."
+        },
+        {
+          "atMs": 7286,
+          "event": "route_trace",
+          "id": "e6-3",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 7286,
+          "event": "route_trace",
+          "id": "e6-3",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 11127,
+          "event": "model_call_expression",
+          "text": "There are two queues today, a standard queue and an urgent queue for anything flagged high severity.",
+          "ms": 3838,
+          "usage": {
+            "providerRequestId": "msg_011CeTPiK78ZLZMCiUtCkVMA",
+            "inputTokens": 3991,
+            "outputTokens": 774,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 11134,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 4
+        },
+        {
+          "atMs": 11134,
+          "event": "route_trace",
+          "id": "e6-3",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 11134,
+          "event": "turn_result",
+          "id": "e6-3",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 3848,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 11135,
+          "event": "speech_settled",
+          "id": "e6-4",
+          "text": "The urgent queue connects directly to on-call, which pages an engineer within five minutes."
+        },
+        {
+          "atMs": 11135,
+          "event": "route_trace",
+          "id": "e6-4",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 11135,
+          "event": "route_trace",
+          "id": "e6-4",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 13686,
+          "event": "model_call_expression",
+          "text": "The urgent queue connects directly to on-call, which pages an engineer within five minutes.",
+          "ms": 2538,
+          "usage": {
+            "providerRequestId": "msg_011CeTPibUNewQwP76jBQJr2",
+            "inputTokens": 4010,
+            "outputTokens": 407,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 13691,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 5
+        },
+        {
+          "atMs": 13691,
+          "event": "route_trace",
+          "id": "e6-4",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 13691,
+          "event": "turn_result",
+          "id": "e6-4",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2556,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 13692,
+          "event": "speech_settled",
+          "id": "e6-5",
+          "text": "For example, a customer reporting total data loss would land straight in the urgent queue."
+        },
+        {
+          "atMs": 13692,
+          "event": "route_trace",
+          "id": "e6-5",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 13692,
+          "event": "route_trace",
+          "id": "e6-5",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 16335,
+          "event": "model_call_expression",
+          "text": "For example, a customer reporting total data loss would land straight in the urgent queue.",
+          "ms": 2625,
+          "usage": {
+            "providerRequestId": "msg_011CeTPindLrv9fhj5ZzeH5s",
+            "inputTokens": 4028,
+            "outputTokens": 309,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 16342,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 6
+        },
+        {
+          "atMs": 16342,
+          "event": "route_trace",
+          "id": "e6-5",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 16342,
+          "event": "turn_result",
+          "id": "e6-5",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2650,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 16342,
+          "event": "speech_settled",
+          "id": "e6-6",
+          "text": "Actually, the classifier isn't quite right, let me fix that. It's a rules engine right now, not a real classifier."
+        },
+        {
+          "atMs": 16342,
+          "event": "route_trace",
+          "id": "e6-6",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit correction of existing content"
+        },
+        {
+          "atMs": 16342,
+          "event": "route_trace",
+          "id": "e6-6",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit correction of existing content"
+        },
+        {
+          "atMs": 19264,
+          "event": "model_call_agent",
+          "ms": 2921,
+          "usage": {
+            "providerRequestId": "msg_011CeTPiz7A4HuitXJzC4kaq",
+            "inputTokens": 3416,
+            "outputTokens": 70,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "update_entity",
+              "entityId": "classifier",
+              "changes": {
+                "label": "rules engine",
+                "description": "rule-based system that assigns priority and routes tickets to queues (not a true ML classifier)",
+                "attributes": [
+                  {
+                    "key": "implementation_type",
+                    "value": "rules engine"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "atMs": 19273,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 7
+        },
+        {
+          "atMs": 20754,
+          "event": "model_call_agent",
+          "ms": 1479,
+          "usage": {
+            "providerRequestId": "msg_011CeTPjCv5wuikZBJDJYTrz",
+            "inputTokens": 3564,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 20755,
+          "event": "route_trace",
+          "id": "e6-6",
+          "intent": "manipulate",
+          "status": "completed",
+          "reason": "explicit correction of existing content"
+        },
+        {
+          "atMs": 20755,
+          "event": "turn_result",
+          "id": "e6-6",
+          "intent": "manipulate",
+          "status": "completed",
+          "elapsedMs": 4413,
+          "firstVisualLatencyMs": 2932,
+          "modelCalls": 2,
+          "agentSteps": 1
+        },
+        {
+          "atMs": 20755,
+          "event": "speech_settled",
+          "id": "e6-7",
+          "text": "Connect the rules engine to both queues, since it feeds both of them."
+        },
+        {
+          "atMs": 20755,
+          "event": "route_trace",
+          "id": "e6-7",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 20755,
+          "event": "route_trace",
+          "id": "e6-7",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 30200,
+          "event": "model_call_agent",
+          "ms": 9445,
+          "usage": {
+            "providerRequestId": "msg_011CeTPjJvzPfSgQQJfTXGVR",
+            "inputTokens": 3436,
+            "outputTokens": 403,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "express",
+              "meaning": {
+                "entities": [
+                  {
+                    "id": "sq",
+                    "type": "object",
+                    "label": "standard queue",
+                    "description": "queue for standard priority tickets"
+                  }
+                ],
+                "relations": [
+                  {
+                    "sourceEntityId": "classifier",
+                    "targetEntityId": "sq",
+                    "type": "feeds",
+                    "relationType": "causes"
+                  },
+                  {
+                    "sourceEntityId": "sq",
+                    "targetEntityId": "support-ticket-pipeline",
+                    "relationType": "part_of"
+                  }
+                ],
+                "claims": []
+              }
+            }
+          }
+        },
+        {
+          "atMs": 30202,
+          "event": "route_trace",
+          "id": "e6-7",
+          "intent": "manipulate",
+          "status": "failed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 30202,
+          "event": "turn_result",
+          "id": "e6-7",
+          "intent": "manipulate",
+          "status": "failed",
+          "elapsedMs": 9447,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 30202,
+          "event": "manual_move_failed",
+          "entityLabel": "Rules Engine"
+        },
+        {
+          "atMs": 30202,
+          "event": "speech_settled",
+          "id": "e6-9",
+          "text": "Focus on the urgent queue for a second."
+        },
+        {
+          "atMs": 30202,
+          "event": "route_trace",
+          "id": "e6-9",
+          "intent": "present",
+          "status": "routed",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 30202,
+          "event": "route_trace",
+          "id": "e6-9",
+          "intent": "present",
+          "status": "running",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 33332,
+          "event": "model_call_agent",
+          "ms": 3129,
+          "usage": {
+            "providerRequestId": "msg_011CeTPk1LMCxkvCmGAfjsTL",
+            "inputTokens": 3429,
+            "outputTokens": 23,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "focus",
+              "entityId": "urgent-queue"
+            }
+          }
+        },
+        {
+          "atMs": 33332,
+          "event": "camera_move",
+          "viewport": {
+            "scrollX": 275,
+            "scrollY": -134,
+            "zoom": 1,
+            "width": 1280,
+            "height": 720
+          }
+        },
+        {
+          "atMs": 35537,
+          "event": "model_call_agent",
+          "ms": 2203,
+          "usage": {
+            "providerRequestId": "msg_011CeTPkEkzUL6QF83GgG9ve",
+            "inputTokens": 3499,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 35538,
+          "event": "route_trace",
+          "id": "e6-9",
+          "intent": "present",
+          "status": "completed",
+          "reason": "explicit presentation request"
+        },
+        {
+          "atMs": 35538,
+          "event": "turn_result",
+          "id": "e6-9",
+          "intent": "present",
+          "status": "completed",
+          "elapsedMs": 5336,
+          "firstVisualLatencyMs": 3131,
+          "modelCalls": 2,
+          "agentSteps": 1
+        },
+        {
+          "atMs": 35538,
+          "event": "speech_settled",
+          "id": "e6-10",
+          "text": "Going back to the earlier idea about on-call, we should also log every page to an incident channel."
+        },
+        {
+          "atMs": 35538,
+          "event": "route_trace",
+          "id": "e6-10",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 35538,
+          "event": "route_trace",
+          "id": "e6-10",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 39242,
+          "event": "model_call_expression",
+          "text": "Going back to the earlier idea about on-call, we should also log every page to an incident channel.",
+          "ms": 3692,
+          "usage": {
+            "providerRequestId": "msg_011CeTPkPtfkQLH4LM1owoQU",
+            "inputTokens": 4051,
+            "outputTokens": 554,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 39251,
+          "event": "scene_update",
+          "objects": 8,
+          "revision": 8
+        },
+        {
+          "atMs": 39251,
+          "event": "route_trace",
+          "id": "e6-10",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 39251,
+          "event": "turn_result",
+          "id": "e6-10",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 3713,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 39251,
+          "event": "speech_settled",
+          "id": "e6-11",
+          "text": "Remove the incident channel idea actually, we're not ready to commit to that yet."
+        },
+        {
+          "atMs": 39251,
+          "event": "route_trace",
+          "id": "e6-11",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 39251,
+          "event": "route_trace",
+          "id": "e6-11",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 43554,
+          "event": "model_call_agent",
+          "ms": 4302,
+          "usage": {
+            "providerRequestId": "msg_011CeTPkgdVPNQyCbhkNVvFu",
+            "inputTokens": 4122,
+            "outputTokens": 167,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "remove_relation",
+              "relationId": "log-every-page-enables-incident-channel"
+            }
+          }
+        },
+        {
+          "atMs": 43560,
+          "event": "scene_update",
+          "objects": 7,
+          "revision": 9
+        },
+        {
+          "atMs": 46136,
+          "event": "model_call_agent",
+          "ms": 2575,
+          "usage": {
+            "providerRequestId": "msg_011CeTPkzT3ZYYvgZb8mAXoW",
+            "inputTokens": 4003,
+            "outputTokens": 69,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "remove_entity",
+              "entityId": "incident-channel"
+            }
+          }
+        },
+        {
+          "atMs": 46144,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 10
+        },
+        {
+          "atMs": 49641,
+          "event": "model_call_agent",
+          "ms": 3496,
+          "usage": {
+            "providerRequestId": "msg_011CeTPmBR71pBmiVztf8C48",
+            "inputTokens": 3780,
+            "outputTokens": 111,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "remove_entity",
+              "entityId": "log-every-page"
+            }
+          }
+        },
+        {
+          "atMs": 49644,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 11
+        },
+        {
+          "atMs": 54375,
+          "event": "model_call_agent",
+          "ms": 4729,
+          "usage": {
+            "providerRequestId": "msg_011CeTPmSoKMXqRpeKRzrrTY",
+            "inputTokens": 3646,
+            "outputTokens": 174,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "express",
+              "meaning": {
+                "removedClaimIds": [
+                  "every-page-to-on-call-should-be-"
+                ],
+                "removedEntityIds": [
+                  "page"
+                ],
+                "removedRelationIds": [
+                  "page-originates_from-on-call"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "atMs": 54376,
+          "event": "route_trace",
+          "id": "e6-11",
+          "intent": "manipulate",
+          "status": "failed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 54376,
+          "event": "turn_result",
+          "id": "e6-11",
+          "intent": "manipulate",
+          "status": "failed",
+          "elapsedMs": 15125,
+          "firstVisualLatencyMs": 4309,
+          "modelCalls": 4,
+          "agentSteps": 3
+        },
+        {
+          "atMs": 54376,
+          "event": "speech_settled",
+          "id": "e6-12",
+          "text": "The standard queue is worked by a rotating team of five support engineers during business hours."
+        },
+        {
+          "atMs": 54376,
+          "event": "route_trace",
+          "id": "e6-12",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 54376,
+          "event": "route_trace",
+          "id": "e6-12",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 56729,
+          "event": "model_call_expression",
+          "text": "The standard queue is worked by a rotating team of five support engineers during business hours.",
+          "ms": 2353,
+          "usage": {
+            "providerRequestId": "msg_011CeTPmnaT2EnoU3TZnvdsS",
+            "inputTokens": 4055,
+            "outputTokens": 321,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 56734,
+          "event": "scene_update",
+          "objects": 5,
+          "revision": 12
+        },
+        {
+          "atMs": 56734,
+          "event": "route_trace",
+          "id": "e6-12",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 56734,
+          "event": "turn_result",
+          "id": "e6-12",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2358,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 56734,
+          "event": "speech_settled",
+          "id": "e6-13",
+          "text": "Rename the standard queue to Business Hours Queue."
+        },
+        {
+          "atMs": 56734,
+          "event": "route_trace",
+          "id": "e6-13",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 56734,
+          "event": "route_trace",
+          "id": "e6-13",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 59446,
+          "event": "model_call_agent",
+          "ms": 2710,
+          "usage": {
+            "providerRequestId": "msg_011CeTPmxspnidg67YB2hKXJ",
+            "inputTokens": 3497,
+            "outputTokens": 34,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "update_entity",
+              "entityId": "standard-queue",
+              "changes": {
+                "label": "Business Hours Queue"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 59451,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 13
+        },
+        {
+          "atMs": 60981,
+          "event": "model_call_agent",
+          "ms": 1529,
+          "usage": {
+            "providerRequestId": "msg_011CeTPnAK9krvzs2QvFCF15",
+            "inputTokens": 3762,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 60981,
+          "event": "route_trace",
+          "id": "e6-13",
+          "intent": "manipulate",
+          "status": "completed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 60981,
+          "event": "turn_result",
+          "id": "e6-13",
+          "intent": "manipulate",
+          "status": "completed",
+          "elapsedMs": 4247,
+          "firstVisualLatencyMs": 2717,
+          "modelCalls": 2,
+          "agentSteps": 1
+        },
+        {
+          "atMs": 60981,
+          "event": "speech_settled",
+          "id": "e6-14",
+          "text": "This whole pipeline should handle roughly two hundred tickets a day at current volume."
+        },
+        {
+          "atMs": 60981,
+          "event": "route_trace",
+          "id": "e6-14",
+          "intent": "express",
+          "status": "routed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 60981,
+          "event": "route_trace",
+          "id": "e6-14",
+          "intent": "express",
+          "status": "running",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 63866,
+          "event": "model_call_expression",
+          "text": "This whole pipeline should handle roughly two hundred tickets a day at current volume.",
+          "ms": 2880,
+          "usage": {
+            "providerRequestId": "msg_011CeTPnGmMNrJEYiKbRej2E",
+            "inputTokens": 4054,
+            "outputTokens": 378,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          }
+        },
+        {
+          "atMs": 63872,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 14
+        },
+        {
+          "atMs": 63872,
+          "event": "route_trace",
+          "id": "e6-14",
+          "intent": "express",
+          "status": "completed",
+          "reason": "ordinary new meaning is the safe default"
+        },
+        {
+          "atMs": 63872,
+          "event": "turn_result",
+          "id": "e6-14",
+          "intent": "express",
+          "status": "completed",
+          "elapsedMs": 2891,
+          "modelCalls": 1,
+          "agentSteps": 0
+        },
+        {
+          "atMs": 63872,
+          "event": "speech_settled",
+          "id": "e6-15",
+          "text": "Connect this volume figure to the business hours queue, since that's what it's sized against."
+        },
+        {
+          "atMs": 63872,
+          "event": "route_trace",
+          "id": "e6-15",
+          "intent": "manipulate",
+          "status": "routed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 63872,
+          "event": "route_trace",
+          "id": "e6-15",
+          "intent": "manipulate",
+          "status": "running",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 68049,
+          "event": "model_call_agent",
+          "ms": 4176,
+          "usage": {
+            "providerRequestId": "msg_011CeTPnVHRSpdYLSZ1vjb4i",
+            "inputTokens": 3887,
+            "outputTokens": 85,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "act",
+            "action": {
+              "type": "relate_entities",
+              "sourceEntityId": "daily-ticket-volume",
+              "targetEntityId": "standard-queue",
+              "relation": {
+                "type": "relates_to"
+              }
+            }
+          }
+        },
+        {
+          "atMs": 68056,
+          "event": "scene_update",
+          "objects": 6,
+          "revision": 15
+        },
+        {
+          "atMs": 69947,
+          "event": "model_call_agent",
+          "ms": 1889,
+          "usage": {
+            "providerRequestId": "msg_011CeTPnoQaoue7fa5A3cGK9",
+            "inputTokens": 4037,
+            "outputTokens": 8,
+            "cacheCreationInputTokens": 0,
+            "cacheReadInputTokens": 0
+          },
+          "decision": {
+            "type": "done"
+          }
+        },
+        {
+          "atMs": 69947,
+          "event": "route_trace",
+          "id": "e6-15",
+          "intent": "manipulate",
+          "status": "completed",
+          "reason": "explicit existing-world operation"
+        },
+        {
+          "atMs": 69947,
+          "event": "turn_result",
+          "id": "e6-15",
+          "intent": "manipulate",
+          "status": "completed",
+          "elapsedMs": 6075,
+          "firstVisualLatencyMs": 4184,
+          "modelCalls": 2,
+          "agentSteps": 1
+        }
+      ]
+    }
+  ],
+  "callLog": [
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPTmYgmdRk3k745xnX4",
+      "inputTokens": 3932,
+      "outputTokens": 333,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.0055969999999999995
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPTwsYTVcFE2CFnmCqU",
+      "inputTokens": 3954,
+      "outputTokens": 471,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006309
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPU9GQBvdS7qARsHPjE",
+      "inputTokens": 3981,
+      "outputTokens": 553,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006746
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPUSsZQ8KNv1mTAh47d",
+      "inputTokens": 4003,
+      "outputTokens": 713,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.007568
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPUjXv2KgNJG92J8dv4",
+      "inputTokens": 4026,
+      "outputTokens": 408,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006066
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPUv7QVQEygc97sq38A",
+      "inputTokens": 4056,
+      "outputTokens": 489,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006501
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPVA9Fth2kKqZyjszgu",
+      "inputTokens": 4080,
+      "outputTokens": 608,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.0071200000000000005
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPVRBe2DneufMY19Dxj",
+      "inputTokens": 3942,
+      "outputTokens": 409,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005987
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPVcYFvuLu5NyySs9cB",
+      "inputTokens": 1622,
+      "outputTokens": 45,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005541
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPVp3ZLN3aoa2hXhitL",
+      "inputTokens": 1771,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005433
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPVzb4nXS98DXFgMYR6",
+      "inputTokens": 1671,
+      "outputTokens": 35,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005538
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPW9CyzcWhQREGHFoYq",
+      "inputTokens": 1760,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.0054
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPWFJM3K51STNC1JBAK",
+      "inputTokens": 1680,
+      "outputTokens": 369,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.010575000000000001
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPWybonTfZZRAHcgbY8",
+      "inputTokens": 1675,
+      "outputTokens": 27,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.00543
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPX78k8ySmTWZK2pXwY",
+      "inputTokens": 1447,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.004461
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPXPP3apnHjuD6My6st",
+      "inputTokens": 1368,
+      "outputTokens": 23,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.004449
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPXXA7T4ftZvYQ7vy5D",
+      "inputTokens": 1439,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.004437
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPXcrfS3B8eBtrkoQVR",
+      "inputTokens": 3944,
+      "outputTokens": 478,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006333999999999999
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPXqatNPjvMc2bJQg5W",
+      "inputTokens": 1728,
+      "outputTokens": 22,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005514
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPY96qWCRrrFh2nxZLU",
+      "inputTokens": 1795,
+      "outputTokens": 22,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005715
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPYG724zgXyiC8hi9iY",
+      "inputTokens": 1798,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005514
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPYWZg3sQhcwdcUyWg7",
+      "inputTokens": 1727,
+      "outputTokens": 115,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006906
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPZLcurkHdBXyDP8qNZ",
+      "inputTokens": 1734,
+      "outputTokens": 48,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005922
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPZem4xfVWxkGpZPUQn",
+      "inputTokens": 1894,
+      "outputTokens": 65,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006657000000000001
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPZpsHFPcZLawwaQy57",
+      "inputTokens": 1791,
+      "outputTokens": 82,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006603
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPa2xYwb6Q1Te3TbUkn",
+      "inputTokens": 1884,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005772
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPaFsgZCUHj5fheQyXX",
+      "inputTokens": 1785,
+      "outputTokens": 25,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.00573
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPaSMiZwyPVi8QHy8YR",
+      "inputTokens": 1858,
+      "outputTokens": 25,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005949
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPaZU6h67QiPU6NVccC",
+      "inputTokens": 1861,
+      "outputTokens": 25,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005958000000000001
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPamFGssupW3VamuzwX",
+      "inputTokens": 1786,
+      "outputTokens": 242,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.008988
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPcDfXxHhgxsZb2vRFz",
+      "inputTokens": 1949,
+      "outputTokens": 143,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.007991999999999999
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPcf8UQZERLAEa6j437",
+      "inputTokens": 2010,
+      "outputTokens": 199,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.009015
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPd7D7xpYVGEDjEC8xA",
+      "inputTokens": 3933,
+      "outputTokens": 368,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005773
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPdGzF5L5npvcm2GTtW",
+      "inputTokens": 1603,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.004929
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPdNPSJd3iWgbUcYder",
+      "inputTokens": 3927,
+      "outputTokens": 277,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005312
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPdWRswMkRfMiT52QjM",
+      "inputTokens": 1329,
+      "outputTokens": 362,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.009417
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPeFunQXryoR5fjTE4H",
+      "inputTokens": 1219,
+      "outputTokens": 443,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.010302
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPf67Sxk6fxCHKT5QX4",
+      "inputTokens": 1189,
+      "outputTokens": 121,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005382
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPfPQG3J7gm4SG7yzox",
+      "inputTokens": 1238,
+      "outputTokens": 99,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005199
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPfhtkNpNFoBMXErxLm",
+      "inputTokens": 1189,
+      "outputTokens": 104,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005127
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPgYHaPTaW2HPzPuEJ7",
+      "inputTokens": 1102,
+      "outputTokens": 89,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.004640999999999999
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPhW4APYJBwZJ1MNNjq",
+      "inputTokens": 3943,
+      "outputTokens": 278,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005333
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPhdtCwAvf9yDrripbf",
+      "inputTokens": 3951,
+      "outputTokens": 244,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005170999999999999
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPhmz831fpt26gSfVRs",
+      "inputTokens": 3932,
+      "outputTokens": 307,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005467
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPhw64Cfi18xxCh9tJ2",
+      "inputTokens": 3949,
+      "outputTokens": 517,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006534
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPi9RxahEpiX71wspEN",
+      "inputTokens": 3969,
+      "outputTokens": 333,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005634
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPiK78ZLZMCiUtCkVMA",
+      "inputTokens": 3991,
+      "outputTokens": 774,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.007861
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPibUNewQwP76jBQJr2",
+      "inputTokens": 4010,
+      "outputTokens": 407,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006045
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPindLrv9fhj5ZzeH5s",
+      "inputTokens": 4028,
+      "outputTokens": 309,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.005573
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPiz7A4HuitXJzC4kaq",
+      "inputTokens": 3416,
+      "outputTokens": 70,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.011298
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPjCv5wuikZBJDJYTrz",
+      "inputTokens": 3564,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.010812
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPjJvzPfSgQQJfTXGVR",
+      "inputTokens": 3436,
+      "outputTokens": 403,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.016353
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPk1LMCxkvCmGAfjsTL",
+      "inputTokens": 3429,
+      "outputTokens": 23,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.010632
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPkEkzUL6QF83GgG9ve",
+      "inputTokens": 3499,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.010617
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPkPtfkQLH4LM1owoQU",
+      "inputTokens": 4051,
+      "outputTokens": 554,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.006821
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPkgdVPNQyCbhkNVvFu",
+      "inputTokens": 4122,
+      "outputTokens": 167,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.014870999999999999
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPkzT3ZYYvgZb8mAXoW",
+      "inputTokens": 4003,
+      "outputTokens": 69,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.013043999999999998
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPmBR71pBmiVztf8C48",
+      "inputTokens": 3780,
+      "outputTokens": 111,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.013005
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPmSoKMXqRpeKRzrrTY",
+      "inputTokens": 3646,
+      "outputTokens": 174,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.013548
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPmnaT2EnoU3TZnvdsS",
+      "inputTokens": 4055,
+      "outputTokens": 321,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.00566
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPmxspnidg67YB2hKXJ",
+      "inputTokens": 3497,
+      "outputTokens": 34,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.011001
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPnAK9krvzs2QvFCF15",
+      "inputTokens": 3762,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.011406000000000001
+    },
+    {
+      "kind": "expression_extract",
+      "model": "claude-haiku-4-5-20251001",
+      "providerRequestId": "msg_011CeTPnGmMNrJEYiKbRej2E",
+      "inputTokens": 4054,
+      "outputTokens": 378,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.0059440000000000005
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPnVHRSpdYLSZ1vjb4i",
+      "inputTokens": 3887,
+      "outputTokens": 85,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.012936
+    },
+    {
+      "kind": "agent_decision",
+      "model": "claude-sonnet-4-6",
+      "providerRequestId": "msg_011CeTPnoQaoue7fa5A3cGK9",
+      "inputTokens": 4037,
+      "outputTokens": 8,
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 0,
+      "approxCostUsd": 0.012231
+    }
+  ],
+  "costSummary": {
+    "totalCalls": 65,
+    "expressionCalls": 22,
+    "agentCalls": 43,
+    "totalInputTokens": 184691,
+    "totalOutputTokens": 13483,
+    "totalCacheCreationTokens": 0,
+    "totalCacheReadTokens": 0,
+    "approxTotalCostUsd": 0.485606
+  }
+}

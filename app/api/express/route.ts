@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { providerFor } from "@/lib/llm";
 import { EXPRESSION_MODEL, extractMeaning } from "@/lib/expression/meaning/extract";
 import { EMPTY_MEANING_DELTA } from "@/lib/expression/schemas";
-import { guardProviderRequest, reconcileProviderCost, type ProviderUsage } from "@/lib/server/provider-guard";
+import { guardProviderRequest, reconcileProviderCost, type GuardContext, type ProviderUsage } from "@/lib/server/provider-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -41,30 +41,38 @@ export async function POST(req: Request) {
   }
   const recentContext = sanitizeRecentContext(body.recentContext);
 
-  const guard = await guardProviderRequest(req, {
-    feature: "expression-engine",
-    provider: providerFor(EXPRESSION_MODEL),
-    model: EXPRESSION_MODEL,
-    requestBytes: Buffer.byteLength(body.text) + Buffer.byteLength(recentContext.join(" ")),
-    // Matches extractMeaning's maxTokens, so the guard's estimate covers the
-    // real worst case rather than a hopeful one.
-    maxOutputTokens: 2000,
-    // The text-first lab (app/dev/express) has no listening session to lease
-    // — there is no microphone in a text box — so it opts into the existing
-    // server-validated local-dev capability instead. This is not a bypass:
-    // consumeDevelopmentReplayAuthorization always fails outside NODE_ENV
-    // development, so in production this route still requires a real session
-    // exactly like every other model-calling route.
-    allowDevelopmentReplay: true,
-  });
-  if (guard instanceof Response) return guard;
+  const modelProvider = providerFor(EXPRESSION_MODEL);
+  // Ollama is a free local process — no cost/rate-limit exposure to protect,
+  // and provider_rate_cards has no row for a local model (see
+  // app/api/agent/decision/route.ts for the same reasoning).
+  let guard: GuardContext | null = null;
+  if (modelProvider !== "ollama") {
+    const guarded = await guardProviderRequest(req, {
+      feature: "expression-engine",
+      provider: modelProvider,
+      model: EXPRESSION_MODEL,
+      requestBytes: Buffer.byteLength(body.text) + Buffer.byteLength(recentContext.join(" ")),
+      // Matches extractMeaning's maxTokens, so the guard's estimate covers the
+      // real worst case rather than a hopeful one.
+      maxOutputTokens: 2000,
+      // The text-first lab (app/dev/express) has no listening session to lease
+      // — there is no microphone in a text box — so it opts into the existing
+      // server-validated local-dev capability instead. This is not a bypass:
+      // consumeDevelopmentReplayAuthorization always fails outside NODE_ENV
+      // development, so in production this route still requires a real session
+      // exactly like every other model-calling route.
+      allowDevelopmentReplay: true,
+    });
+    if (guarded instanceof Response) return guarded;
+    guard = guarded;
+  }
 
   let usage: ProviderUsage = {};
   try {
     const delta = await extractMeaning(body.text, recentContext, (value) => {
       usage = value;
     });
-    await reconcileProviderCost(guard, "succeeded", usage);
+    if (guard) await reconcileProviderCost(guard, "succeeded", usage);
     console.log(
       `[express] ${EXPRESSION_MODEL} input=${usage.inputTokens ?? 0} cache_creation=${
         usage.cacheCreationInputTokens ?? 0
@@ -82,7 +90,7 @@ export async function POST(req: Request) {
       },
     });
   } catch (err) {
-    await reconcileProviderCost(guard, "failed", usage);
+    if (guard) await reconcileProviderCost(guard, "failed", usage);
     console.error("[express]", err);
     return NextResponse.json(EMPTY_MEANING_DELTA);
   }

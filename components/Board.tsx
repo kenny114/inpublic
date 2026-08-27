@@ -15,10 +15,12 @@ import { ControlBar, ErrorBanner } from "@/components/ControlBar";
 import type { SaveState } from "@/components/ProductUI";
 import { TranscriptStrip } from "@/components/TranscriptStrip";
 import { LatencyOverlay } from "@/components/LatencyOverlay";
+import { LocalStatusBadge } from "@/components/LocalStatusBadge";
 import { RecordingPanel } from "@/components/RecordingPanel";
 import { DevReplayLab } from "@/components/DevReplayLab";
 import { useDeepgram, type DeepgramResultTiming } from "@/hooks/useDeepgram";
 import { useGeminiLive } from "@/hooks/useGeminiLive";
+import { useMoonshine } from "@/hooks/useMoonshine";
 import { useUsageSession } from "@/hooks/useUsageSession";
 import { startListeningSession } from "@/lib/listeningSession";
 import { latency, latencyNow, formatLatencySummary, percentile, type LatencySampleEvent } from "@/lib/latency";
@@ -312,7 +314,8 @@ const COMPARISON_SPRING_FREQUENCY = 9;
  */
 const ENGINE = (process.env.NEXT_PUBLIC_ENGINE ?? "deepgram") as
   | "deepgram"
-  | "gemini";
+  | "gemini"
+  | "moonshine";
 
 
 const isDev = process.env.NODE_ENV === "development";
@@ -3381,10 +3384,24 @@ export default function Board({
     enabled: ENGINE === "gemini",
   });
 
+  const moonshine = useMoonshine({
+    onFinal: handleFinal,
+    onInterim: handleInterim,
+    onSessionStart: handleSessionStart,
+    onNote: (text) => log({ type: "note", text }),
+    onError: (message) => {
+      setErrorText(message);
+      if (message) log({ type: "error", where: "moonshine", text: message });
+    },
+    enabled: ENGINE === "moonshine",
+  });
+
   const engine =
     ENGINE === "gemini"
       ? { status: gemini.status, start: gemini.start, stop: gemini.stop, prewarm: undefined }
-      : { status: deepgram.status, start: deepgram.start, stop: deepgram.stop, prewarm: deepgram.prewarm };
+      : ENGINE === "moonshine"
+        ? { status: moonshine.status, start: moonshine.start, stop: moonshine.stop, prewarm: undefined }
+        : { status: deepgram.status, start: deepgram.start, stop: deepgram.stop, prewarm: deepgram.prewarm };
   const status = engine.status;
   const stopEngine = engine.stop;
   const startEngine = engine.start;
@@ -4266,6 +4283,8 @@ export default function Board({
       {!demoStudio && isDev && showLatencyOverlay && (
         <LatencyOverlay onMarkStall={markPerceivedStall} />
       )}
+
+      {!demoStudio && isDev && <LocalStatusBadge />}
 
       {!demoStudio && replayLabEnabled && <DevReplayLab run={runReplayExperiment} />}
 

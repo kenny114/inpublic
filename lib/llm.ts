@@ -1,10 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
 
 /**
- * Thin two-provider shim. Model id decides the provider: anything starting
- * with "gemini" goes to Google, everything else to Anthropic. Both keys are
- * read from the environment inside route handlers only — never shipped to the
- * client.
+ * Thin provider shim. Model id decides the provider: anything starting with
+ * "gemini" goes to Google, everything else to Anthropic — unless
+ * `LLM_PROVIDER=ollama` is set, in which case every call is routed to a local
+ * Ollama server instead, regardless of which model id the caller passed.
+ * Cloud keys are read from the environment inside route handlers only — never
+ * shipped to the client.
  */
 
 /**
@@ -39,6 +43,15 @@ export interface CompleteOptions {
   allowThinking?: boolean;
   /** Provider-reported usage, delivered after the response completes. */
   onUsage?: (usage: CompletionUsage) => void;
+  /**
+   * Ollama only: a JSON schema (typically derived from the caller's existing
+   * zod schema via `toOllamaFormat`) passed as the request's `format`, to help
+   * the local model emit valid JSON. This is assistance for the model, not a
+   * trust boundary — callers must still `.safeParse` the result themselves.
+   */
+  jsonSchema?: Record<string, unknown>;
+  /** Test-only seam: inject a fetch stub instead of hitting a real Ollama server. */
+  fetchImpl?: typeof fetch;
 }
 
 export interface CompletionUsage {
@@ -47,10 +60,45 @@ export interface CompletionUsage {
   outputTokens: number;
   cacheCreationInputTokens?: number;
   cacheReadInputTokens?: number;
+  /** Ollama only, in milliseconds. Undefined for Anthropic/Google. */
+  loadDurationMs?: number;
+  promptEvalDurationMs?: number;
+  evalDurationMs?: number;
+  totalDurationMs?: number;
 }
 
-export function providerFor(model: string): "google" | "anthropic" {
+export type Provider = "google" | "anthropic" | "ollama";
+
+export function providerFor(model: string): Provider {
+  if (process.env.LLM_PROVIDER === "ollama") return "ollama";
   return model.toLowerCase().startsWith("gemini") ? "google" : "anthropic";
+}
+
+export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen3:4b";
+
+/** Thrown when the local Ollama server can't be reached. Never silently swallowed. */
+export class LocalProviderUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super(`Ollama at ${OLLAMA_BASE_URL} is unavailable: ${String(cause)}`);
+    this.name = "LocalProviderUnavailableError";
+  }
+}
+
+/** Converts a zod schema to the JSON-schema shape Ollama's `format` expects. */
+export function toOllamaFormat(schema: z.ZodType): Record<string, unknown> {
+  return zodToJsonSchema(schema, { target: "jsonSchema7", $refStrategy: "none" }) as Record<string, unknown>;
+}
+
+let remoteCallCount = 0;
+
+/** Dev/eval instrumentation only: counts calls that left the machine. */
+export function getRemoteCallCount(): number {
+  return remoteCallCount;
+}
+
+export function resetRemoteCallCount(): void {
+  remoteCallCount = 0;
 }
 
 export const BEAT_MODEL = process.env.BEAT_MODEL || "claude-haiku-4-5-20251001";
@@ -68,9 +116,21 @@ export const SCRIBE_MODEL =
 export const MATH_MODEL = process.env.MATH_MODEL || ARTIST_MODEL;
 
 export async function complete(opts: CompleteOptions): Promise<string> {
-  return providerFor(opts.model) === "google"
-    ? completeGoogle(opts)
-    : completeAnthropic(opts);
+  const provider = providerFor(opts.model);
+  if (provider === "ollama") {
+    try {
+      return await completeOllama(opts);
+    } catch (err) {
+      if (err instanceof LocalProviderUnavailableError && process.env.OLLAMA_ALLOW_FALLBACK === "1") {
+        console.warn(`[llm] ${err.message} — falling back to Anthropic (OLLAMA_ALLOW_FALLBACK=1)`);
+        remoteCallCount += 1;
+        return completeAnthropic(opts);
+      }
+      throw err;
+    }
+  }
+  remoteCallCount += 1;
+  return provider === "google" ? completeGoogle(opts) : completeAnthropic(opts);
 }
 
 /**
@@ -80,7 +140,23 @@ export async function complete(opts: CompleteOptions): Promise<string> {
 export async function* completeStream(
   opts: CompleteOptions,
 ): AsyncGenerator<string> {
-  if (providerFor(opts.model) === "google") {
+  const provider = providerFor(opts.model);
+  if (provider === "ollama") {
+    try {
+      yield* completeStreamOllama(opts);
+      return;
+    } catch (err) {
+      if (err instanceof LocalProviderUnavailableError && process.env.OLLAMA_ALLOW_FALLBACK === "1") {
+        console.warn(`[llm] ${err.message} — falling back to Anthropic (OLLAMA_ALLOW_FALLBACK=1)`);
+        remoteCallCount += 1;
+        yield* streamAnthropic(opts);
+        return;
+      }
+      throw err;
+    }
+  }
+  remoteCallCount += 1;
+  if (provider === "google") {
     yield* streamGoogle(opts);
   } else {
     yield* streamAnthropic(opts);
@@ -310,4 +386,126 @@ async function completeGoogle(opts: CompleteOptions): Promise<string> {
   }
 
   return text;
+}
+
+interface OllamaChatResponse {
+  message?: { content?: string };
+  prompt_eval_count?: number;
+  eval_count?: number;
+  load_duration?: number;
+  prompt_eval_duration?: number;
+  eval_duration?: number;
+  total_duration?: number;
+}
+
+function ollamaMessages(opts: CompleteOptions): { role: string; content: string }[] {
+  return [
+    { role: "system", content: systemText(opts.system) },
+    { role: "user", content: opts.user },
+  ];
+}
+
+function ollamaUsageFrom(json: OllamaChatResponse): CompletionUsage {
+  const ns = (v: number | undefined) => (v === undefined ? undefined : Math.round(v / 1_000_000));
+  return {
+    inputTokens: json.prompt_eval_count ?? 0,
+    outputTokens: json.eval_count ?? 0,
+    loadDurationMs: ns(json.load_duration),
+    promptEvalDurationMs: ns(json.prompt_eval_duration),
+    evalDurationMs: ns(json.eval_duration),
+    totalDurationMs: ns(json.total_duration),
+  };
+}
+
+async function ollamaFetch(opts: CompleteOptions, stream: boolean): Promise<Response> {
+  const doFetch = opts.fetchImpl ?? fetch;
+  try {
+    return await doFetch(`${OLLAMA_BASE_URL}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        messages: ollamaMessages(opts),
+        stream,
+        options: { temperature: opts.temperature },
+        // Reasoning models (qwen3 included) default to a verbose "thinking"
+        // pass in Ollama that can consume the entire maxTokens budget before
+        // any real content, leaving `message.content` empty. Every existing
+        // caller already passes allowThinking: false or omits it (it exists
+        // today only for Gemini's thinking budget) — reusing the same flag
+        // here keeps the "keep local calls short and task-specific" rule
+        // enforced uniformly across providers instead of adding a second knob.
+        think: Boolean(opts.allowThinking),
+        ...(opts.jsonSchema ? { format: opts.jsonSchema } : {}),
+      }),
+    });
+  } catch (err) {
+    throw new LocalProviderUnavailableError(err);
+  }
+}
+
+/**
+ * qwen3's chat template inlines its reasoning as a literal `<think>...</think>`
+ * block at the start of `message.content` on at least one observed
+ * Ollama/model combination, even with `think: false` sent — Ollama's separate
+ * `message.thinking` field is not populated in that case, so there is
+ * nothing to prefer over content; the tag has to be stripped from content
+ * itself. Stripping unconditionally is safe: a response with no such block is
+ * returned unchanged.
+ */
+function stripThinkBlock(content: string): string {
+  return content.replace(/^\s*<think>[\s\S]*?<\/think>\s*/i, "");
+}
+
+async function completeOllama(opts: CompleteOptions): Promise<string> {
+  const res = await ollamaFetch(opts, false);
+  if (!res.ok) {
+    if (res.status >= 500 || res.status === 404) {
+      throw new LocalProviderUnavailableError(`HTTP ${res.status}: ${await res.text()}`);
+    }
+    throw new Error(`Ollama ${res.status}: ${await res.text()}`);
+  }
+  const json = (await res.json()) as OllamaChatResponse;
+  opts.onUsage?.(ollamaUsageFrom(json));
+  return stripThinkBlock(json.message?.content ?? "").trim();
+}
+
+/**
+ * No `<think>` stripping here, unlike completeOllama: none of the four
+ * current Ollama call sites (agent/communicator decision, shaping,
+ * extraction) use the streaming path — only the Anthropic-only Scribe route
+ * does today — and stripping a tag that can straddle chunk boundaries would
+ * need real buffering. Add it if a streaming Ollama caller appears.
+ */
+async function* completeStreamOllama(opts: CompleteOptions): AsyncGenerator<string> {
+  const res = await ollamaFetch(opts, true);
+  if (!res.ok || !res.body) {
+    if (!res.ok && (res.status >= 500 || res.status === 404)) {
+      throw new LocalProviderUnavailableError(`HTTP ${res.status}: ${await res.text()}`);
+    }
+    throw new Error(`Ollama stream ${res.status}: ${res.body ? await res.text() : "no body"}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      let json: OllamaChatResponse & { done?: boolean };
+      try {
+        json = JSON.parse(line);
+      } catch {
+        continue; // partial JSON across chunks
+      }
+      if (json.message?.content) yield json.message.content;
+      if (json.done) opts.onUsage?.(ollamaUsageFrom(json));
+    }
+  }
 }

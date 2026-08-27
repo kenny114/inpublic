@@ -1,5 +1,5 @@
-import { ARTIST_MODEL, complete, type CompletionUsage } from "../llm";
-import type { AgentContext } from "./types";
+import { ARTIST_MODEL, complete, toOllamaFormat, type CompletionUsage } from "../llm";
+import { AgentDecisionSchema, type AgentContext } from "./types";
 
 export const VISUAL_AGENT_MODEL = process.env.VISUAL_AGENT_MODEL || ARTIST_MODEL;
 export const VISUAL_AGENT_MAX_OUTPUT_TOKENS = 1200;
@@ -22,6 +22,10 @@ Allowed VisualAction types are:
 - relate_entities: {"type":"relate_entities","sourceEntityId":"...","targetEntityId":"...","relation":{"type":"..."}}
 - remove_relation: {"type":"remove_relation","relationId":"..."}
 - focus: {"type":"focus","entityId":"..."}
+
+relate_entities' relation.type must be exactly one of: causes, enables, prevents, depends_on, precedes, transforms_into, contains, part_of, member_of, instance_of, has_property, role_of, originates_from, located_at, contrasts_with, greater_than, less_than, equivalent_to, supports, refutes, wants, relates_to. Use relates_to as the generic fallback — never invent a type outside this list (e.g. never "related_to" or "blocks").
+
+Every response must be one complete top-level object of exactly one of the three shapes above. Never return a bare action object on its own — an action is only ever valid nested inside {"type":"act","action":...}.
 
 Never emit coordinates, geometry, bounds, canvas element ids, Excalidraw elements, shapes, style, viewport values, API calls, tool names, or arbitrary operations. Canvas bounds are observation evidence only and cannot appear in an action.
 
@@ -78,6 +82,7 @@ export async function decideWithVisualAgentModel(
     temperature: 0,
     allowThinking: false,
     onUsage,
+    jsonSchema: toOllamaFormat(AgentDecisionSchema),
   });
   return parseJsonObject(raw);
 }

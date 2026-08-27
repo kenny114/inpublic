@@ -5,6 +5,24 @@ export type DecisionAttempt =
   | { status: "invalid"; reason: string }
   | { status: "provider_error"; reason: string };
 
+const BARE_ACTION_TYPES = new Set(["express", "update_entity", "remove_entity", "relate_entities", "remove_relation", "focus"]);
+
+/**
+ * Repairs one observed model habit: emitting a VisualAction directly instead
+ * of wrapping it in {"type":"act","action":...}. Only a bare object whose
+ * "type" is a known VisualActionType (and not already an "act"/"done"/
+ * "cannot_complete" envelope) is rewrapped; validation below stays strict on
+ * the result, so this never admits anything AgentDecisionSchema would not
+ * already have accepted in its intended shape.
+ */
+function normalizeDecisionShape(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const type = (raw as { type?: unknown }).type;
+  if (typeof type !== "string" || !BARE_ACTION_TYPES.has(type)) return raw;
+  if ("action" in raw) return raw;
+  return { type: "act", action: raw };
+}
+
 export async function requestValidatedDecision(
   provider: AgentDecisionProvider,
   context: Parameters<AgentDecisionProvider>[0],
@@ -18,7 +36,7 @@ export async function requestValidatedDecision(
       reason: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
     };
   }
-  const parsed = AgentDecisionSchema.safeParse(raw);
+  const parsed = AgentDecisionSchema.safeParse(normalizeDecisionShape(raw));
   if (!parsed.success) {
     return {
       status: "invalid",

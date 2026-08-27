@@ -30,7 +30,7 @@
  * app code should use.
  */
 
-import { complete, SCRIBE_MODEL, type CompletionUsage } from "../../llm";
+import { complete, SCRIBE_MODEL, toOllamaFormat, type CompletionUsage } from "../../llm";
 import { MeaningDeltaSchema, MeaningDeltaShape, EMPTY_MEANING_DELTA, type MeaningDelta } from "../schemas";
 
 export const EXPRESSION_MODEL = process.env.EXPRESSION_MODEL || SCRIBE_MODEL;
@@ -440,6 +440,7 @@ export async function extractMeaning(
       maxTokens: 2000,
       temperature: 0,
       onUsage,
+      jsonSchema: toOllamaFormat(MeaningDeltaSchema),
     });
   } catch {
     return EMPTY_MEANING_DELTA;
